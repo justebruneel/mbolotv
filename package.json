@@ -1,0 +1,19 @@
+{
+  "name": "mbolo-tv",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "predev": "pnpm --filter @mbolo/contracts build",
+    "dev": "pnpm --parallel --filter @mbolo/web --filter @mbolo/api dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm --filter @mbolo/contracts build && pnpm -r typecheck",
+    "format": "prettier --write .",
+    "db:migrate": "pnpm --filter @mbolo/api exec prisma migrate dev",
+    "db:seed": "pnpm --filter @mbolo/api exec prisma db seed",
+    "owner:create": "pnpm --filter @mbolo/api exec tsx scripts/create-owner.ts"
+  },
+  "devDependencies": {"prettier": "^3.4.2", "typescript": "^5.7.2"}
+}

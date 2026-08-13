@@ -1,0 +1,22 @@
+body {
+  margin: 0;
+  background: var(--mbolo-bg);
+  color: var(--mbolo-text);
+  font-family: var(--mbolo-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.pageTitle {
+  font-size: var(--mbolo-font-size-xl);
+  font-weight: 700;
+  margin: 0 0 var(--mbolo-space-5);
+}
+
+.muted {
+  color: var(--mbolo-text-muted);
+  font-size: var(--mbolo-font-size-sm);
+}

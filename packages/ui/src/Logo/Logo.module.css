@@ -1,0 +1,11 @@
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mbolo-space-2);
+}
+
+.name {
+  font-weight: 700;
+  font-size: var(--mbolo-font-size-lg);
+  color: var(--mbolo-text);
+}

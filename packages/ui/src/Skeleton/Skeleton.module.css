@@ -1,0 +1,11 @@
+.skeleton {
+  border-radius: var(--mbolo-radius);
+  background: linear-gradient(90deg, var(--mbolo-surface-2) 25%, var(--mbolo-surface-3) 50%, var(--mbolo-surface-2) 75%);
+  background-size: 200% 100%;
+  animation: mbolo-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes mbolo-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

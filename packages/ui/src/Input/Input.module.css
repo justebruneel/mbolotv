@@ -1,0 +1,16 @@
+.input {
+  width: 100%;
+  background: var(--mbolo-surface-2);
+  border: 1px solid var(--mbolo-border);
+  border-radius: var(--mbolo-radius);
+  color: var(--mbolo-text);
+  font: inherit;
+  font-size: var(--mbolo-font-size-md);
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.input::placeholder { color: var(--mbolo-text-muted); }
+
+.input:focus { border-color: var(--mbolo-accent); }

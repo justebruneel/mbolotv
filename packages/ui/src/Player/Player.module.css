@@ -1,0 +1,28 @@
+.player {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--mbolo-radius-lg);
+  overflow: hidden;
+}
+
+.video { width: 100%; height: 100%; display: block; }
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mbolo-space-3);
+  background: rgba(11, 14, 20, 0.85);
+  color: var(--mbolo-text);
+  text-align: center;
+  padding: var(--mbolo-space-5);
+}
+
+.title { font-size: var(--mbolo-font-size-lg); font-weight: 600; margin: 0; }
+
+.hint { color: var(--mbolo-text-muted); font-size: var(--mbolo-font-size-md); margin: 0; }

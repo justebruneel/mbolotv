@@ -1,0 +1,18 @@
+.fav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--mbolo-border);
+  background: var(--mbolo-surface);
+  color: var(--mbolo-text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  transition: color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.fav:hover { border-color: var(--mbolo-primary); transform: scale(1.08); }
+
+.active { color: var(--mbolo-primary); border-color: var(--mbolo-primary); }

@@ -1,0 +1,1 @@
+Le reverse proxy de production doit terminer TLS, appliquer une limite de requêtes sur l’API et séparer l’endpoint de streaming du domaine applicatif. Ne pas mettre en cache les réponses contenant des jetons de lecture.

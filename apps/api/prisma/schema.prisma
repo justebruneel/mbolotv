@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url = "file:./dev.db"
+}
+
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  role String @default("USER")
+  passwordHash String?
+  mfaEnabled Boolean @default(false)
+  mfaSecretEncrypted Bytes?
+  lastMfaAt DateTime?
+  createdAt DateTime @default(now())
+  profiles Profile[]
+  sources Source[]
+  auditLogs AuditLog[]
+  ownerSessions OwnerSession[]
+}
+model Profile {
+  id String @id @default(cuid())
+  userId String
+  name String
+  settings Json?
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  favorites Favorite[]
+  @@index([userId])
+}
+model Source {
+  id String @id @default(cuid())
+  ownerId String
+  name String
+  kind String
+  status String @default("PENDING")
+  priority Int @default(100)
+  connectionEncrypted Bytes
+  lastSyncedAt DateTime?
+  createdAt DateTime @default(now())
+  owner User @relation(fields:[ownerId], references:[id], onDelete:Cascade)
+  importRuns ImportRun[]
+  variants StreamVariant[]
+  @@index([ownerId, status])
+}
+model ImportRun {
+  id String @id @default(cuid())
+  sourceId String
+  state String @default("QUEUED")
+  metrics Json?
+  errorCode String?
+  errorMessage String?
+  startedAt DateTime @default(now())
+  completedAt DateTime?
+  source Source @relation(fields:[sourceId], references:[id], onDelete:Cascade)
+  @@index([sourceId, startedAt])
+}
+model Category {
+  id String @id @default(cuid())
+  slug String @unique
+  name String
+  parentId String?
+  parent Category? @relation("CategoryTree", fields:[parentId], references:[id])
+  children Category[] @relation("CategoryTree")
+  channels Channel[]
+}
+model Channel {
+  id String @id @default(cuid())
+  name String
+  canonicalName String
+  normalizedKey String @unique
+  tvgId String?
+  country String?
+  logoKey String?
+  categoryId String?
+  createdAt DateTime @default(now())
+  category Category? @relation(fields:[categoryId], references:[id])
+  variants StreamVariant[]
+  programmes EpgProgramme[]
+  favorites Favorite[]
+  @@index([categoryId])
+  @@index([tvgId])
+}
+model StreamVariant {
+  id String @id @default(cuid())
+  channelId String
+  sourceId String
+  encryptedLocator Bytes
+  quality String?
+  healthScore Float @default(0)
+  isActive Boolean @default(true)
+  channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
+  source Source @relation(fields:[sourceId], references:[id], onDelete:Cascade)
+  matchStreams MatchStream[]
+  @@index([channelId, isActive, healthScore])
+}
+model EpgProgramme {
+  id String @id @default(cuid())
+  channelId String
+  startsAt DateTime
+  endsAt DateTime
+  title String
+  description String?
+  metadata Json?
+  channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
+  @@index([channelId, startsAt])
+}
+model Match {
+  id String @id @default(cuid())
+  sport String
+  competition String
+  homeTeam String
+  awayTeam String
+  startsAt DateTime
+  state String @default("SCHEDULED")
+  matchStreams MatchStream[]
+  @@index([state, startsAt])
+}
+model MatchStream {
+  id String @id @default(cuid())
+  matchId String
+  streamVariantId String
+  priority Int @default(100)
+  healthScore Float @default(0)
+  match Match @relation(fields:[matchId], references:[id], onDelete:Cascade)
+  streamVariant StreamVariant @relation(fields:[streamVariantId], references:[id], onDelete:Cascade)
+  @@unique([matchId, streamVariantId])
+}
+model Favorite {
+  profileId String
+  channelId String
+  profile Profile @relation(fields:[profileId], references:[id], onDelete:Cascade)
+  channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
+  @@id([profileId, channelId])
+}
+model AuditLog {
+  id String @id @default(cuid())
+  actorId String?
+  action String
+  entity String
+  entityId String?
+  metadata Json?
+  createdAt DateTime @default(now())
+  actor User? @relation(fields:[actorId], references:[id], onDelete:SetNull)
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}
+
+model OwnerSession {
+  id String @id @default(cuid())
+  userId String
+  tokenHash String @unique
+  userAgent String?
+  ipHash String?
+  mfaVerifiedAt DateTime
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  @@index([userId, expiresAt])
+}

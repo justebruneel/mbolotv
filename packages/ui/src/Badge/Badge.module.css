@@ -1,0 +1,32 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mbolo-space-1);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: var(--mbolo-font-size-sm);
+  font-weight: 600;
+  background: var(--mbolo-surface-2);
+  color: var(--mbolo-text-muted);
+  border: 1px solid var(--mbolo-border);
+  white-space: nowrap;
+}
+
+.success { background: rgba(52, 211, 153, 0.12); color: var(--mbolo-success); border-color: rgba(52, 211, 153, 0.3); }
+.danger { background: rgba(225, 29, 72, 0.12); color: var(--mbolo-danger); border-color: rgba(225, 29, 72, 0.3); }
+.warning { background: rgba(251, 191, 36, 0.12); color: var(--mbolo-warning); border-color: rgba(251, 191, 36, 0.3); }
+.accent { background: rgba(56, 189, 248, 0.12); color: var(--mbolo-accent); border-color: rgba(56, 189, 248, 0.3); }
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pulse { animation: mbolo-pulse 1.6s ease-in-out infinite; }
+
+@keyframes mbolo-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

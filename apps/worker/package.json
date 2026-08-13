@@ -1,0 +1,1 @@
+{"name":"@mbolo/worker","private":true,"scripts":{"dev":"tsx watch src/main.ts","build":"tsc -p tsconfig.json","typecheck":"tsc --noEmit"},"dependencies":{"@mbolo/contracts":"workspace:*","bullmq":"^5.34.0","ioredis":"^5.4.0","fast-xml-parser":"^4.5.0","m3u8-parser":"^7.2.0"},"devDependencies":{"tsx":"^4.19.0","typescript":"^5.7.2"}}

@@ -1,0 +1,11 @@
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--mbolo-space-2);
+  padding: var(--mbolo-space-8) var(--mbolo-space-4);
+  color: var(--mbolo-text-muted);
+  text-align: center;
+}
+
+.icon { font-size: 2rem; }
