@@ -1,9 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -38,13 +33,5 @@ export class CryptoService implements OnModuleInit {
     const decipher = createDecipheriv('aes-256-gcm', this.key, iv);
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
-  }
-
-  hashToken(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
-  }
-
-  randomToken(bytes = 32): string {
-    return randomBytes(bytes).toString('hex');
   }
 }

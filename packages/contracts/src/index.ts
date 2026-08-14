@@ -132,12 +132,6 @@ export const ownerLoginSchema = z.object({
 });
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;
 
-export const ownerMfaVerifySchema = z.object({
-  challengeToken: z.string().min(10),
-  totpCode: z.string().regex(/^\d{6}$/),
-});
-export type OwnerMfaVerifyInput = z.infer<typeof ownerMfaVerifySchema>;
-
 export const ownerMeSchema = z.object({
   id: z.string(),
   email: z.string(),

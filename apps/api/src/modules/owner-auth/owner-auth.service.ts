@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import {
-  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -9,34 +8,40 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { OwnerLoginInput, OwnerMe, OwnerMfaVerifyInput, OwnerSession } from '@mbolo/contracts';
+import type { OwnerLoginInput, OwnerMe, OwnerSession } from '@mbolo/contracts';
 import { AuditService } from '../../common/audit/audit.service';
-import { CryptoService } from '../../common/crypto/crypto.service';
-import { OWNER_SESSION_COOKIE, parseCookies } from '../../common/auth/owner-context';
+import { OWNER_SESSION_COOKIE } from '../../common/auth/owner-context';
+import { JwtService } from '../../common/jwt/jwt.service';
 import { PasswordService } from '../../common/password/password.service';
 import { RateLimiterService } from '../../common/rate-limit/rate-limiter.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { TotpService } from '../../common/totp/totp.service';
-import { ChallengeService } from './challenge.service';
+
+interface SessionTokenPayload {
+  purpose: 'owner-session';
+  sub: string;
+  email: string;
+  role: 'OWNER';
+  jti: string;
+  iat?: number;
+}
 
 @Injectable()
 export class OwnerAuthService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly crypto: CryptoService,
     private readonly password: PasswordService,
-    private readonly totp: TotpService,
     private readonly rateLimiter: RateLimiterService,
     private readonly audit: AuditService,
-    private readonly challenge: ChallengeService,
+    private readonly jwt: JwtService,
     private readonly config: ConfigService,
   ) {}
 
   async login(
     input: OwnerLoginInput,
     ip: string,
-    _userAgent: string | undefined,
-  ): Promise<{ challengeToken: string }> {
+    userAgent: string | undefined,
+    reply: FastifyReply,
+  ): Promise<OwnerMe> {
     const email = input.email.toLowerCase();
 
     const byAccount = this.rateLimiter.check(
@@ -64,64 +69,31 @@ export class OwnerAuthService {
     if (!valid) {
       throw new UnauthorizedException('Identifiants invalides');
     }
-    if (!user.mfaEnabled || !user.mfaSecretEncrypted) {
-      throw new ForbiddenException('MFA non configurée pour ce compte');
-    }
 
-    await this.audit.log(user.id, 'owner.login', 'owner', user.id, { ipHash: this.shortHash(ip) });
-
-    const challengeToken = this.challenge.sign({
-      sub: user.id,
-      purpose: 'owner-mfa',
-      exp: Math.floor(Date.now() / 1000) + 15 * 60,
-    });
-    return { challengeToken };
-  }
-
-  async mfaVerify(
-    input: OwnerMfaVerifyInput,
-    ip: string,
-    userAgent: string | undefined,
-    reply: FastifyReply,
-  ): Promise<OwnerMe> {
-    const challenge = this.challenge.verify(input.challengeToken);
-    if (challenge.purpose !== 'owner-mfa') {
-      throw new UnauthorizedException('Challenge invalide');
-    }
-
-    const user = await this.prisma.user.findUnique({ where: { id: challenge.sub } });
-    if (!user || !user.mfaSecretEncrypted) throw new UnauthorizedException('Identifiants invalides');
-
-    const byIp = this.rateLimiter.check(`owner-mfa-ip:${ip}`, 10, 15 * 60_000);
-    if (!byIp.allowed) throw new HttpException('Trop de tentatives', HttpStatus.TOO_MANY_REQUESTS);
-
-    const secret = this.crypto.decrypt(user.mfaSecretEncrypted);
-    if (!this.totp.verify(secret, input.totpCode)) {
-      throw new UnauthorizedException('Code TOTP invalide');
-    }
-
-    const token = this.crypto.randomToken(48);
     const ttlMinutes = this.config.get<number>('OWNER_SESSION_TTL_MINUTES', 15);
+    const now = Date.now();
     const session = await this.prisma.ownerSession.create({
       data: {
         userId: user.id,
-        tokenHash: this.crypto.hashToken(token),
         userAgent: userAgent?.slice(0, 200) ?? null,
         ipHash: this.shortHash(ip),
-        mfaVerifiedAt: new Date(),
-        expiresAt: new Date(Date.now() + ttlMinutes * 60_000),
+        expiresAt: new Date(now + ttlMinutes * 60_000),
       },
     });
 
-    reply.setCookie(OWNER_SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: this.config.get<string>('NODE_ENV', 'development') === 'production',
-      path: '/',
-      maxAge: ttlMinutes * 60,
-    });
+    const token = await this.jwt.sign(
+      {
+        purpose: 'owner-session',
+        sub: user.id,
+        email: user.email,
+        role: 'OWNER',
+        jti: session.id,
+      },
+      ttlMinutes * 60,
+    );
+    this.setSessionCookie(reply, token, ttlMinutes);
 
-    await this.audit.log(user.id, 'owner.mfa_verify', 'owner', user.id, {
+    await this.audit.log(user.id, 'owner.login', 'owner', user.id, {
       sessionId: session.id,
       ipHash: this.shortHash(ip),
     });
@@ -130,65 +102,54 @@ export class OwnerAuthService {
   }
 
   async logout(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const token = parseCookies(request.headers.cookie)[OWNER_SESSION_COOKIE];
+    const token = request.cookies?.[OWNER_SESSION_COOKIE];
     if (token) {
-      const session = await this.prisma.ownerSession.findUnique({
-        where: { tokenHash: this.crypto.hashToken(token) },
-      });
-      if (session && !session.revokedAt) {
-        await this.prisma.ownerSession.update({
-          where: { id: session.id },
-          data: { revokedAt: new Date() },
-        });
-        await this.audit.log(session.userId, 'owner.logout', 'owner', session.userId, {
-          sessionId: session.id,
-        });
+      try {
+        const payload = await this.jwt.verify<SessionTokenPayload>(token);
+        if (payload.purpose === 'owner-session' && payload.jti) {
+          const session = await this.prisma.ownerSession.findUnique({
+            where: { id: payload.jti },
+          });
+          if (session && !session.revokedAt) {
+            await this.prisma.ownerSession.update({
+              where: { id: session.id },
+              data: { revokedAt: new Date() },
+            });
+            await this.audit.log(session.userId, 'owner.logout', 'owner', session.userId, {
+              sessionId: session.id,
+            });
+          }
+        }
+      } catch {
+        // Jeton illisible : on nettoie simplement le cookie de session.
       }
     }
     reply.clearCookie(OWNER_SESSION_COOKIE, { path: '/' });
   }
 
-  async reauthenticate(totpCode: string, request: FastifyRequest, ip: string): Promise<void> {
-    const token = parseCookies(request.headers.cookie)[OWNER_SESSION_COOKIE];
+  async currentSession(
+    request: FastifyRequest,
+  ): Promise<{ me: OwnerMe; sessionId: string; expiresAt: Date }> {
+    const token = request.cookies?.[OWNER_SESSION_COOKIE];
     if (!token) throw new UnauthorizedException('Session manquante');
-    const session = await this.prisma.ownerSession.findUnique({
-      where: { tokenHash: this.crypto.hashToken(token) },
-      include: { user: true },
-    });
-    if (!session || session.revokedAt || !session.user.mfaSecretEncrypted) {
+
+    const payload = await this.jwt.verify<SessionTokenPayload>(token);
+    if (payload.purpose !== 'owner-session' || !payload.jti) {
       throw new UnauthorizedException('Session invalide');
     }
 
-    const byIp = this.rateLimiter.check(`owner-reauth-ip:${ip}`, 10, 15 * 60_000);
-    if (!byIp.allowed) throw new HttpException('Trop de tentatives', HttpStatus.TOO_MANY_REQUESTS);
-
-    const secret = this.crypto.decrypt(session.user.mfaSecretEncrypted);
-    if (!this.totp.verify(secret, totpCode)) {
-      throw new UnauthorizedException('Code TOTP invalide');
-    }
-
-    await this.prisma.ownerSession.update({
-      where: { id: session.id },
-      data: { mfaVerifiedAt: new Date() },
-    });
-    await this.audit.log(session.userId, 'owner.reauthenticate', 'owner', session.userId, {
-      sessionId: session.id,
-    });
-  }
-
-  async currentSession(request: FastifyRequest): Promise<{ me: OwnerMe; sessionId: string }> {
-    const token = parseCookies(request.headers.cookie)[OWNER_SESSION_COOKIE];
-    if (!token) throw new UnauthorizedException('Session manquante');
     const session = await this.prisma.ownerSession.findUnique({
-      where: { tokenHash: this.crypto.hashToken(token) },
+      where: { id: payload.jti },
       include: { user: true },
     });
-    if (!session || session.revokedAt || session.expiresAt < new Date()) {
+    if (!session || session.revokedAt || session.user.role !== 'OWNER') {
       throw new UnauthorizedException('Session invalide');
     }
+
     return {
       me: { id: session.userId, email: session.user.email, role: session.user.role },
       sessionId: session.id,
+      expiresAt: session.expiresAt,
     };
   }
 
@@ -216,6 +177,16 @@ export class OwnerAuthService {
       data: { revokedAt: new Date() },
     });
     await this.audit.log(userId, 'owner.session_revoke', 'owner', userId, { sessionId });
+  }
+
+  private setSessionCookie(reply: FastifyReply, token: string, ttlMinutes: number): void {
+    reply.setCookie(OWNER_SESSION_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: this.config.get<string>('NODE_ENV', 'development') === 'production',
+      path: '/',
+      maxAge: ttlMinutes * 60,
+    });
   }
 
   private shortHash(value: string): string {

@@ -3,7 +3,6 @@ import { cookies } from 'next/headers';
 export type VerifiedOwnerSession = {
   userId: string;
   role: 'OWNER';
-  mfaVerifiedAt: Date;
   expiresAt: Date;
 };
 
@@ -24,14 +23,12 @@ export async function getVerifiedOwnerSession(): Promise<VerifiedOwnerSession | 
     const session = (await response.json()) as {
       me: { id: string; role: string; email: string };
       sessionId: string;
-      mfaVerifiedAt?: string;
       expiresAt?: string;
     };
     if (session.me.role !== 'OWNER') return null;
     return {
       userId: session.me.id,
       role: 'OWNER',
-      mfaVerifiedAt: session.mfaVerifiedAt ? new Date(session.mfaVerifiedAt) : new Date(),
       expiresAt: session.expiresAt ? new Date(session.expiresAt) : new Date(Date.now() + 60_000),
     };
   } catch {

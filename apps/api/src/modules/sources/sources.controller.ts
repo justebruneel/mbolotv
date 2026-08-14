@@ -22,7 +22,6 @@ import {
 } from '@mbolo/contracts';
 import { getOwnerContext, OwnerContext } from '../../common/auth/owner-context';
 import { OwnerAuthGuard } from '../../common/auth/owner-auth.guard';
-import { RecentMfaGuard } from '../../common/auth/recent-mfa.guard';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { SourcesService } from './sources.service';
 
@@ -36,7 +35,7 @@ export class SourcesController {
     return this.sourcesService.list(this.ownerOf(request).userId);
   }
 
-  @UseGuards(OwnerAuthGuard, RecentMfaGuard)
+  @UseGuards(OwnerAuthGuard)
   @Get(':id/test')
   test(@Req() request: FastifyRequest, @Param('id') id: string): Promise<ConnectTestResponse> {
     return this.sourcesService.test(this.ownerOf(request).userId, id);
@@ -48,7 +47,7 @@ export class SourcesController {
     return this.sourcesService.detail(this.ownerOf(request).userId, id);
   }
 
-  @UseGuards(OwnerAuthGuard, RecentMfaGuard)
+  @UseGuards(OwnerAuthGuard)
   @Post()
   create(
     @Req() request: FastifyRequest,
@@ -57,7 +56,7 @@ export class SourcesController {
     return this.sourcesService.create(this.ownerOf(request).userId, input);
   }
 
-  @UseGuards(OwnerAuthGuard, RecentMfaGuard)
+  @UseGuards(OwnerAuthGuard)
   @Patch(':id')
   update(
     @Req() request: FastifyRequest,
@@ -67,13 +66,13 @@ export class SourcesController {
     return this.sourcesService.update(this.ownerOf(request).userId, id, input);
   }
 
-  @UseGuards(OwnerAuthGuard, RecentMfaGuard)
+  @UseGuards(OwnerAuthGuard)
   @Delete(':id')
   remove(@Req() request: FastifyRequest, @Param('id') id: string) {
     return this.sourcesService.remove(this.ownerOf(request).userId, id);
   }
 
-  @UseGuards(OwnerAuthGuard, RecentMfaGuard)
+  @UseGuards(OwnerAuthGuard)
   @Post(':id/import')
   importNow(@Req() request: FastifyRequest, @Param('id') id: string): Promise<ImportRun> {
     return this.sourcesService.importNow(this.ownerOf(request).userId, id);

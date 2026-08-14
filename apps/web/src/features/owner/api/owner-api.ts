@@ -35,20 +35,12 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 export const ownerApi = {
   auth: {
-    login: (input: OwnerLoginInput): Promise<{ challengeToken: string }> =>
+    login: (input: OwnerLoginInput): Promise<OwnerMe> =>
       fetch(`${BASE_URL}/owner/auth/login`, {
         method: 'POST',
         credentials: 'include',
         headers: JSON_HEADERS,
         body: JSON.stringify(input),
-      }).then(parseResponse<{ challengeToken: string }>),
-
-    mfaVerify: (challengeToken: string, totpCode: string): Promise<OwnerMe> =>
-      fetch(`${BASE_URL}/owner/auth/mfa/verify`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ challengeToken, totpCode }),
       }).then(parseResponse<OwnerMe>),
 
     logout: (): Promise<void> =>

@@ -3,12 +3,8 @@ import { resolve } from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { Algorithm, hash } from '@node-rs/argon2';
-import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
-import QRCode from 'qrcode';
-import { CryptoService } from '../src/common/crypto/crypto.service';
 import { PasswordService } from '../src/common/password/password.service';
-import { TotpService } from '../src/common/totp/totp.service';
 
 function loadEnv(): void {
   for (const envPath of [
@@ -52,11 +48,7 @@ async function hiddenQuestion(rl: readline.Interface, prompt: string): Promise<s
 
 async function main(): Promise<void> {
   loadEnv();
-  const config = new ConfigService();
-  const crypto = new CryptoService(config);
-  crypto.onModuleInit();
   const passwordService = new PasswordService();
-  const totp = new TotpService();
 
   const prisma = new PrismaClient();
   const rl = readline.createInterface({ input, output });
@@ -86,36 +78,19 @@ async function main(): Promise<void> {
     }
 
     const passwordHash = await hash(password, { algorithm: Algorithm.Argon2id });
-    const secret = totp.generateSecret();
-    const mfaSecretEncrypted = crypto.encrypt(secret);
 
     const user = await prisma.user.create({
       data: {
         email: email.toLowerCase(),
         role: 'OWNER',
         passwordHash,
-        mfaEnabled: true,
-        mfaSecretEncrypted,
       },
     });
-
-    const issuer = process.env['TOTP_ISSUER'] ?? 'Mbolo TV Control';
-    const uri = totp.provisioningUri(secret, email, issuer);
 
     console.log('\n=== Compte propriétaire créé ===');
     console.log(`ID     : ${user.id}`);
     console.log(`E-mail : ${email.toLowerCase()}`);
     console.log(`Rôle   : OWNER`);
-    console.log(`MFA    : activée (TOTP)`);
-    console.log('\nAjoutez ce secret dans votre application d’authentification :');
-    console.log(`  Secret : ${secret}`);
-    console.log(`  URI    : ${uri}`);
-    try {
-      console.log('\n' + (await QRCode.toString(uri, { type: 'terminal', small: true })));
-    } catch {
-      // QR terminal indisponible, l'URI reste affichée
-    }
-    console.log('\n⚠ Ce secret ne sera plus jamais affiché. Conservez-le avant de fermer.');
   } finally {
     rl.close();
     await prisma.$disconnect();
