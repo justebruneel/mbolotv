@@ -7,13 +7,15 @@ import type {
   PlayResponse,
   Programme,
 } from '@mbolo/contracts';
+import { CryptoService } from '../../common/crypto/crypto.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-
-const DEV_STREAM_URL = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
 
 @Injectable()
 export class ChannelsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly crypto: CryptoService,
+  ) {}
 
   async list(query: ChannelQuery): Promise<ChannelListResponse> {
     const where = {
@@ -72,8 +74,15 @@ export class ChannelsService {
   async play(id: string): Promise<PlayResponse> {
     const channel = await this.prisma.channel.findUnique({ where: { id } });
     if (!channel) throw new NotFoundException('Channel not found');
+
+    const variant = await this.prisma.streamVariant.findFirst({
+      where: { channelId: id, isActive: true },
+      orderBy: { healthScore: 'desc' },
+    });
+    if (!variant) throw new NotFoundException('Channel not available');
+
     return {
-      url: DEV_STREAM_URL,
+      url: this.crypto.decrypt(variant.encryptedLocator),
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     };
   }
