@@ -29,6 +29,7 @@ export const categorySchema = z.object({
   slug: z.string(),
   name: z.string(),
   channelCount: z.number().optional(),
+  sortOrder: z.number().optional(),
 });
 export type Category = z.infer<typeof categorySchema>;
 
@@ -46,6 +47,7 @@ export const channelSchema = z.object({
   country: z.string().nullable(),
   categoryId: z.string().nullable(),
   logoUrl: z.string().nullable(),
+  healthStatus: z.enum(['OK', 'DOWN']).nullable().optional(),
   nowPlaying: nowPlayingSchema.nullable().optional(),
 });
 export type Channel = z.infer<typeof channelSchema>;
@@ -73,11 +75,19 @@ export type Match = z.infer<typeof matchSchema>;
 
 export const channelQuerySchema = z.object({
   category: z.string().optional(),
+  country: z.string().optional(),
   q: z.string().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
 export type ChannelQuery = z.infer<typeof channelQuerySchema>;
+
+export const countryOptionSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  count: z.number(),
+});
+export type CountryOption = z.infer<typeof countryOptionSchema>;
 
 export const channelListResponseSchema = z.object({
   items: z.array(channelSchema),
@@ -105,6 +115,37 @@ export const epgRangeResponseSchema = z.object({
   to: z.string(),
 });
 export type EpgRangeResponse = z.infer<typeof epgRangeResponseSchema>;
+
+export const programmeSearchItemSchema = z.object({
+  id: z.string(),
+  channelId: z.string(),
+  title: z.string(),
+  description: z.string().nullable(),
+  startsAt: z.string(),
+  endsAt: z.string(),
+  channel: z.object({
+    id: z.string(),
+    name: z.string(),
+    canonicalName: z.string(),
+    country: z.string().nullable(),
+    categoryId: z.string().nullable(),
+    logoUrl: z.string().nullable(),
+  }),
+});
+export type ProgrammeSearchItem = z.infer<typeof programmeSearchItemSchema>;
+
+export const programmeSearchQuerySchema = z.object({
+  q: z.string().min(1).max(80),
+  category: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+});
+export type ProgrammeSearchQuery = z.infer<typeof programmeSearchQuerySchema>;
+
+export const programmeSearchResponseSchema = z.object({
+  items: z.array(programmeSearchItemSchema),
+  total: z.number(),
+});
+export type ProgrammeSearchResponse = z.infer<typeof programmeSearchResponseSchema>;
 
 export const matchQuerySchema = z.object({
   state: matchStateSchema.optional(),

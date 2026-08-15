@@ -13,6 +13,12 @@ const KIND_LABELS: Record<Kind, string> = {
   MAC_PORTAL: 'MAG / Stalker (MAC)',
 };
 
+const KIND_HINTS: Record<Kind, string> = {
+  M3U: 'Une URL directe vers un fichier .m3u / .m3u8.',
+  XTREAM: 'Serveur Xtream Codes : adresse, identifiant et mot de passe.',
+  MAC_PORTAL: 'Portail Stalker / MAG : adresse et adresse MAC autorisée.',
+};
+
 const CONNECTION_FIELDS: Record<Kind, { key: string; label: string; type?: string; placeholder?: string }[]> =
   {
     M3U: [{ key: 'url', label: 'URL de la playlist M3U', type: 'url', placeholder: 'https://exemple.com/channels.m3u' }],
@@ -22,12 +28,7 @@ const CONNECTION_FIELDS: Record<Kind, { key: string; label: string; type?: strin
       { key: 'password', label: 'Mot de passe', type: 'password' },
     ],
     MAC_PORTAL: [
-      {
-        key: 'url',
-        label: 'Adresse du portail',
-        type: 'url',
-        placeholder: 'http://exemple.com/c/',
-      },
+      { key: 'url', label: 'Adresse du portail', type: 'url', placeholder: 'http://exemple.com/c/' },
       { key: 'macAddress', label: 'Adresse MAC', placeholder: '00:1A:79:XX:XX:XX' },
     ],
   };
@@ -38,9 +39,7 @@ export function SourceForm({ source }: { source?: SourceDetail }) {
   const [name, setName] = useState(source?.name ?? '');
   const [connection, setConnection] = useState<Record<string, string>>(() => {
     if (!source) return { url: '' };
-    return Object.fromEntries(
-      Object.entries(source.connectionMasked).map(([key, value]) => [key, value]),
-    );
+    return Object.fromEntries(Object.entries(source.connectionMasked).map(([key, value]) => [key, value]));
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,9 +55,7 @@ export function SourceForm({ source }: { source?: SourceDetail }) {
     const input: SourceCreateInput = {
       name,
       kind,
-      connection: Object.fromEntries(
-        Object.entries(connection).filter(([, value]) => value !== ''),
-      ),
+      connection: Object.fromEntries(Object.entries(connection).filter(([, value]) => value !== '')),
     };
     try {
       if (source) {
@@ -76,65 +73,77 @@ export function SourceForm({ source }: { source?: SourceDetail }) {
   }
 
   return (
-    <form onSubmit={submit} className="flex w-full max-w-lg flex-col gap-4">
+    <form onSubmit={submit} className="flex w-full max-w-lg flex-col gap-5">
       {!source && (
-        <div className="flex flex-wrap gap-2">
-          {(Object.keys(KIND_LABELS) as Kind[]).map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              onClick={() => {
-                setKind(candidate);
-                setConnection({ url: '' });
-              }}
-              className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                kind === candidate
-                  ? 'border-accent bg-accent text-on-accent'
-                  : 'border-border text-muted hover:text-foreground'
-              }`}
-            >
-              {KIND_LABELS[candidate]}
-            </button>
-          ))}
+        <div>
+          <span className="label">Type de source</span>
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(KIND_LABELS) as Kind[]).map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                onClick={() => {
+                  setKind(candidate);
+                  setConnection({ url: '' });
+                }}
+                className={`rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                  kind === candidate
+                    ? 'border-accent bg-accent text-on-accent'
+                    : 'border-border text-muted hover:border-accent/60 hover:text-foreground'
+                }`}
+              >
+                {KIND_LABELS[candidate]}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-muted">{KIND_HINTS[kind]}</p>
         </div>
       )}
 
-      <label className="flex flex-col gap-1 text-sm">
-        Nom de la source
+      <div>
+        <label className="label" htmlFor="source-name">
+          Nom de la source
+        </label>
         <input
+          id="source-name"
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Ex. : Playlist famille"
-          className="rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-accent"
+          className="input"
+          required
         />
-      </label>
+      </div>
 
       {CONNECTION_FIELDS[kind].map((field) => (
-        <label key={field.key} className="flex flex-col gap-1 text-sm">
-          {field.label}
+        <div key={field.key}>
+          <label className="label" htmlFor={`source-${field.key}`}>
+            {field.label}
+          </label>
           <input
+            id={`source-${field.key}`}
             type={field.type ?? 'text'}
             value={connection[field.key] ?? ''}
             onChange={(event) => setField(field.key, event.target.value)}
             placeholder={field.placeholder}
-            className="rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-accent"
+            className="input"
           />
-        </label>
+        </div>
       ))}
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && (
+        <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          {error}
+        </p>
+      )}
+
       <div className="flex gap-3">
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded-lg bg-accent px-4 py-2 font-semibold text-on-accent disabled:opacity-50"
-        >
-          {busy ? 'Enregistrement…' : source ? 'Enregistrer' : 'Créer la source'}
+        <button type="submit" disabled={busy} className="btn btn-primary">
+          {busy ? 'Enregistrement…' : source ? 'Enregistrer les modifications' : 'Créer la source'}
         </button>
         <button
           type="button"
           onClick={() => router.push('/control/sources')}
-          className="rounded-lg border border-border px-4 py-2 text-sm text-muted hover:text-foreground"
+          className="btn"
         >
           Annuler
         </button>

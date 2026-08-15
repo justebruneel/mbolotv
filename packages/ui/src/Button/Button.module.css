@@ -20,7 +20,7 @@
 .primary {
   background: var(--mbolo-primary);
   border-color: var(--mbolo-primary);
-  color: #fff;
+  color: var(--mbolo-on-primary);
 }
 
 .primary:hover {

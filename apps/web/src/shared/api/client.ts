@@ -1,4 +1,5 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
+const baseUrl = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+const API_URL = baseUrl.endsWith('/api') ? baseUrl : `${baseUrl}/api`;
 
 export type QueryParams = Record<string, string | number | undefined>;
 

@@ -1,25 +1,59 @@
 'use client';
 
-import { Badge, Button, ChannelRow, EmptyState, Player, Spinner } from '@mbolo/ui';
-import { useParams, useRouter } from 'next/navigation';
-import { useMemo } from 'react';
+import { Badge, Button, ChannelRow, EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useMemo } from 'react';
 import {
   useChannel,
   useChannelEpg,
-  useChannels,
+  useInfiniteChannels,
   usePlayUrl,
 } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
+import { PageHeader } from '../../../../shared/components/PageHeader';
+import { useSettingsStore } from '../../../../shared/stores/settings';
+import { buildWatchHref } from '../../../../features/live-tv/utils';
+
+const PAGE_SIZE = 48;
 
 export default function WatchPage() {
   const params = useParams<{ channelId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const channelId = params.channelId;
+
+  const category = searchParams.get('category') ?? undefined;
+  const country = searchParams.get('country') ?? undefined;
+  const q = searchParams.get('q') ?? undefined;
+
+  const volume = useSettingsStore((state) => state.volume);
+  const preferredLevel = useSettingsStore((state) => state.preferredLevel);
+  const dataSaver = useSettingsStore((state) => state.dataSaver);
+  const setVolume = useSettingsStore((state) => state.setVolume);
+  const setPreferredLevel = useSettingsStore((state) => state.setPreferredLevel);
+  const setDataSaver = useSettingsStore((state) => state.setDataSaver);
+  const recordWatch = useSettingsStore((state) => state.recordWatch);
 
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
   const playQuery = usePlayUrl(channelId);
-  const channelsQuery = useChannels({ limit: 100 });
+
+  const channelsQuery = useInfiniteChannels({ category, country, q }, PAGE_SIZE);
+  const navChannels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+
+  useEffect(() => {
+    if (channelQuery.data) {
+      recordWatch(channelId, channelQuery.data.name);
+    }
+  }, [channelId, channelQuery.data, recordWatch]);
+
+  useEffect(() => {
+    if (!navChannels.some((channel) => channel.id === channelId)) {
+      if (channelsQuery.hasNextPage && !channelsQuery.isFetchingNextPage) {
+        void channelsQuery.fetchNextPage();
+      }
+    }
+  }, [navChannels, channelId, channelsQuery]);
 
   const { now, next } = useMemo(() => {
     const programmes = epgQuery.data ?? [];
@@ -35,19 +69,26 @@ export default function WatchPage() {
   }, [epgQuery.data]);
 
   const navigate = (direction: 'prev' | 'next') => {
-    const channels = channelsQuery.data?.items ?? [];
-    const index = channels.findIndex((channel) => channel.id === channelId);
+    const index = navChannels.findIndex((channel) => channel.id === channelId);
     if (index === -1) return;
     const target =
       direction === 'next'
-        ? channels[(index + 1) % channels.length]
-        : channels[(index - 1 + channels.length) % channels.length];
-    if (target) router.push(`/watch/${target.id}`);
+        ? navChannels[(index + 1) % navChannels.length]
+        : navChannels[(index - 1 + navChannels.length) % navChannels.length];
+    if (target) router.push(buildWatchHref(target.id, { category, country, q }));
+  };
+
+  const goBack = (): void => {
+    if (window.history.length > 1) {
+      router.back();
+    } else {
+      router.replace('/live');
+    }
   };
 
   if (channelQuery.isLoading || !channelQuery.data) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--mbolo-space-8)' }}>
+      <div className="flex justify-center p-12">
         <Spinner />
       </div>
     );
@@ -57,31 +98,55 @@ export default function WatchPage() {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--mbolo-space-4)', marginBottom: 'var(--mbolo-space-5)' }}>
-        <h1 className="pageTitle" style={{ margin: 0, flex: 1 }}>
-          {channel.name}
-          {channel.country && <Badge tone="accent">{channel.country}</Badge>}
-        </h1>
-        <FavoriteToggle channelId={channel.id} />
-        <Button variant="ghost" size="small" onClick={() => navigate('prev')}>
-          ← Précédente
-        </Button>
-        <Button variant="ghost" size="small" onClick={() => navigate('next')}>
-          Suivante →
-        </Button>
-      </div>
+      <button
+        type="button"
+        onClick={goBack}
+        className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-accent"
+      >
+        <Icon.ChevronLeft size={15} aria-hidden />
+        Retour
+      </button>
+
+      <PageHeader
+        title={
+          <span className="flex items-center gap-2">
+            {channel.name}
+            {channel.country && <Badge tone="accent">{channel.country}</Badge>}
+          </span>
+        }
+        actions={
+          <>
+            <FavoriteToggle channelId={channel.id} />
+            <Button variant="ghost" size="small" onClick={() => navigate('prev')}>
+              <Icon.ChevronLeft size={16} /> Précédente
+            </Button>
+            <Button variant="ghost" size="small" onClick={() => navigate('next')}>
+              Suivante <Icon.ChevronRight size={16} />
+            </Button>
+          </>
+        }
+      />
 
       {playQuery.isLoading ? (
-        <div style={{ aspectRatio: '16 / 9', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', borderRadius: 'var(--mbolo-radius-lg)' }}>
+        <div className="aspect-video flex items-center justify-center rounded-2xl bg-black">
           <Spinner />
         </div>
       ) : playQuery.data ? (
-        <Player src={playQuery.data.url} title={channel.name} />
+        <Player
+          urls={playQuery.data ? [playQuery.data.url] : []}
+          title={channel.name}
+          initialVolume={volume}
+          initialLevel={preferredLevel}
+          initialDataSaver={dataSaver}
+          onVolumeChange={setVolume}
+          onLevelChange={setPreferredLevel}
+          onDataSaverChange={setDataSaver}
+        />
       ) : (
         <EmptyState title="Lecture indisponible" hint="Impossible de récupérer un flux pour cette chaîne." />
       )}
 
-      <div style={{ marginTop: 'var(--mbolo-space-5)' }}>
+      <div className="mt-5">
         {now ? (
           <ChannelRow channel={channel} now={now} next={next} />
         ) : (

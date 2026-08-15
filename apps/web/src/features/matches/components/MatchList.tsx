@@ -20,13 +20,13 @@ export function MatchFilters({
   onChange: (params: Partial<MatchQuery>) => void;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 'var(--mbolo-space-3)', flexWrap: 'wrap', marginBottom: 'var(--mbolo-space-5)' }}>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 'var(--mbolo-font-size-sm)', color: 'var(--mbolo-text-muted)' }}>
+    <div className="mb-5 flex flex-wrap items-end gap-3">
+      <label className="flex flex-col gap-1 text-sm text-muted">
         Sport
         <select
           value={sport}
           onChange={(event) => onChange({ sport: event.target.value || undefined })}
-          style={{ background: 'var(--mbolo-surface-2)', color: 'var(--mbolo-text)', border: '1px solid var(--mbolo-border)', borderRadius: 'var(--mbolo-radius)', padding: '8px 12px', font: 'inherit' }}
+          className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-accent"
         >
           <option value="">Tous les sports</option>
           <option value="Football">Football</option>
@@ -36,23 +36,17 @@ export function MatchFilters({
           <option value="Cyclisme">Cyclisme</option>
         </select>
       </label>
-      <div style={{ display: 'flex', gap: 'var(--mbolo-space-2)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+      <div className="flex flex-wrap gap-2">
         {STATE_OPTIONS.map((option) => (
           <button
             key={option.label}
             type="button"
             onClick={() => onChange({ state: option.value })}
-            style={{
-              border: `1px solid ${state === option.value ? 'var(--mbolo-primary)' : 'var(--mbolo-border)'}`,
-              background: state === option.value ? 'var(--mbolo-primary)' : 'var(--mbolo-surface)',
-              color: state === option.value ? '#fff' : 'var(--mbolo-text-muted)',
-              borderRadius: 999,
-              padding: '8px 14px',
-              font: 'inherit',
-              fontSize: 'var(--mbolo-font-size-sm)',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
+            className={
+              state === option.value
+                ? 'rounded-full border border-primary bg-primary px-3.5 py-2 text-sm font-semibold text-on-primary'
+                : 'rounded-full border border-border bg-surface px-3.5 py-2 text-sm font-semibold text-muted transition-colors hover:border-accent/60 hover:text-foreground'
+            }
           >
             {option.label}
           </button>
@@ -65,7 +59,7 @@ export function MatchFilters({
 export function MatchList({ data, isLoading }: { data?: MatchListResponse; isLoading: boolean }) {
   if (isLoading || !data) {
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--mbolo-space-4)' }}>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
         {Array.from({ length: 8 }).map((_, index) => (
           <Skeleton key={index} height={140} />
         ))}
@@ -78,7 +72,7 @@ export function MatchList({ data, isLoading }: { data?: MatchListResponse; isLoa
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--mbolo-space-4)' }}>
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
       {data.items.map((match: Match) => (
         <MatchCard key={match.id} match={match} />
       ))}

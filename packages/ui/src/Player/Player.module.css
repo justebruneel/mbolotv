@@ -26,3 +26,56 @@
 .title { font-size: var(--mbolo-font-size-lg); font-weight: 600; margin: 0; }
 
 .hint { color: var(--mbolo-text-muted); font-size: var(--mbolo-font-size-md); margin: 0; }
+
+.progressBar {
+  width: 60%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--mbolo-accent, #4caf50);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.bufferingOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.controls {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.qualitySelect {
+  background: transparent;
+  color: white;
+  border: none;
+  font-size: 12px;
+}
+
+.dataSaverToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: white;
+  white-space: nowrap;
+}

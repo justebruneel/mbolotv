@@ -58,6 +58,7 @@ model Category {
   id String @id @default(cuid())
   slug String @unique
   name String
+  sortOrder Int @default(0)
   parentId String?
   parent Category? @relation("CategoryTree", fields:[parentId], references:[id])
   children Category[] @relation("CategoryTree")
@@ -72,6 +73,7 @@ model Channel {
   country String?
   logoKey String?
   categoryId String?
+  sortOrder Int @default(0)
   createdAt DateTime @default(now())
   category Category? @relation(fields:[categoryId], references:[id])
   variants StreamVariant[]
@@ -87,11 +89,15 @@ model StreamVariant {
   encryptedLocator Bytes
   quality String?
   healthScore Float @default(0)
+  healthStatus String? // OK | DOWN
+  healthCheckedAt DateTime?
+  lastPlayedAt DateTime?
   isActive Boolean @default(true)
   channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
   source Source @relation(fields:[sourceId], references:[id], onDelete:Cascade)
   matchStreams MatchStream[]
   @@index([channelId, isActive, healthScore])
+  @@index([lastPlayedAt])
 }
 model EpgProgramme {
   id String @id @default(cuid())
