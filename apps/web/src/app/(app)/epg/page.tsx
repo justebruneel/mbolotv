@@ -4,10 +4,14 @@ import { useMemo, useState } from 'react';
 import { useCategories, useEpgRange } from '../../../shared/api/queries';
 import { CategoryTabs } from '../../../features/live-tv/components/CategoryTabs';
 import { EpgView } from '../../../features/epg/components/EpgView';
+import { ProgrammeSearch } from '../../../features/epg/components/ProgrammeSearch';
+import { useReminderScheduler } from '../../../features/epg/hooks/useReminderScheduler';
+import { PageHeader } from '../../../shared/components/PageHeader';
 
 export default function EpgPage() {
   const [category, setCategory] = useState<string | undefined>(undefined);
   const categoriesQuery = useCategories();
+  useReminderScheduler();
 
   const window = useMemo(() => {
     const now = Date.now();
@@ -24,12 +28,16 @@ export default function EpgPage() {
 
   return (
     <>
-      <h1 className="pageTitle">Guide TV</h1>
-      <p className="muted" style={{ marginTop: -16 }}>
-        Programmation des prochaines heures
-      </p>
+      <PageHeader
+        title="Guide TV"
+        description="Programmation des prochaines heures"
+      />
 
-      <div style={{ marginTop: 'var(--mbolo-space-5)' }}>
+      <div className="mb-5">
+        <ProgrammeSearch />
+      </div>
+
+      <div className="mb-5">
         <CategoryTabs
           categories={categoriesQuery.data ?? []}
           active={category}
@@ -38,7 +46,7 @@ export default function EpgPage() {
         />
       </div>
 
-      <EpgView data={epgQuery.data} isLoading={epgQuery.isLoading} from={window.from} to={window.to} />
+      <EpgView data={epgQuery.data} isLoading={epgQuery.isLoading} from={window.from} to={window.to} category={category} />
     </>
   );
 }

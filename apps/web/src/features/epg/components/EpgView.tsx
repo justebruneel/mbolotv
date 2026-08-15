@@ -3,23 +3,26 @@
 import type { EpgRangeResponse } from '@mbolo/contracts';
 import { EmptyState, EpgGrid, Skeleton } from '@mbolo/ui';
 import { useRouter } from 'next/navigation';
+import { buildWatchHref } from '../../live-tv/utils';
 
 export function EpgView({
   data,
   isLoading,
   from,
   to,
+  category,
 }: {
   data?: EpgRangeResponse;
   isLoading: boolean;
   from: Date;
   to: Date;
+  category?: string;
 }) {
   const router = useRouter();
 
   if (isLoading || !data) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--mbolo-space-3)' }}>
+      <div className="flex flex-col gap-3">
         {Array.from({ length: 10 }).map((_, index) => (
           <Skeleton key={index} height={56} />
         ))}
@@ -36,7 +39,7 @@ export function EpgView({
       entries={data.items}
       from={from}
       to={to}
-      onSelectChannel={(channelId) => router.push(`/watch/${channelId}`)}
+      onSelectChannel={(channelId) => router.push(buildWatchHref(channelId, { category }))}
     />
   );
 }

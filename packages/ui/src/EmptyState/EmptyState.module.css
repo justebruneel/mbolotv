@@ -8,4 +8,4 @@
   text-align: center;
 }
 
-.icon { font-size: 2rem; }
+.icon { color: var(--mbolo-text-muted); opacity: 0.6; }

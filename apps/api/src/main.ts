@@ -19,6 +19,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: config.get<string>('APP_URL', 'http://localhost:3000'),
     credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   });
   app.setGlobalPrefix('api');
 

@@ -14,6 +14,7 @@ import {
   ownerLoginSchema,
   ownerMfaVerifySchema,
   type OwnerLoginInput,
+  type OwnerLoginResponse,
   type OwnerMe,
   type OwnerMfaVerifyInput,
   type OwnerSession,
@@ -22,10 +23,6 @@ import { OwnerAuthGuard } from '../../common/auth/owner-auth.guard';
 import { getOwnerContext, OwnerContext } from '../../common/auth/owner-context';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { OwnerAuthService } from './owner-auth.service';
-
-interface ChallengeResponse {
-  challengeToken: string;
-}
 
 interface SessionInfo {
   me: OwnerMe;
@@ -40,8 +37,14 @@ export class OwnerAuthController {
   login(
     @Body(new ZodValidationPipe(ownerLoginSchema)) input: OwnerLoginInput,
     @Req() request: FastifyRequest,
-  ): Promise<ChallengeResponse> {
-    return this.ownerAuthService.login(input, request.ip, request.headers['user-agent']);
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<OwnerLoginResponse | OwnerMe> {
+    return this.ownerAuthService.login(
+      input,
+      request.ip,
+      request.headers['user-agent'],
+      reply,
+    );
   }
 
   @Post('mfa/verify')

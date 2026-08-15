@@ -1,5 +1,7 @@
+'use client';
+
 import type { Channel } from '@mbolo/contracts';
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import styles from './ChannelCard.module.css';
 
 export interface ChannelCardProps {
@@ -22,9 +24,11 @@ function formatTime(iso: string): string {
 }
 
 export function ChannelCard({ channel, actions, onClick }: ChannelCardProps) {
+  const [logoError, setLogoError] = useState(false);
+  const down = channel.healthStatus === 'DOWN';
   return (
-    <article className={styles.card}>
-      {onClick && (
+    <article className={down ? [styles.card, styles.down].join(' ') : styles.card}>
+      {onClick && !down && (
         <a className={styles.overlay} href="#" onClick={(event) => {
           event.preventDefault();
           onClick();
@@ -32,16 +36,34 @@ export function ChannelCard({ channel, actions, onClick }: ChannelCardProps) {
       )}
       {actions && <div className={styles.actions}>{actions}</div>}
       <div className={styles.logo} aria-hidden>
-        {channel.logoUrl ? <img src={channel.logoUrl} alt="" width={56} height={56} style={{ objectFit: 'contain' }} /> : initials(channel.name)}
+        {channel.logoUrl && !logoError ? (
+          <img
+            src={channel.logoUrl}
+            alt=""
+            width={56}
+            height={56}
+            decoding="async"
+            onError={() => setLogoError(true)}
+            style={{ objectFit: 'contain' }}
+          />
+        ) : (
+          initials(channel.name)
+        )}
       </div>
       <h3 className={styles.name}>{channel.name}</h3>
       <div className={styles.meta}>
         {channel.country && <span className={styles.country}>{channel.country}</span>}
       </div>
-      {channel.nowPlaying && (
+      {down ? (
         <p className={styles.now}>
-          <strong>{formatTime(channel.nowPlaying.startsAt)}</strong> · {channel.nowPlaying.title}
+          <strong>Hors ligne</strong>
         </p>
+      ) : (
+        channel.nowPlaying && (
+          <p className={styles.now}>
+            <strong>{formatTime(channel.nowPlaying.startsAt)}</strong> · {channel.nowPlaying.title}
+          </p>
+        )
       )}
     </article>
   );

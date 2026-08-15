@@ -8,6 +8,10 @@ export class RecentMfaGuard implements CanActivate {
   constructor(private readonly config: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
+    // En développement, la vérification MFA récente est désactivée.
+    if (this.config.get<string>('NODE_ENV', 'development') !== 'production') {
+      return true;
+    }
     const request = context.switchToHttp().getRequest<FastifyRequest>();
     const owner = getOwnerContext(request);
     const ttlMinutes = this.config.get<number>('OWNER_REAUTH_TTL_MINUTES', 10);

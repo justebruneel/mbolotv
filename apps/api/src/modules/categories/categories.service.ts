@@ -8,14 +8,21 @@ export class CategoriesService {
 
   async findAll(): Promise<Category[]> {
     const categories = await this.prisma.category.findMany({
-      include: { _count: { select: { channels: true } } },
-      orderBy: { name: 'asc' },
+      include: {
+        _count: {
+          select: { channels: { where: { variants: { some: { isActive: true } } } } },
+        },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
-    return categories.map((category) => ({
-      id: category.id,
-      slug: category.slug,
-      name: category.name,
-      channelCount: category._count.channels,
-    }));
+    return categories
+      .map((category) => ({
+        id: category.id,
+        slug: category.slug,
+        name: category.name,
+        channelCount: category._count.channels,
+        sortOrder: category.sortOrder,
+      }))
+      .filter((category) => (category.channelCount ?? 0) > 0);
   }
 }

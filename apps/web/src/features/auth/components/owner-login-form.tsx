@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { ownerApi } from '../../owner/api/owner-api';
+import { IconChevronLeft, IconKey, IconX } from '../../owner/components/ui/icons';
 
 export function OwnerLoginForm() {
   const router = useRouter();
@@ -19,9 +20,16 @@ export function OwnerLoginForm() {
     setBusy(true);
     setError(null);
     try {
-      const challenge = await ownerApi.auth.login({ email, password });
-      setChallengeToken(challenge.challengeToken);
-      setStep('mfa');
+      const result = await ownerApi.auth.login({ email, password });
+      if ('mfaRequired' in result && result.mfaRequired) {
+        setChallengeToken(result.challengeToken);
+        setStep('mfa');
+        return;
+      }
+      // En développement, la session est créée directement (MFA désactivée).
+      const next = new URLSearchParams(window.location.search).get('next') ?? '';
+      router.replace(next.startsWith('/control') ? next : '/control');
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Échec de connexion.');
     } finally {
@@ -45,35 +53,46 @@ export function OwnerLoginForm() {
     }
   }
 
+  const errorBlock = error ? (
+    <p className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+      <IconX className="h-4 w-4 shrink-0" />
+      {error}
+    </p>
+  ) : null;
+
   if (step === 'credentials') {
     return (
-      <form onSubmit={submitCredentials} className="flex w-full max-w-sm flex-col gap-4">
-        <label className="flex flex-col gap-1 text-sm">
-          E-mail
+      <form onSubmit={submitCredentials} className="flex flex-col gap-4">
+        <div>
+          <label className="label" htmlFor="owner-email">
+            E-mail
+          </label>
           <input
+            id="owner-email"
             type="email"
             required
+            autoComplete="username"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-accent"
+            className="input"
           />
-        </label>
-        <label className="flex flex-col gap-1 text-sm">
-          Mot de passe
+        </div>
+        <div>
+          <label className="label" htmlFor="owner-password">
+            Mot de passe
+          </label>
           <input
+            id="owner-password"
             type="password"
             required
+            autoComplete="current-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="rounded-lg border border-border bg-surface px-3 py-2 outline-none focus:border-accent"
+            className="input"
           />
-        </label>
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded-lg bg-accent px-4 py-2 font-semibold text-on-accent transition-opacity disabled:opacity-50"
-        >
+        </div>
+        {errorBlock}
+        <button type="submit" disabled={busy} className="btn btn-primary">
           {busy ? 'Vérification…' : 'Se connecter'}
         </button>
       </form>
@@ -81,13 +100,17 @@ export function OwnerLoginForm() {
   }
 
   return (
-    <form onSubmit={submitMfa} className="flex w-full max-w-sm flex-col gap-4">
-      <p className="text-sm text-muted">
-        Saisissez le code à 6 chiffres de votre application d&apos;authentification.
-      </p>
-      <label className="flex flex-col gap-1 text-sm">
-        Code TOTP
+    <form onSubmit={submitMfa} className="flex flex-col gap-4">
+      <div className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2.5 text-xs text-accent">
+        Identifiants vérifiés. Saisissez le code à 6 chiffres de votre application
+        d’authentification pour terminer la connexion.
+      </div>
+      <div>
+        <label className="label" htmlFor="owner-totp">
+          Code TOTP
+        </label>
         <input
+          id="owner-totp"
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
@@ -96,23 +119,25 @@ export function OwnerLoginForm() {
           pattern="[0-9]{6}"
           value={code}
           onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))}
-          className="rounded-lg border border-border bg-surface px-3 py-2 tracking-[0.5em] outline-none focus:border-accent"
+          className="input text-center font-mono text-lg tracking-[0.5em]"
         />
-      </label>
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      <button
-        type="submit"
-        disabled={busy || code.length !== 6}
-        className="rounded-lg bg-accent px-4 py-2 font-semibold text-on-accent transition-opacity disabled:opacity-50"
-      >
+      </div>
+      {errorBlock}
+      <button type="submit" disabled={busy || code.length !== 6} className="btn btn-primary">
+        <IconKey className="h-4 w-4" />
         {busy ? 'Vérification…' : 'Valider le code'}
       </button>
       <button
         type="button"
-        onClick={() => setStep('credentials')}
-        className="text-sm text-muted hover:text-foreground"
+        onClick={() => {
+          setStep('credentials');
+          setCode('');
+          setError(null);
+        }}
+        className="btn"
       >
-        ← Revenir
+        <IconChevronLeft className="h-4 w-4" />
+        Revenir à la connexion
       </button>
     </form>
   );

@@ -4,8 +4,15 @@ import { ChannelCard, FavoriteButton } from '@mbolo/ui';
 import type { Channel } from '@mbolo/contracts';
 import { useRouter } from 'next/navigation';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
+import { buildWatchHref, type WatchContext } from '../utils';
 
-export function ChannelGrid({ channels }: { channels: Channel[] }) {
+export function ChannelGrid({
+  channels,
+  watchContext,
+}: {
+  channels: Channel[];
+  watchContext?: WatchContext;
+}) {
   const router = useRouter();
   const has = useFavoritesStore((state) => state.has);
   const toggle = useFavoritesStore((state) => state.toggle);
@@ -22,7 +29,7 @@ export function ChannelGrid({ channels }: { channels: Channel[] }) {
         <ChannelCard
           key={channel.id}
           channel={channel}
-          onClick={() => router.push(`/watch/${channel.id}`)}
+          onClick={() => router.push(buildWatchHref(channel.id, watchContext))}
           actions={
             <FavoriteButton
               isActive={has(channel.id)}

@@ -93,7 +93,21 @@ export class SourcesService {
   async remove(ownerId: string, id: string): Promise<void> {
     const source = await this.findOwned(ownerId, id);
     await this.prisma.source.delete({ where: { id } });
-    await this.audit.log(ownerId, 'source.delete', 'source', id, { name: source.name });
+    // Les chaînes qui ne dépendent que de cette source deviennent orphelines
+    // (plus aucune variante) : on les supprime pour ne pas les afficher.
+    const orphans = await this.prisma.channel.findMany({
+      where: { variants: { none: {} } },
+      select: { id: true },
+    });
+    if (orphans.length > 0) {
+      await this.prisma.channel.deleteMany({
+        where: { id: { in: orphans.map((channel) => channel.id) } },
+      });
+    }
+    await this.audit.log(ownerId, 'source.delete', 'source', id, {
+      name: source.name,
+      orphanChannelsRemoved: orphans.length,
+    });
   }
 
   async test(ownerId: string, id: string): Promise<ConnectTestResponse> {

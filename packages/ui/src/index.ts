@@ -7,6 +7,7 @@ export { EmptyState, type EmptyStateProps } from './EmptyState/EmptyState';
 export { EpgGrid, type EpgGridProps } from './EpgGrid/EpgGrid';
 export { FavoriteButton, type FavoriteButtonProps } from './FavoriteButton/FavoriteButton';
 export { Input, type InputProps } from './Input/Input';
+export { Icon } from './icons';
 export { Logo } from './Logo/Logo';
 export { MatchCard, type MatchCardProps } from './MatchCard/MatchCard';
 export { Player, type PlayerProps } from './Player/Player';

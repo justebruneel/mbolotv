@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { MatchQuery, MatchState } from '@mbolo/contracts';
 import { useMatches } from '../../../shared/api/queries';
 import { MatchFilters, MatchList } from '../../../features/matches/components/MatchList';
+import { PageHeader } from '../../../shared/components/PageHeader';
 
 export default function MatchesPage() {
   const [filters, setFilters] = useState<MatchQuery>({});
@@ -12,7 +13,7 @@ export default function MatchesPage() {
 
   return (
     <>
-      <h1 className="pageTitle">Matches</h1>
+      <PageHeader title="Matches" description="Les rencontres à suivre en direct et à venir." />
       <MatchFilters
         sport={filters.sport ?? ''}
         state={filters.state as MatchState | undefined}

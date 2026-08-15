@@ -1,5 +1,6 @@
 'use client';
 
+import { Heart } from 'lucide-react';
 import styles from './FavoriteButton.module.css';
 
 export interface FavoriteButtonProps {
@@ -17,7 +18,7 @@ export function FavoriteButton({ isActive, onToggle, label }: FavoriteButtonProp
       aria-pressed={isActive}
       aria-label={label ?? (isActive ? 'Retirer des favoris' : 'Ajouter aux favoris')}
     >
-      {isActive ? '♥' : '♡'}
+      <Heart size={17} strokeWidth={2} fill={isActive ? 'currentColor' : 'none'} aria-hidden />
     </button>
   );
 }

@@ -1,46 +1,88 @@
 import type { AuditEntry } from '@mbolo/contracts';
+import { EmptyState } from '@mbolo/ui';
 import { serverOwnerFetch } from '../../../../features/auth/server/owner-session';
+import { Card, CardBody } from '../../../../features/owner/components/ui/card';
+import { formatDateTime } from '../../../../features/owner/components/ui/format';
+import { IconSearch } from '../../../../features/owner/components/ui/icons';
+import { PageHeader } from '../../../../features/owner/components/ui/page-header';
+
+const ACTION_TONE: Record<string, string> = {
+  SOURCE_CREATED: 'text-success',
+  SOURCE_UPDATED: 'text-accent',
+  SOURCE_DELETED: 'text-danger',
+  IMPORT_STARTED: 'text-accent',
+  IMPORT_COMPLETED: 'text-success',
+  IMPORT_FAILED: 'text-danger',
+};
+
+function details(entry: AuditEntry): string {
+  if (!entry.metadata) return '—';
+  const parts = Object.entries(entry.metadata)
+    .map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`)
+    .slice(0, 3);
+  return parts.length ? parts.join(' · ') : '—';
+}
 
 export default async function AuditPage() {
   const result = await serverOwnerFetch<{ items: AuditEntry[]; total: number }>(
     '/api/owner/audit?limit=200',
   ).catch(() => null);
 
-  if (!result) return <p className="text-muted">Impossible de charger l’audit.</p>;
-
   return (
     <>
-      <h1 className="pageTitle mb-6">Journal d’audit</h1>
-      <p className="mb-4 text-sm text-muted">
-        {result.total} entrée(s) — {result.items.length} affichée(s)
-      </p>
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-border text-muted">
-            <th className="py-2 pr-4 font-medium">Date</th>
-            <th className="py-2 pr-4 font-medium">Action</th>
-            <th className="py-2 pr-4 font-medium">Entité</th>
-            <th className="py-2 font-medium">Détails</th>
-          </tr>
-        </thead>
-        <tbody>
-          {result.items.map((entry) => (
-            <tr key={entry.id} className="border-b border-border/40">
-              <td className="py-2 pr-4 whitespace-nowrap text-muted">
-                {new Date(entry.createdAt).toLocaleString('fr-FR')}
-              </td>
-              <td className="py-2 pr-4 font-semibold">{entry.action}</td>
-              <td className="py-2 pr-4 text-muted">
-                {entry.entity}
-                {entry.entityId ? ` #${entry.entityId.slice(0, 8)}` : ''}
-              </td>
-              <td className="max-w-md truncate py-2 text-muted">
-                {entry.metadata ? JSON.stringify(entry.metadata) : '—'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <PageHeader
+        title="Journal d’audit"
+        description={result ? `${result.total} entrée(s) — ${result.items.length} affichée(s) sur les plus récentes.` : undefined}
+      />
+
+      {!result ? (
+        <p className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          Impossible de charger l’audit.
+        </p>
+      ) : result.items.length === 0 ? (
+        <div className="card">
+          <EmptyState title="Aucune entrée" hint="Les actions de la console apparaîtront ici." />
+        </div>
+      ) : (
+        <Card className="overflow-hidden">
+          <CardBody className="overflow-x-auto p-0">
+            <table className="w-full min-w-[720px] text-left">
+              <thead>
+                <tr className="border-b border-border bg-surface-2/60">
+                  <th className="th">Date</th>
+                  <th className="th">Action</th>
+                  <th className="th">Entité</th>
+                  <th className="th">Détails</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {result.items.map((entry) => (
+                  <tr key={entry.id} className="transition-colors hover:bg-surface-2/40">
+                    <td className="td whitespace-nowrap text-xs text-muted">
+                      {formatDateTime(entry.createdAt)}
+                    </td>
+                    <td className={`td whitespace-nowrap font-mono text-xs font-semibold ${ACTION_TONE[entry.action] ?? 'text-muted'}`}>
+                      {entry.action}
+                    </td>
+                    <td className="td text-muted">
+                      {entry.entity}
+                      {entry.entityId ? (
+                        <span className="font-mono text-xs"> · {entry.entityId.slice(0, 8)}</span>
+                      ) : null}
+                    </td>
+                    <td className="td max-w-md truncate text-xs text-muted">
+                      <span className="flex items-center gap-1.5">
+                        <IconSearch className="h-3.5 w-3.5 shrink-0" />
+                        {details(entry)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardBody>
+        </Card>
+      )}
     </>
   );
 }

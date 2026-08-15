@@ -3,6 +3,7 @@ import type {
   Channel,
   ChannelListResponse,
   ChannelQuery,
+  CountryOption,
   PlayResponse,
   Programme,
 } from '@mbolo/contracts';
@@ -19,6 +20,11 @@ export class ChannelsController {
     @Query(new ZodValidationPipe(channelQuerySchema)) query: ChannelQuery,
   ): Promise<ChannelListResponse> {
     return this.channelsService.list(query);
+  }
+
+  @Get('countries')
+  countries(): Promise<CountryOption[]> {
+    return this.channelsService.countries();
   }
 
   @Get(':id')

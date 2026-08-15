@@ -23,9 +23,9 @@
 
 .tab:hover { color: var(--mbolo-text); background: var(--mbolo-surface-2); }
 
-.active { background: var(--mbolo-primary); border-color: var(--mbolo-primary); color: #fff; }
+.active { background: var(--mbolo-primary); border-color: var(--mbolo-primary); color: var(--mbolo-on-primary); }
 
-.active:hover { background: var(--mbolo-primary); color: #fff; }
+.active:hover { background: var(--mbolo-primary); color: var(--mbolo-on-primary); }
 
 .count { font-size: 0.7rem; opacity: 0.8; }
 

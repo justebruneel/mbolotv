@@ -5,6 +5,7 @@ import type {
   ImportRunListResponse,
   Overview,
   OwnerLoginInput,
+  OwnerLoginResponse,
   OwnerMe,
   SourceCreateInput,
   SourceDetail,
@@ -20,7 +21,10 @@ export type ApiError = { error: string; message?: string };
 const JSON_HEADERS: Record<string, string> = { 'content-type': 'application/json' };
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  if (response.ok) return (response.status === 204 ? null : response.json()) as T;
+  if (response.ok) {
+    const text = await response.text();
+    return (text ? JSON.parse(text) : null) as T;
+  }
   let body: ApiError = { error: 'Erreur inconnue' };
   try {
     body = (await response.json()) as ApiError;
@@ -35,13 +39,13 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 export const ownerApi = {
   auth: {
-    login: (input: OwnerLoginInput): Promise<{ challengeToken: string }> =>
+    login: (input: OwnerLoginInput): Promise<OwnerLoginResponse | OwnerMe> =>
       fetch(`${BASE_URL}/owner/auth/login`, {
         method: 'POST',
         credentials: 'include',
         headers: JSON_HEADERS,
         body: JSON.stringify(input),
-      }).then(parseResponse<{ challengeToken: string }>),
+      }).then(parseResponse<OwnerLoginResponse | OwnerMe>),
 
     mfaVerify: (challengeToken: string, totpCode: string): Promise<OwnerMe> =>
       fetch(`${BASE_URL}/owner/auth/mfa/verify`, {

@@ -64,3 +64,13 @@
   font-weight: 600;
   letter-spacing: 0.03em;
 }
+
+.down {
+  opacity: 0.5;
+  filter: grayscale(1);
+}
+
+.down:hover {
+  border-color: var(--mbolo-border);
+  transform: none;
+}

@@ -20,7 +20,7 @@ flowchart LR
 
 1. **API** reçoit les connexions source uniquement via la console propriétaire, valide, chiffre et stocke la connexion, puis publie un job. Elle ne parse jamais une playlist en ligne.
 2. **Worker** télécharge avec limites de taille/temps, parse, normalise les catégories, déduplique et produit les entrées de catalogue.
-3. **Gateway streaming** (phase 2) résout un flux uniquement après contrôle d’accès et masque l’URL d’origine.
+3. **Gateway streaming** : `GET /api/stream/:sessionId/*` résout un flux uniquement après validation d’une session à durée limitée (TTL d’inactivité glissant + plafond absolu), réécrit les playlists HLS vers des alias opaques et masque l’URL d’origine.
 4. **Web** ne manipule que des identifiants de catalogue et des jetons de lecture à durée de vie courte.
 
 ## Pipeline d’import
@@ -38,4 +38,4 @@ Clé primaire métier proposée : `normalized_name + country + category + tvg_id
 - SSRF : liste de protocoles, résolution DNS contrôlée, blocage IP privées/métadonnées cloud, redirections limitées.
 - Secrets : champ `connectionEncrypted`, chiffrement AES-GCM, rotation des clés, jamais dans logs/erreurs.
 - MAC : affichage masqué, chiffrement obligatoire, accès réservé au worker.
-- Streaming : allow-list d’hôtes fournisseurs, jetons courts liés à l’utilisateur, limite de débit, audit.
+- Streaming : sessions à alias opaques (`/api/stream/{session}/f/{alias}`), allow-list d’hôtes fournisseurs (domaine source + sous-domaines + `STREAM_ALLOWED_HOSTS`), SSRF vérifié à chaque saut, limite de débit par session et par IP, audit `stream.session_created`.

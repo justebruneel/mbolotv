@@ -9,7 +9,13 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { OwnerLoginInput, OwnerMe, OwnerMfaVerifyInput, OwnerSession } from '@mbolo/contracts';
+import type {
+  OwnerLoginInput,
+  OwnerLoginResponse,
+  OwnerMe,
+  OwnerMfaVerifyInput,
+  OwnerSession,
+} from '@mbolo/contracts';
 import { AuditService } from '../../common/audit/audit.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { OWNER_SESSION_COOKIE, parseCookies } from '../../common/auth/owner-context';
@@ -35,8 +41,9 @@ export class OwnerAuthService {
   async login(
     input: OwnerLoginInput,
     ip: string,
-    _userAgent: string | undefined,
-  ): Promise<{ challengeToken: string }> {
+    userAgent: string | undefined,
+    reply: FastifyReply,
+  ): Promise<OwnerLoginResponse | OwnerMe> {
     const email = input.email.toLowerCase();
 
     const byAccount = this.rateLimiter.check(
@@ -70,12 +77,17 @@ export class OwnerAuthService {
 
     await this.audit.log(user.id, 'owner.login', 'owner', user.id, { ipHash: this.shortHash(ip) });
 
+    // En développement, pas de TOTP : la session est créée immédiatement.
+    if (this.config.get<string>('NODE_ENV', 'development') !== 'production') {
+      return this.createSession(user.id, user.email, ip, userAgent, reply);
+    }
+
     const challengeToken = this.challenge.sign({
       sub: user.id,
       purpose: 'owner-mfa',
       exp: Math.floor(Date.now() / 1000) + 15 * 60,
     });
-    return { challengeToken };
+    return { challengeToken, mfaRequired: true };
   }
 
   async mfaVerify(
@@ -100,11 +112,21 @@ export class OwnerAuthService {
       throw new UnauthorizedException('Code TOTP invalide');
     }
 
+    return this.createSession(user.id, user.email, ip, userAgent, reply);
+  }
+
+  private async createSession(
+    userId: string,
+    email: string,
+    ip: string,
+    userAgent: string | undefined,
+    reply: FastifyReply,
+  ): Promise<OwnerMe> {
     const token = this.crypto.randomToken(48);
     const ttlMinutes = this.config.get<number>('OWNER_SESSION_TTL_MINUTES', 15);
     const session = await this.prisma.ownerSession.create({
       data: {
-        userId: user.id,
+        userId,
         tokenHash: this.crypto.hashToken(token),
         userAgent: userAgent?.slice(0, 200) ?? null,
         ipHash: this.shortHash(ip),
@@ -121,12 +143,12 @@ export class OwnerAuthService {
       maxAge: ttlMinutes * 60,
     });
 
-    await this.audit.log(user.id, 'owner.mfa_verify', 'owner', user.id, {
+    await this.audit.log(userId, 'owner.mfa_verify', 'owner', userId, {
       sessionId: session.id,
       ipHash: this.shortHash(ip),
     });
 
-    return { id: user.id, email: user.email, role: user.role };
+    return { id: userId, email, role: 'OWNER' };
   }
 
   async logout(request: FastifyRequest, reply: FastifyReply): Promise<void> {

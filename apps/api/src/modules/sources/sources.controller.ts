@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -69,6 +71,7 @@ export class SourcesController {
 
   @UseGuards(OwnerAuthGuard, RecentMfaGuard)
   @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Req() request: FastifyRequest, @Param('id') id: string) {
     return this.sourcesService.remove(this.ownerOf(request).userId, id);
   }
