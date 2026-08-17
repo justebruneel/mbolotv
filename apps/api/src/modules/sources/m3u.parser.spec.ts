@@ -1,4 +1,5 @@
-import { isFolderMarker, parseM3u } from './m3u.parser';
+import { Readable } from 'node:stream';
+import { isFolderMarker, parseM3u, parseM3uStream } from './m3u.parser';
 
 describe('m3u.parser', () => {
   describe('isFolderMarker', () => {
@@ -92,6 +93,32 @@ describe('m3u.parser', () => {
       ].join('\n');
 
       expect(parseM3u(playlist)).toHaveLength(0);
+    });
+  });
+
+  describe('parseM3uStream', () => {
+    it('produit le même résultat que parseM3u (flux ligne à ligne)', async () => {
+      const playlist = [
+        '#EXTM3U',
+        '#EXTINF:-1 group-title="News",France 24',
+        'http://server.com/france24.m3u8',
+        '#EXTINF:-1,##### SPORTS #####',
+        'http://server.com/sports.m3u8',
+        '#EXTGRP:Sport',
+        '#EXTINF:-1 tvg-id="euro",Eurosport',
+        'http://server.com/eurosport.m3u8',
+      ].join('\n');
+
+      const stream = Readable.from([playlist.slice(0, 60), playlist.slice(60)]);
+      const channels = await parseM3uStream(stream);
+
+      expect(channels).toEqual(parseM3u(playlist));
+      expect(channels).toHaveLength(2);
+    });
+
+    it('refuse un flux qui dépasse la limite d’octets', async () => {
+      const stream = Readable.from(['#EXTM3U\n#EXTINF:-1,A\nhttp://server.com/a.m3u8\n']);
+      await expect(parseM3uStream(stream, { maxBytes: 10 })).rejects.toThrow('Contenu trop volumineux');
     });
   });
 });

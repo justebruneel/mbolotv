@@ -38,9 +38,12 @@ export class EpgImportService {
       return { sources: 0, channels: 0, programmes: 0, stored: 0, durationMs: Date.now() - startedAt };
     }
 
-    await this.prisma.epgProgramme.deleteMany({
-      where: { channelId: { in: [...tvgMap.values()] } },
-    });
+    const channelIds = [...tvgMap.values()];
+    for (let i = 0; i < channelIds.length; i += 10_000) {
+      await this.prisma.epgProgramme.deleteMany({
+        where: { channelId: { in: channelIds.slice(i, i + 10_000) } },
+      });
+    }
 
     const fetcher = new SafeFetcher();
     const maxBytes = Number(this.config.get('EPG_MAX_BYTES') ?? 512 * 1024 * 1024);

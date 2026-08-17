@@ -9,7 +9,8 @@ import { PageHeader } from '../../../shared/components/PageHeader';
 export default function MatchesPage() {
   const [filters, setFilters] = useState<MatchQuery>({});
 
-  const matchesQuery = useMatches(filters);
+  const polling = !filters.state || filters.state === 'LIVE';
+  const matchesQuery = useMatches(filters, polling ? 60_000 : 0);
 
   return (
     <>

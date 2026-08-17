@@ -4,7 +4,10 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url = "file:./dev.db"
+  // connection_limit=1 : évite les écritures concurrentes qui verrouillent
+  // SQLite (imports massifs). busy_timeout=5000 : attend au lieu d'échouer
+  // quand un autre process écrit.
+  url = "file:./dev.db?connection_limit=1&busy_timeout=5000"
 }
 
 model User {
@@ -117,6 +120,7 @@ model Match {
   homeTeam String
   awayTeam String
   startsAt DateTime
+  endsAt DateTime?
   state String @default("SCHEDULED")
   matchStreams MatchStream[]
   @@index([state, startsAt])

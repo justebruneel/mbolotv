@@ -103,6 +103,14 @@ export const ownerApi = {
         method: 'POST',
         credentials: 'include',
       }).then(parseResponse<ImportRun>),
+
+    uploadPlaylist: (id: string, file: File): Promise<SourceResponse> =>
+      fetch(`${BASE_URL}/owner/sources/${id}/playlist`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: file,
+      }).then(parseResponse<SourceResponse>),
   },
 
   imports: {

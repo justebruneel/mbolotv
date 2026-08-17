@@ -6,7 +6,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--mbolo-space-2);
+  position: relative;
+  transition: border-color 150ms ease;
 }
+
+.cardClickable { cursor: pointer; }
+.cardClickable:hover { border-color: var(--mbolo-accent); }
 
 .top { display: flex; align-items: center; justify-content: space-between; gap: var(--mbolo-space-2); }
 
@@ -27,3 +32,18 @@
 .vs { color: var(--mbolo-text-muted); font-size: var(--mbolo-font-size-sm); }
 
 .time { color: var(--mbolo-text-muted); font-size: var(--mbolo-font-size-sm); text-align: center; margin-top: var(--mbolo-space-1); }
+
+.channels {
+  margin-top: var(--mbolo-space-1);
+  border-top: 1px solid var(--mbolo-border);
+  padding-top: var(--mbolo-space-2);
+  color: var(--mbolo-text-muted);
+  font-size: var(--mbolo-font-size-sm);
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mbolo-space-1);
+}
+
+.channelsLive { color: var(--mbolo-accent); }

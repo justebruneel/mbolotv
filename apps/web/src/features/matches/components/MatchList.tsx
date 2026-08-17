@@ -2,6 +2,7 @@
 
 import type { Match, MatchListResponse, MatchQuery, MatchState } from '@mbolo/contracts';
 import { EmptyState, MatchCard, Skeleton } from '@mbolo/ui';
+import { useRouter } from 'next/navigation';
 
 const STATE_OPTIONS: Array<{ value?: MatchState; label: string }> = [
   { label: 'Tous' },
@@ -57,6 +58,8 @@ export function MatchFilters({
 }
 
 export function MatchList({ data, isLoading }: { data?: MatchListResponse; isLoading: boolean }) {
+  const router = useRouter();
+
   if (isLoading || !data) {
     return (
       <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
@@ -74,7 +77,11 @@ export function MatchList({ data, isLoading }: { data?: MatchListResponse; isLoa
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
       {data.items.map((match: Match) => (
-        <MatchCard key={match.id} match={match} />
+        <MatchCard
+          key={match.id}
+          match={match}
+          onClick={() => router.push(`/matches/${match.id}`)}
+        />
       ))}
     </div>
   );

@@ -17,7 +17,7 @@ describe('StreamingService', () => {
   let crypto: { decrypt: jest.Mock };
   let store: InMemoryStreamSessionStore;
   let audit: { log: jest.Mock };
-  let health: { checkVariantIfStale: jest.Mock; checkVariant: jest.Mock };
+  let health: { checkVariantIfStale: jest.Mock; checkVariantIfNeeded: jest.Mock; checkVariant: jest.Mock };
 
   const variant = {
     id: 'variant-1',
@@ -65,6 +65,7 @@ describe('StreamingService', () => {
     audit = { log: jest.fn().mockResolvedValue(undefined) };
     health = {
       checkVariantIfStale: jest.fn().mockResolvedValue(null),
+      checkVariantIfNeeded: jest.fn().mockResolvedValue(null),
       checkVariant: jest.fn().mockResolvedValue('OK'),
     };
   });
@@ -124,7 +125,7 @@ describe('StreamingService', () => {
     expect(() => service.assertSession(session.id)).toThrow(NotFoundException);
   });
 
-  it('autorise un alias sur le même hôte ou un sous-domaine, refuse un hôte étranger', () => {
+  it('autorise un alias sur le même hôte ou un sous-domaine, découvre un hôte étranger', () => {
     createService();
     const session = store.create(
       {
@@ -140,9 +141,31 @@ describe('StreamingService', () => {
     expect(
       service.registerAlias(session, 'https://cdn.provider.example.com/seg.ts'),
     ).toMatch(/^\/api\/stream\/[^/]+\/f\/[^/]+$/);
-    expect(() => service.registerAlias(session, 'https://evil.com/seg.ts')).toThrow(
+
+    // Un hôte référencé par le contenu d'une playlist (CDN, edge…) est découvert
+    // à la volée : la protection SSRF reste appliquée au moment du fetch effectif.
+    const alias = service.registerAlias(session, 'https://evil.com/seg.ts');
+    expect(alias).toMatch(/^\/api\/stream\/[^/]+\/f\/[^/]+$/);
+    expect(service.allowedHostnames(session).has('evil.com')).toBe(true);
+  });
+
+  it('refuse un alias à protocole ou URL invalide', () => {
+    createService();
+    const session = store.create(
+      {
+        channelId: 'ch-1',
+        variantId: 'v',
+        sourceId: 's',
+        providerHostname: 'provider.example.com',
+      },
+      60_000,
+      3_600_000,
+    );
+
+    expect(() => service.registerAlias(session, 'ftp://example.com/seg.ts')).toThrow(
       BadGatewayException,
     );
+    expect(() => service.registerAlias(session, 'not a url')).toThrow(BadGatewayException);
   });
 
   it('réutilise le même alias pour un segment dont seule l’URL change entre rechargements', () => {
@@ -198,7 +221,7 @@ describe('StreamingService', () => {
     expect(a).not.toBe(b);
   });
 
-  it('autorise un hôte découvert via redirection après enregistrement', async () => {
+  it('autorise les hôtes référencés par une playlist sans redirection préalable', () => {
     createService();
     const session = store.create(
       {
@@ -210,12 +233,6 @@ describe('StreamingService', () => {
       60_000,
       3_600_000,
     );
-
-    expect(() => service.registerAlias(session, 'https://cdn-cdn.example.com/seg.ts')).toThrow(
-      BadGatewayException,
-    );
-
-    await service.registerDiscoveredHost(session, 'https://cdn-cdn.example.com/playlist.m3u8');
 
     expect(
       service.registerAlias(session, 'https://cdn-cdn.example.com/seg.ts'),

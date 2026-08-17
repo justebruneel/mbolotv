@@ -75,21 +75,52 @@ export class HealthCheckService {
     return this.checkVariant(variant);
   }
 
-  async scanRecentlyPlayed(): Promise<void> {
+  /**
+   * Reteste une variante DOWN immédiatement (elle a pu revenir depuis), sinon
+   * seulement si le dernier test est périmé. Utilisé à la sélection du flux :
+   * une variante de repli DOWN est ainsi revérifiée sans attendre le scan.
+   */
+  async checkVariantIfNeeded(
+    variant: VariantLike & { healthCheckedAt: Date | null; healthStatus: string | null },
+  ): Promise<HealthStatus | null> {
+    if (variant.healthStatus !== 'DOWN' && !this.isStale(variant.healthCheckedAt)) return null;
+    return this.checkVariant(variant);
+  }
+
+  /**
+   * Retour réactif du proxy de streaming : le manifest (master.m3u8) de la
+   * variante est injoignable. Le StreamProxy a déjà retenté (2 retries), un
+   * seul échec du manifest est donc un signal fiable de panne.
+   */
+  async recordFailure(variantId: string): Promise<void> {
+    await this.writeResult(variantId, 'DOWN');
+  }
+
+  async scanDueVariants(): Promise<void> {
     if (this.scanning) return;
     this.scanning = true;
     try {
       const since = new Date(Date.now() - this.recentDays * 86_400_000);
+      // Variantes jouées récemment, jamais testées (nouveaux imports) ou
+      // signalées DOWN (détection du retour d'un fournisseur réparé).
       const variants = await this.prisma.streamVariant.findMany({
-        where: { lastPlayedAt: { gte: since } },
+        where: {
+          OR: [
+            { lastPlayedAt: { gte: since } },
+            { healthCheckedAt: null },
+            { healthStatus: 'DOWN' },
+          ],
+        },
         orderBy: { healthCheckedAt: 'asc' },
         take: this.batchSize,
       });
       if (variants.length === 0) return;
 
-      this.logger.log(`Health-check de ${variants.length} variantes récemment regardées`);
+      this.logger.log(`Health-check de ${variants.length} variantes (jouées récemment, jamais testées ou DOWN)`);
       for (const variant of variants) {
-        if (!this.isStale(variant.healthCheckedAt)) continue;
+        // Les variantes DOWN sont retestées à chaque scan (retour fournisseur),
+        // les autres seulement si leur dernier test est périmé.
+        if (variant.healthStatus !== 'DOWN' && !this.isStale(variant.healthCheckedAt)) continue;
         const status = await this.checkVariant(variant);
         if (status === 'DOWN') {
           this.logger.warn(`Variante ${variant.id} signalée hors ligne`);
@@ -115,7 +146,7 @@ export class HealthCheckService {
 
   @Cron(process.env.HEALTH_CHECK_CRON ?? '*/10 * * * *')
   async scheduledScan(): Promise<void> {
-    await this.scanRecentlyPlayed();
+    await this.scanDueVariants();
   }
 }
 

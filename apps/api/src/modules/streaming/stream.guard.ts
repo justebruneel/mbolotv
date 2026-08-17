@@ -8,7 +8,9 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RateLimiterService } from '../../common/rate-limit/rate-limiter.service';
 import { StreamContext, StreamingService } from './streaming.service';
 
-const SESSION_LIMIT = 300;
+// Limite large : un player HLS normal consomme ~1 req/s (playlists) + segments.
+// Les pics de retry (fournisseur instable) ne doivent pas casser la lecture.
+const SESSION_LIMIT = 900;
 const SESSION_WINDOW_MS = 60_000;
 const IP_LIMIT = 1800;
 const IP_WINDOW_MS = 60_000;

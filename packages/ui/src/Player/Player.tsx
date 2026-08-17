@@ -17,11 +17,14 @@ export interface PlayerProps {
   onDataSaverChange?: (enabled: boolean) => void;
 }
 
-const MAX_RETRIES = 3;
-const MAX_NETWORK_RETRIES = 6;
+const MAX_RETRIES = 2;
+const MAX_NETWORK_RETRIES = 2;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const BUFFER_TARGET_SECONDS = 30;
 const LOAD_TIMEOUT_MS = 10_000;
+// Si aucune lecture n'a démarré après ce délai, le flux est considéré comme mort
+// (fournisseur injoignable, fenêtre live trop courte…) et on bascule immédiatement.
+const STARTUP_DEADLINE_MS = 20_000;
 const DEBUG = true; // logs HLS diagnostiques (sauts de timeline live)
 
 interface QualityLevel {
@@ -67,10 +70,13 @@ export function Player({
     let urlIndex = 0;
     let retries = 0;
     let networkRetries = 0;
+    let started = false;
     let bufferInterval: ReturnType<typeof setInterval> | null = null;
     let loadTimer: ReturnType<typeof setTimeout> | null = null;
+    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
 
     const destroyCurrentHls = (): void => {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
       const hls = hlsRef.current;
       if (hls) {
         hls.stopLoad();
@@ -126,18 +132,30 @@ export function Player({
         return;
       }
 
+      started = false;
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      deadlineTimer = setTimeout(() => {
+        // Aucune lecture démarrée dans le délai imparti : flux probablement mort
+        // (timeout fournisseur, segments expirés…) -> failover immédiat.
+        if (!cancelled && !started) startOrAdvance();
+      }, STARTUP_DEADLINE_MS);
+
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
 
-        backBufferLength: 60,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
+        backBufferLength: 30,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
         maxBufferSize: 60 * 1000 * 1000,
         maxBufferHole: 0.5,
 
-        liveSyncDurationCount: 5,
-        liveMaxLatencyDurationCount: 60,
+        // Sync live adaptée aux fenêtres courtes : certaines sources n'ont que
+        // quelques segments (~24 s). 3 segments (~12-15 s) derrière le bord
+        // laissent une marge de manœuvre si le serveur a un léger lag, tout en
+        // restant dans la fenêtre. Resync dès 10 segments d'écart.
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 10,
 
         startLevel: -1,
         abrEwmaDefaultEstimate: 1_000_000,
@@ -145,14 +163,23 @@ export function Player({
         abrMaxWithRealBitrate: true,
         capLevelToPlayerSize: false,
         maxLoadingDelay: 5,
-        maxFragLookUpTolerance: 0.5,
+        // Les serveurs IPTV coupent parfois les segments avec ~0.2 s d'avance
+        // ou de retard : tolérance élargie pour ignorer ces micro-écarts.
+        maxFragLookUpTolerance: 1.0,
 
-        manifestLoadingTimeOut: 8000,
+        // Les segments passent par notre proxy NestJS : TTFB légèrement plus
+        // élevé qu'en direct fournisseur. On est plus patient avec l'API —
+        // le deadline de 20 s (STARTUP_DEADLINE_MS) garde le failover rapide.
+        manifestLoadingTimeOut: 15000,
         manifestLoadingMaxRetry: 3,
-        levelLoadingTimeOut: 8000,
+        levelLoadingTimeOut: 15000,
         levelLoadingMaxRetry: 3,
-        fragLoadingTimeOut: 10000,
+        fragLoadingTimeOut: 20000,
         fragLoadingMaxRetry: 4,
+
+        // Tolérance avant récupération (recoverMediaError) lors d'une famine
+        // du buffer : laisse le temps à un segment lent (via le proxy) d'arriver.
+        maxStarvationDelay: 10,
       });
       hlsRef.current = hls;
       hls.loadSource(urls[urlIndex]);
@@ -162,11 +189,53 @@ export function Player({
         if (cancelled || !data.fatal) return;
 
         if (data.type === ErrorTypes.MEDIA_ERROR) {
+          // Avance légèrement pour sauter le segment corrompu avant la
+          // récupération (évite de rester bloqué sur une image gelée), sans
+          // sortir du buffer déjà chargé.
+          if (el.buffered.length > 0 && el.currentTime + 1 < el.buffered.end(el.buffered.length - 1)) {
+            el.currentTime += 1;
+          }
           hls.recoverMediaError();
           return;
         }
 
         if (data.type === ErrorTypes.NETWORK_ERROR) {
+          // Session expirée ou non autorisée : l'API répond 401/403 (guard)
+          // ou 404 sur le manifest (session inconnue). Retenter est inutile :
+          // on bascule immédiatement sur l'URL suivante, ou on affiche
+          // l'erreur sans épuiser les retries.
+          const status = data.response?.code;
+          const isMasterManifest =
+            typeof data.url === 'string' && data.url.includes('master.m3u8');
+          if (status === 401 || status === 403 || (status === 404 && isMasterManifest)) {
+            if (urlIndex + 1 < urls.length) {
+              urlIndex += 1;
+              retries = 0;
+              networkRetries = 0;
+              destroyCurrentHls();
+              loadCurrentUrl();
+            } else {
+              destroyCurrentHls();
+              if (!cancelled) setStatus('error');
+            }
+            return;
+          }
+
+          const manifestOrLevelUnreachable = [
+            Hls.ErrorDetails.MANIFEST_LOAD_ERROR,
+            Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT,
+            Hls.ErrorDetails.LEVEL_LOAD_ERROR,
+            Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT,
+          ].includes(data.details);
+
+          if (manifestOrLevelUnreachable) {
+            // Manifest/level injoignable : inutile de multiplier les retries doux
+            // (un flux qui ne répond pas après ~10 s ne répondra pas), on bascule
+            // immédiatement sur la variante suivante ou l'erreur finale.
+            startOrAdvance();
+            return;
+          }
+
           networkRetries += 1;
           if (networkRetries <= MAX_NETWORK_RETRIES) {
             // Tente de relancer le chargement sans détruire le buffer existant
@@ -243,6 +312,7 @@ export function Player({
 
     const onPlaying = (): void => {
       if (cancelled) return;
+      started = true;
       retries = 0;
       networkRetries = 0;
       setBuffering(false);
@@ -306,9 +376,26 @@ export function Player({
     return () => video.removeEventListener('volumechange', handleVolumeChange);
   }, [initialVolume, onVolumeChange]);
 
+  const handleVideoClick = (): void => {
+    const video = videoRef.current;
+    if (!video || status !== 'ready') return;
+
+    if (video.paused) {
+      video.play();
+    } else {
+      video.pause();
+    }
+  };
+
   return (
     <div className={styles.player}>
-      <video ref={videoRef} className={styles.video} controls playsInline />
+      <video
+        ref={videoRef}
+        className={styles.video}
+        controls
+        playsInline
+        onClick={handleVideoClick}
+      />
 
       {status !== 'ready' && (
         <div className={styles.overlay}>

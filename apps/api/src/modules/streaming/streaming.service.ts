@@ -11,6 +11,7 @@ import { CryptoService } from '../../common/crypto/crypto.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { HealthCheckService } from '../channel-health/channel-health.service';
 import { assertSafeUrl } from '../sources/safe-fetcher';
+import { HostValidationCache } from './host-validation.cache';
 import { StreamSession, StreamSessionStore } from './stream-session.store';
 
 export interface StreamContext {
@@ -34,6 +35,7 @@ export class StreamingService {
     private readonly audit: AuditService,
     private readonly health: HealthCheckService,
     private readonly config: ConfigService,
+    private readonly hostValidation: HostValidationCache = new HostValidationCache(),
   ) {
     this.idleTtlMs = minutes(this.config.get('STREAM_IDLE_TTL_MINUTES', 240));
     this.absoluteTtlMs = hours(this.config.get('STREAM_ABSOLUTE_TTL_HOURS', 24));
@@ -61,12 +63,21 @@ export class StreamingService {
     // Failover : écarte les variantes déjà signalées hors ligne, sinon repli sur la meilleure
     const variant = variants.find((item) => item.healthStatus !== 'DOWN') ?? variants[0];
 
-    // Refresh d'état non bloquant (badge / prochaine sélection)
-    void this.health.checkVariantIfStale(variant).catch(() => undefined);
+    // Refresh d'état non bloquant (badge / prochaine sélection) : une variante
+    // DOWN de repli est retestée immédiatement, sinon si le test est périmé.
+    void this.health.checkVariantIfNeeded(variant).catch(() => undefined);
     void this.prisma.streamVariant
       .update({ where: { id: variant.id }, data: { lastPlayedAt: new Date() } })
       .catch(() => undefined);
 
+    return this.openSession(channelId, variant);
+  }
+
+  /** Ouvre une session de lecture pour une variante donnée (chaîne ou match). */
+  async openSession(
+    channelId: string,
+    variant: { id: string; sourceId: string; encryptedLocator: Uint8Array },
+  ): Promise<PlayResponse> {
     let providerUrl: string;
     try {
       providerUrl = this.crypto.decrypt(variant.encryptedLocator);
@@ -124,9 +135,23 @@ export class StreamingService {
   }
 
   registerAlias(session: StreamSession, absoluteUrl: string): string {
-    const hostname = new URL(absoluteUrl).hostname.toLowerCase();
+    let url: URL;
+    try {
+      url = new URL(absoluteUrl);
+    } catch {
+      throw new BadGatewayException('URL fournisseur invalide');
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new BadGatewayException('Protocole fournisseur non autorisé');
+    }
+    const hostname = url.hostname.toLowerCase();
     if (!this.isHostAllowed(hostname, session)) {
-      throw new BadGatewayException('Hôte fournisseur non autorisé');
+      // Hôte référencé par le contenu d'une playlist (CDN, edge…) : on l'ajoute aux
+      // hôtes autorisés de la session. La protection SSRF est appliquée au moment du
+      // fetch effectif (stream-proxy.assertAllowed -> assertSafeUrl), pas ici.
+      if (!session.discoveredHosts.includes(hostname)) {
+        session.discoveredHosts.push(hostname);
+      }
     }
     const key = stableSegmentKey(absoluteUrl);
     const existing = this.store.getAliasByKey(session.id, key);
@@ -142,12 +167,12 @@ export class StreamingService {
 
   async registerDiscoveredHost(session: StreamSession, absoluteUrl: string): Promise<void> {
     try {
-      const hostname = new URL(absoluteUrl).hostname.toLowerCase();
+      const url = new URL(absoluteUrl);
+      const hostname = url.hostname.toLowerCase();
       if (this.isHostAllowed(hostname, session)) return;
-      const url = await assertSafeUrl(absoluteUrl);
-      const finalHostname = url.hostname.toLowerCase();
-      if (!session.discoveredHosts.includes(finalHostname)) {
-        session.discoveredHosts.push(finalHostname);
+      await this.hostValidation.assertSafeHost(url);
+      if (!session.discoveredHosts.includes(hostname)) {
+        session.discoveredHosts.push(hostname);
       }
     } catch {
       // Hôte invalide ou non public : on ne l'ajoute pas aux hôtes autorisés.

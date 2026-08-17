@@ -3,7 +3,9 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -26,7 +28,9 @@ interface SessionTokenPayload {
 }
 
 @Injectable()
-export class OwnerAuthService {
+export class OwnerAuthService implements OnModuleInit {
+  private readonly logger = new Logger(OwnerAuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly password: PasswordService,
@@ -36,13 +40,48 @@ export class OwnerAuthService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Provisionne le compte propriétaire depuis l'environnement à chaque démarrage :
+   * OWNER_EMAIL + OWNER_PASSWORD deviennent la seule source de vérité, ce qui rend
+   * le script create-owner inutile et garantit que les identifiants du .env
+   * fonctionnent toujours (le hash est réécrit au boot).
+   */
+  async onModuleInit(): Promise<void> {
+    await this.bootstrapOwnerFromEnv();
+  }
+
+  private async bootstrapOwnerFromEnv(): Promise<void> {
+    const email = (this.config.get<string>('OWNER_EMAIL') ?? '').trim().toLowerCase();
+    const password = this.config.get<string>('OWNER_PASSWORD') ?? '';
+    if (!email) {
+      this.logger.warn('OWNER_EMAIL non défini : aucun compte propriétaire provisionné.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      this.logger.warn(`OWNER_EMAIL invalide (${email}) : provisionnement ignoré.`);
+      return;
+    }
+    if (!password) {
+      this.logger.warn(`OWNER_EMAIL défini mais OWNER_PASSWORD absent : connexion console impossible pour ${email}.`);
+      return;
+    }
+
+    const passwordHash = await this.password.hashPassword(password);
+    await this.prisma.user.upsert({
+      where: { email },
+      update: { role: 'OWNER', passwordHash },
+      create: { email, role: 'OWNER', passwordHash },
+    });
+    this.logger.log(`Compte propriétaire prêt : ${email}`);
+  }
+
   async login(
     input: OwnerLoginInput,
     ip: string,
     userAgent: string | undefined,
     reply: FastifyReply,
   ): Promise<OwnerMe> {
-    const email = input.email.toLowerCase();
+    const email = input.email.trim().toLowerCase();
 
     const byAccount = this.rateLimiter.check(
       `owner-login:${email}`,
@@ -70,17 +109,23 @@ export class OwnerAuthService {
       throw new UnauthorizedException('Identifiants invalides');
     }
 
-    const ttlMinutes = this.config.get<number>('OWNER_SESSION_TTL_MINUTES', 15);
+    const idleTtlMinutes = this.config.get<number>('OWNER_SESSION_TTL_MINUTES', 30);
+    const absoluteTtlHours = this.config.get<number>('OWNER_SESSION_ABSOLUTE_TTL_HOURS', 8);
     const now = Date.now();
     const session = await this.prisma.ownerSession.create({
       data: {
         userId: user.id,
         userAgent: userAgent?.slice(0, 200) ?? null,
         ipHash: this.shortHash(ip),
-        expiresAt: new Date(now + ttlMinutes * 60_000),
+        // Fenêtre d'inactivité : glissée à chaque requête par OwnerGuard.
+        expiresAt: new Date(now + idleTtlMinutes * 60_000),
       },
     });
 
+    // Le jeton/cookie couvre la durée ABSOLUE : la déconnexion par inactivité est
+    // gérée côté serveur via expiresAt (base), pas par le jeton (dont le
+    // renouvellement ne pourrait pas atteindre le navigateur via middleware/RSC).
+    const tokenTtlSeconds = Math.max(idleTtlMinutes * 60, absoluteTtlHours * 3_600);
     const token = await this.jwt.sign(
       {
         purpose: 'owner-session',
@@ -89,9 +134,9 @@ export class OwnerAuthService {
         role: 'OWNER',
         jti: session.id,
       },
-      ttlMinutes * 60,
+      tokenTtlSeconds,
     );
-    this.setSessionCookie(reply, token, ttlMinutes);
+    this.setSessionCookie(reply, token, tokenTtlSeconds / 60);
 
     await this.audit.log(user.id, 'owner.login', 'owner', user.id, {
       sessionId: session.id,

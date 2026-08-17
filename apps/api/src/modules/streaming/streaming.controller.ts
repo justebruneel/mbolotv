@@ -11,13 +11,22 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
 import { ConfigService } from '@nestjs/config';
 import { rewriteM3u8 } from './hls-rewriter';
-import { StreamProxy } from './stream-proxy';
+import { HostValidationCache } from './host-validation.cache';
+import { SegmentCache } from './segment-cache';
+import { StreamProxy, StreamProxyResponse } from './stream-proxy';
 import { StreamSessionGuard } from './stream.guard';
+import { HealthCheckService } from '../channel-health/channel-health.service';
 import { StreamContext, StreamingService } from './streaming.service';
 
 const DEFAULT_MAX_PLAYLIST_BYTES = 2 * 1024 * 1024;
 const DEFAULT_PLAYLIST_STALE_TTL_MS = 25_000; // resert une playlist valide ~25 s en cas de pépin fournisseur (durée de rétention typique des segments)
 const MAX_CACHED_PLAYLISTS = 1000;
+// Segments plus gros que ce seuil : streaming direct sans mise en cache
+// (réponses Range de type VOD, segments très haute définition).
+const MAX_CACHED_SEGMENT_BYTES = 20 * 1024 * 1024;
+// Garde-fou de lecture quand le fournisseur n'envoie pas de content-length.
+const SEGMENT_READ_LIMIT_BYTES = 64 * 1024 * 1024;
+const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 128 * 1024 * 1024;
 
 interface CachedPlaylist {
   content: string;
@@ -30,16 +39,22 @@ export class StreamingController {
   private readonly maxPlaylistBytes: number;
   private readonly playlistStaleTtlMs: number;
   private readonly playlistCache = new Map<string, CachedPlaylist>();
+  private readonly segmentCache: SegmentCache;
 
   constructor(
     private readonly streamingService: StreamingService,
     private readonly config: ConfigService,
+    private readonly hostValidation: HostValidationCache,
+    private readonly health: HealthCheckService,
   ) {
     this.maxPlaylistBytes = Number(
       this.config.get('STREAM_MAX_PLAYLIST_BYTES', DEFAULT_MAX_PLAYLIST_BYTES),
     );
     this.playlistStaleTtlMs = Number(
       this.config.get('STREAM_PLAYLIST_STALE_TTL_MS', DEFAULT_PLAYLIST_STALE_TTL_MS),
+    );
+    this.segmentCache = new SegmentCache(
+      Number(this.config.get('STREAM_SEGMENT_CACHE_MAX_BYTES', DEFAULT_SEGMENT_CACHE_MAX_BYTES)),
     );
   }
 
@@ -73,7 +88,7 @@ export class StreamingController {
     providerUrl: string,
     aliasId: string,
   ): Promise<FastifyReply> {
-    const proxy = new StreamProxy();
+    const proxy = new StreamProxy(undefined, this.hostValidation);
     const forwarded: Record<string, string> = {};
     const range = request.headers.range;
     if (typeof range === 'string') forwarded.range = range;
@@ -85,11 +100,22 @@ export class StreamingController {
         allowedHostnames: this.streamingService.allowedHostnames(context.session),
       });
     } catch (error) {
-      // Serve-stale : si le fournisseur pêche brièvement sur une playlist, on
-      // resert la dernière version valide au lieu de casser la lecture du client.
+      // Retour réactif de santé : le manifest est la source de vérité. S'il
+      // est injoignable (le proxy a déjà retenté 2×), la variante est très
+      // probablement morte. Un échec de segment n'est pas fiable (fenêtre
+      // live qui tourne, segment expiré en 404) : on ne remonte que master.
+      if (aliasId === 'master' && context.session.variantId) {
+        void this.health.recordFailure(context.session.variantId).catch(() => undefined);
+      }
+      // Serve-stale : si le fournisseur pêche brièvement, on resert la dernière
+      // version valide (playlist ou segment) au lieu de casser la lecture.
       const stale = this.getCachedPlaylist(context.session.id, aliasId);
       if (stale) {
         return this.sendPlaylistContent(reply, stale);
+      }
+      const staleSegment = this.segmentCache.get(this.segmentKey(context.session.id, aliasId));
+      if (staleSegment) {
+        return this.sendBuffered(reply, staleSegment.buffer, staleSegment.contentType, 200);
       }
       throw error;
     }
@@ -100,14 +126,58 @@ export class StreamingController {
       return this.sendPlaylist(reply, context, response.stream, response.finalUrl, aliasId);
     }
 
+    return this.sendSegment(reply, context, response, aliasId);
+  }
+
+  private async sendSegment(
+    reply: FastifyReply,
+    context: StreamContext,
+    response: StreamProxyResponse,
+    aliasId: string,
+  ): Promise<FastifyReply> {
+    // Réponse de grande taille connue (VOD, Range) : streaming direct sans cache.
+    if (response.contentLength !== null && response.contentLength > MAX_CACHED_SEGMENT_BYTES) {
+      return this.pipeSegment(reply, response);
+    }
+
+    // On bufferise le segment : c'est la seule façon de le mettre en cache et de
+    // servir le serve-stale si le fournisseur pêche au prochain segment. Les
+    // segments live font typiquement 0,5 à 8 Mo.
+    const buffer = await readLimited(response.stream, SEGMENT_READ_LIMIT_BYTES, 'Segment');
+    if (buffer.byteLength <= MAX_CACHED_SEGMENT_BYTES) {
+      this.segmentCache.set(this.segmentKey(context.session.id, aliasId), buffer, response.contentType);
+    }
+    return this.sendBuffered(reply, buffer, response.contentType, response.status);
+  }
+
+  private pipeSegment(reply: FastifyReply, response: StreamProxyResponse): FastifyReply {
     if (response.contentType) reply.header('content-type', response.contentType);
     if (response.contentLength !== null) reply.header('content-length', response.contentLength);
     if (response.contentRange) reply.header('content-range', response.contentRange);
     if (response.acceptRanges) reply.header('accept-ranges', response.acceptRanges);
     reply.header('cache-control', 'no-store');
+    reply.header('x-accel-buffering', 'no');
     reply.status(response.status);
     abortOnDisconnect(reply, response.stream);
     return reply.send(response.stream);
+  }
+
+  private sendBuffered(
+    reply: FastifyReply,
+    buffer: Buffer,
+    contentType: string | null,
+    status: number,
+  ): FastifyReply {
+    if (contentType) reply.header('content-type', contentType);
+    reply.header('content-length', String(buffer.byteLength));
+    reply.header('cache-control', 'no-store');
+    reply.header('x-accel-buffering', 'no');
+    reply.status(status);
+    return reply.send(buffer);
+  }
+
+  private segmentKey(sessionId: string, aliasId: string): string {
+    return `${sessionId}:${aliasId}`;
   }
 
   private async sendPlaylist(
@@ -117,7 +187,7 @@ export class StreamingController {
     providerUrl: string,
     aliasId: string,
   ): Promise<FastifyReply> {
-    const content = await readLimited(stream, this.maxPlaylistBytes);
+    const content = await readLimited(stream, this.maxPlaylistBytes, 'Playlist');
 
     const rewritten = rewriteM3u8(
       content.toString('utf8'),
@@ -132,6 +202,7 @@ export class StreamingController {
   private sendPlaylistContent(reply: FastifyReply, content: string): FastifyReply {
     reply.header('content-type', 'application/vnd.apple.mpegurl');
     reply.header('cache-control', 'no-store');
+    reply.header('x-accel-buffering', 'no');
     reply.status(200);
     return reply.send(content);
   }
@@ -177,14 +248,14 @@ function looksLikePlaylist(contentType: string | null, url: string): boolean {
   return /\.m3u8(\?|$)/i.test(url);
 }
 
-async function readLimited(stream: Readable, maxBytes: number): Promise<Buffer> {
+async function readLimited(stream: Readable, maxBytes: number, label = 'Contenu'): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   try {
     for await (const chunk of stream) {
       size += chunk.length;
       if (size > maxBytes) {
-        throw new BadGatewayException('Playlist fournisseur trop volumineuse');
+        throw new BadGatewayException(`${label} fournisseur trop volumineux`);
       }
       chunks.push(chunk);
     }

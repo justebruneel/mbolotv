@@ -1,6 +1,6 @@
 import { BadGatewayException } from '@nestjs/common';
 import { Readable } from 'node:stream';
-import { assertSafeUrl } from '../sources/safe-fetcher';
+import { HostValidationCache } from './host-validation.cache';
 
 const MAX_REDIRECTS = 5;
 const HEADERS_TIMEOUT_MS = 15_000;
@@ -22,7 +22,10 @@ export interface StreamProxyResponse {
 export class StreamProxy {
   private readonly userAgent: string;
 
-  constructor(userAgent = BROWSER_USER_AGENT) {
+  constructor(
+    userAgent = BROWSER_USER_AGENT,
+    private readonly hostValidation = new HostValidationCache(),
+  ) {
     this.userAgent = userAgent;
   }
 
@@ -75,15 +78,20 @@ export class StreamProxy {
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
           if (!location) {
+            // Corps non lu + fermeture du fournisseur => assert undici (#5360).
+            await response.body?.cancel();
             throw new BadGatewayException('Redirection fournisseur sans destination');
           }
+          await response.body?.cancel();
           // Les redirections du fournisseur sont suivies après validation SSRF
           // (hôte public uniquement), sans appliquer l'allowlist de session.
-          url = await assertSafeUrl(new URL(location, url!).toString());
+          url = new URL(location, url!);
+          await this.hostValidation.assertSafeHost(url);
           continue;
         }
 
         if (response.status < 200 || response.status >= 400) {
+          await response.body?.cancel();
           throw new BadGatewayException(`Réponse HTTP ${response.status} du fournisseur`);
         }
 
@@ -136,7 +144,9 @@ export class StreamProxy {
       throw new BadGatewayException('Hôte fournisseur non autorisé');
     }
     // Contrôle SSRF (protocole, DNS, IP privées) sur un hôte autorisé uniquement.
-    await assertSafeUrl(url.toString());
+    // La résolution DNS est mise en cache par hostname (10 min) : sans cache,
+    // chaque segment paierait une ou deux résolutions DNS.
+    await this.hostValidation.assertSafeHost(url);
     return url;
   }
 }

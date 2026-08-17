@@ -14,7 +14,7 @@ import type {
   ProgrammeSearchResponse,
 } from '@mbolo/contracts';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { apiGet } from './client';
+import { apiGet, apiPost } from './client';
 
 export function useCategories() {
   return useQuery({
@@ -104,10 +104,30 @@ export function useProgrammeSearch(q: string, limit = 20) {
   });
 }
 
-export function useMatches(params: MatchQuery) {
+export function useMatches(params: MatchQuery, refetchInterval = 0) {
   return useQuery({
     queryKey: ['matches', params],
     queryFn: () => apiGet<MatchListResponse>('/matches', params),
+    refetchInterval: refetchInterval || undefined,
+  });
+}
+
+export function useMatch(id: string, refetchInterval = 0) {
+  return useQuery({
+    queryKey: ['match', id],
+    queryFn: () => apiGet<Match>(`/matches/${id}`),
+    enabled: !!id,
+    refetchInterval: refetchInterval || undefined,
+  });
+}
+
+export function useMatchPlay(matchId: string, channelId?: string) {
+  return useQuery({
+    queryKey: ['match-play', matchId, channelId ?? 'best'],
+    queryFn: () =>
+      apiPost<PlayResponse>(`/matches/${matchId}/play`, channelId ? { channelId } : undefined),
+    enabled: !!matchId,
+    staleTime: 30 * 60_000,
   });
 }
 

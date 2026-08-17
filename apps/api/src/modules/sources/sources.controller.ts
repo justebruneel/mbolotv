@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -79,6 +80,20 @@ export class SourcesController {
   @Post(':id/import')
   importNow(@Req() request: FastifyRequest, @Param('id') id: string): Promise<ImportRun> {
     return this.sourcesService.importNow(this.ownerOf(request).userId, id);
+  }
+
+  /**
+   * Téléversement d'un fichier .m3u (corps brut, application/octet-stream).
+   * Le fichier remplace la connexion existante et l'import démarre aussitôt.
+   */
+  @UseGuards(OwnerAuthGuard)
+  @Post(':id/playlist')
+  uploadPlaylist(@Req() request: FastifyRequest, @Param('id') id: string): Promise<SourceResponse> {
+    const body = request.body;
+    if (!Buffer.isBuffer(body)) {
+      throw new BadRequestException('Corps de requête attendu (fichier .m3u)');
+    }
+    return this.sourcesService.replacePlaylist(this.ownerOf(request).userId, id, body);
   }
 
   private ownerOf(request: FastifyRequest): OwnerContext {

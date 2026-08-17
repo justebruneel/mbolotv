@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type {
   Channel,
   ChannelListResponse,
@@ -13,18 +14,30 @@ import { StreamingService } from '../streaming/streaming.service';
 
 @Injectable()
 export class ChannelsService {
+  private readonly publicApiUrl: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly streaming: StreamingService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.publicApiUrl = (
+      config.get<string>('PUBLIC_API_URL') ??
+      config.get<string>('API_URL') ??
+      'http://localhost:4000'
+    ).replace(/\/+$/, '');
+  }
 
   async list(query: ChannelQuery): Promise<ChannelListResponse> {
     const where = {
       ...(query.category ? { category: { slug: query.category } } : {}),
       ...(query.country ? { country: query.country } : {}),
       ...(query.q ? { canonicalName: { contains: query.q } } : {}),
-      // Seules les chaînes avec au moins une variante active sont lisibles.
-      variants: { some: { isActive: true } },
+      // Seules les chaînes avec au moins une variante active et non confirmée hors
+      // ligne sont lisibles. Une variante jamais testée (healthStatus null) reste visible.
+      variants: {
+        some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] },
+      },
     };
 
     const [channels, total] = await Promise.all([
@@ -53,7 +66,12 @@ export class ChannelsService {
   async countries(): Promise<CountryOption[]> {
     const rows = await this.prisma.channel.groupBy({
       by: ['country'],
-      where: { country: { not: null }, variants: { some: { isActive: true } } },
+      where: {
+        country: { not: null },
+        variants: {
+          some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] },
+        },
+      },
       _count: { country: true },
     });
     return rows
@@ -68,7 +86,12 @@ export class ChannelsService {
 
   async findOne(id: string): Promise<Channel> {
     const channel = await this.prisma.channel.findFirst({
-      where: { id, variants: { some: { isActive: true } } },
+      where: {
+        id,
+        variants: {
+          some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] },
+        },
+      },
     });
     if (!channel) throw new NotFoundException('Channel not found');
     const nowPlaying = (await this.findNowPlaying([id])).get(id) ?? null;
@@ -152,9 +175,19 @@ export class ChannelsService {
       canonicalName: channel.canonicalName,
       country: channel.country,
       categoryId: channel.categoryId,
-      logoUrl: channel.logoKey,
+      logoUrl: resolveLogoUrl(channel.logoKey, this.publicApiUrl),
       healthStatus,
       nowPlaying,
     };
   }
+}
+
+// Les logos sont stockés dans le storage (clé "logos/...") : une URL
+// fournisseur résiduelle en base (anciens imports) ne doit jamais fuiter vers
+// le navigateur — elle serait bloquée (ORB) et révélerait le fournisseur.
+// Note : pour STORAGE_DRIVER=s3, prévoir un signedUrl asynchrone ici.
+function resolveLogoUrl(logoKey: string | null, publicApiUrl: string): string | null {
+  if (!logoKey) return null;
+  if (/^https?:\/\//i.test(logoKey)) return null;
+  return `${publicApiUrl}/uploads/${logoKey}`;
 }

@@ -25,19 +25,13 @@ export class OwnerGuard {
     private readonly config: ConfigService,
   ) {}
 
-  async validateRequest(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  async validateRequest(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
     const token = request.cookies?.[OWNER_SESSION_COOKIE];
     if (!token) throw new UnauthorizedException('Session manquante');
 
     const payload = await this.jwt.verify<SessionJwtPayload>(token);
     if (payload.purpose !== 'owner-session' || payload.role !== 'OWNER' || !payload.jti) {
       throw new UnauthorizedException('Session invalide');
-    }
-
-    const absoluteTtlHours = this.config.get<number>('OWNER_SESSION_ABSOLUTE_TTL_HOURS', 8);
-    const issuedAt = payload.iat ?? Math.floor(Date.now() / 1000);
-    if (Date.now() - issuedAt * 1000 > absoluteTtlHours * 3_600_000) {
-      throw new UnauthorizedException('Session expirée');
     }
 
     const session = await this.prisma.ownerSession.findUnique({
@@ -48,45 +42,38 @@ export class OwnerGuard {
       throw new UnauthorizedException('Session invalide ou révoquée');
     }
 
-    const ttlMinutes = this.config.get<number>('OWNER_SESSION_TTL_MINUTES', 15);
-    const ttlMs = ttlMinutes * 60_000;
     const now = Date.now();
-    const expMs = (payload.exp ?? now) * 1000;
 
-    if (expMs - now < ttlMs / 2) {
-      const renewed = await this.jwt.sign(
-        {
-          purpose: 'owner-session',
-          sub: session.userId,
-          email: session.user.email,
-          role: 'OWNER',
-          jti: session.id,
-        },
-        ttlMinutes * 60,
-        payload.iat,
-      );
-      this.setSessionCookie(reply, renewed, ttlMinutes);
+    // Plafond absolu : une session ne peut pas dépasser
+    // OWNER_SESSION_ABSOLUTE_TTL_HOURS depuis sa création, même en activité
+    // continue. Le jeton/cookie (durée absolue) ne limite jamais avant lui.
+    const absoluteTtlHours = this.config.get<number>('OWNER_SESSION_ABSOLUTE_TTL_HOURS', 8);
+    if (now - session.createdAt.getTime() > absoluteTtlHours * 3_600_000) {
+      throw new UnauthorizedException('Session expirée');
+    }
+
+    // Fenêtre d'inactivité : sans requête pendant OWNER_SESSION_TTL_MINUTES, la
+    // session est réputée expirée. expiresAt glisse à chaque activité détectée.
+    const ttlMinutes = this.config.get<number>('OWNER_SESSION_TTL_MINUTES', 30);
+    const ttlMs = ttlMinutes * 60_000;
+    const idleExpiryMs = session.expiresAt.getTime();
+    if (idleExpiryMs <= now) {
+      throw new UnauthorizedException('Session expirée par inactivité');
+    }
+
+    if (idleExpiryMs - now < ttlMs / 2) {
       await this.prisma.ownerSession.update({
         where: { id: session.id },
         data: { expiresAt: new Date(now + ttlMs) },
       });
+      session.expiresAt = new Date(now + ttlMs);
     }
 
     (request as FastifyRequest & { ownerContext?: OwnerContext }).ownerContext = {
       userId: session.userId,
       email: session.user.email,
       sessionId: session.id,
-      expiresAt: new Date(Math.max(expMs, now + ttlMs)),
+      expiresAt: session.expiresAt,
     };
-  }
-
-  private setSessionCookie(reply: FastifyReply, token: string, ttlMinutes: number): void {
-    reply.setCookie(OWNER_SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: this.config.get<string>('NODE_ENV', 'development') === 'production',
-      path: '/',
-      maxAge: ttlMinutes * 60,
-    });
   }
 }

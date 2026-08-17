@@ -62,6 +62,15 @@ export const programmeSchema = z.object({
 });
 export type Programme = z.infer<typeof programmeSchema>;
 
+export const matchChannelSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  logoUrl: z.string().nullable(),
+  streamCount: z.number(),
+  bestHealth: z.number().nullable(),
+});
+export type MatchChannel = z.infer<typeof matchChannelSchema>;
+
 export const matchSchema = z.object({
   id: z.string(),
   sport: z.string(),
@@ -69,9 +78,19 @@ export const matchSchema = z.object({
   homeTeam: z.string(),
   awayTeam: z.string(),
   startsAt: z.string(),
+  endsAt: z.string().nullable(),
   state: matchStateSchema,
+  channels: z.array(matchChannelSchema).default([]),
 });
 export type Match = z.infer<typeof matchSchema>;
+
+export const matchPlaySchema = z
+  .object({
+    channelId: z.string().optional(),
+  })
+  .nullish()
+  .transform((value) => value ?? {});
+export type MatchPlayInput = z.infer<typeof matchPlaySchema>;
 
 export const channelQuerySchema = z.object({
   category: z.string().optional(),
@@ -169,7 +188,7 @@ export type PlayResponse = z.infer<typeof playResponseSchema>;
 
 export const ownerLoginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(16).max(200),
+  password: z.string().min(1).max(200),
 });
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;
 

@@ -1,8 +1,13 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
+  PayloadTooLargeException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type {
   ConnectTestResponse,
   ImportRun,
@@ -16,9 +21,14 @@ import { AuditService } from '../../common/audit/audit.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JobQueue } from '../../common/queue/queue.interface';
+import { StorageService } from '../../common/storage/storage.interface';
 import { SafeFetcher } from './safe-fetcher';
 
 const ACTIVE_IMPORT_STATES = ['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING'];
+
+// Aligné sur le bodyLimit du FastifyAdapter (main.ts) : le corps est rejeté
+// en amont par Fastify, ce garde-fou ne sert que de seconde ligne.
+const UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
 
 @Injectable()
 export class SourcesService {
@@ -27,6 +37,8 @@ export class SourcesService {
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
     private readonly queue: JobQueue,
+    private readonly storage: StorageService,
+    private readonly config: ConfigService,
   ) {}
 
   async list(ownerId: string): Promise<SourceResponse[]> {
@@ -70,7 +82,9 @@ export class SourcesService {
       name: input.name,
     });
 
-    if (input.kind === 'M3U') {
+    if (input.kind === 'M3U' && (input.connection['url'] || input.connection['playlistUrl'])) {
+      // Pas d'auto-import si la connexion est vide (le téléversement d'un
+      // fichier local déclenche son propre import après écriture).
       await this.startImport(ownerId, source.id, { silentAudit: true });
     }
     return this.serialize(source, null);
@@ -99,14 +113,17 @@ export class SourcesService {
       where: { variants: { none: {} } },
       select: { id: true },
     });
-    if (orphans.length > 0) {
-      await this.prisma.channel.deleteMany({
-        where: { id: { in: orphans.map((channel) => channel.id) } },
+    let removed = 0;
+    for (let i = 0; i < orphans.length; i += 10_000) {
+      const chunk = orphans.slice(i, i + 10_000);
+      const result = await this.prisma.channel.deleteMany({
+        where: { id: { in: chunk.map((channel) => channel.id) } },
       });
+      removed += result.count;
     }
     await this.audit.log(ownerId, 'source.delete', 'source', id, {
       name: source.name,
-      orphanChannelsRemoved: orphans.length,
+      orphanChannelsRemoved: removed,
     });
   }
 
@@ -118,6 +135,19 @@ export class SourcesService {
 
     const probe = this.buildProbe(source.kind, connection);
     await this.audit.log(ownerId, 'source.test', 'source', id);
+
+    // Source M3U à fichier local : rien à sonder sur le réseau, on vérifie
+    // seulement que le fichier téléversé existe toujours sur disque.
+    if (source.kind === 'M3U' && connection['filePath']) {
+      const root = resolve(this.config.get<string>('STORAGE_LOCAL_DIR', './uploads'));
+      const absolute = resolve(root, connection['filePath']);
+      try {
+        const info = await stat(absolute);
+        return { ok: info.isFile(), latencyMs: null, error: info.isFile() ? null : 'Fichier local introuvable' };
+      } catch {
+        return { ok: false, latencyMs: null, error: 'Fichier local introuvable' };
+      }
+    }
 
     if (!probe) {
       return { ok: false, latencyMs: null, error: 'Connexion incomplète : paramètres manquants' };
@@ -134,6 +164,51 @@ export class SourcesService {
 
   async importNow(ownerId: string, id: string): Promise<ImportRun> {
     return this.startImport(ownerId, id);
+  }
+
+  /**
+   * Téléversement d'un fichier .m3u depuis la console : le fichier est écrit
+   * dans le storage local, la connexion de la source pointe dessus
+   * (`filePath`) et l'import démarre immédiatement.
+   */
+  async replacePlaylist(ownerId: string, id: string, body: Buffer): Promise<SourceResponse> {
+    const source = await this.findOwned(ownerId, id);
+    if (source.kind !== 'M3U') {
+      throw new BadRequestException('Le téléversement de playlist ne concerne que les sources M3U');
+    }
+    if (this.config.get<string>('STORAGE_DRIVER', 'local') !== 'local') {
+      throw new BadRequestException('Le téléversement nécessite STORAGE_DRIVER=local');
+    }
+    if (!body || body.byteLength === 0) {
+      throw new BadRequestException('Fichier vide');
+    }
+    if (body.byteLength > UPLOAD_MAX_BYTES) {
+      throw new PayloadTooLargeException(
+        `Fichier trop volumineux (max ${UPLOAD_MAX_BYTES / (1024 * 1024)} Mo)`,
+      );
+    }
+    // BOM UTF-8 et retours à la ligne tolérés avant l'en-tête obligatoire.
+    const head = body.subarray(0, Math.min(body.byteLength, 512)).toString('utf8').trimStart();
+    if (!head.startsWith('#EXTM3U')) {
+      throw new BadRequestException(
+        'Le fichier ne ressemble pas à une playlist M3U (en-tête #EXTM3U manquant)',
+      );
+    }
+
+    const key = `playlists/${source.id}.m3u`;
+    await this.storage.put(key, body, 'application/x-mpegurl');
+    const updated = await this.prisma.source.update({
+      where: { id },
+      data: {
+        connectionEncrypted: this.crypto.encrypt(JSON.stringify({ filePath: key })),
+        status: 'PENDING',
+      },
+    });
+    await this.audit.log(ownerId, 'source.upload_playlist', 'source', id, {
+      bytes: body.byteLength,
+    });
+    await this.startImport(ownerId, id);
+    return this.serialize(updated, null);
   }
 
   async listImports(): Promise<ImportRunListResponse> {

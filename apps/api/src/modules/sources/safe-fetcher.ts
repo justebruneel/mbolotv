@@ -5,6 +5,11 @@ import { isIP } from 'node:net';
 const MAX_REDIRECTS = 3;
 const TIMEOUT_MS = 15_000;
 
+// Certains serveurs IPTV rejettent (voire coupent la connexion) les agents
+// non-navigateurs. Un UA navigateur est requis pour de nombreux fournisseurs.
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
 export function isPrivateIp(address: string): boolean {
   const ip = isIP(address);
   if (ip === 4) {
@@ -47,6 +52,7 @@ export interface FetchResult {
   status: number;
   latencyMs: number;
   body?: string;
+  contentType?: string;
   error?: string;
   finalUrl?: string;
 }
@@ -56,6 +62,7 @@ export interface StreamFetchResult {
   status: number;
   latencyMs: number;
   stream?: ReadableStream<Uint8Array>;
+  contentType?: string;
   error?: string;
   finalUrl?: string;
 }
@@ -81,12 +88,15 @@ export class SafeFetcher {
         const response = await fetch(url, {
           redirect: 'manual',
           signal: controller.signal,
-          headers: { 'user-agent': options.userAgent ?? 'MboloTV/0.1', accept: '*/*', ...options.headers },
+          headers: { 'user-agent': options.userAgent ?? DEFAULT_USER_AGENT, accept: '*/*', ...options.headers },
         });
 
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
           if (!location) {
+            // Un corps non lu laisse le parser en pause : si le serveur ferme la
+            // connexion, undici (Node < fix #5360) fait crasher le process.
+            await response.body?.cancel();
             return {
               ok: false,
               status: response.status,
@@ -94,11 +104,13 @@ export class SafeFetcher {
               error: 'Redirection sans destination',
             };
           }
+          await response.body?.cancel();
           url = await assertSafeUrl(new URL(location, url).toString());
           continue;
         }
 
         if (!response.ok) {
+          await response.body?.cancel();
           return {
             ok: false,
             status: response.status,
@@ -109,6 +121,7 @@ export class SafeFetcher {
 
         const contentLength = Number(response.headers.get('content-length') ?? '0');
         if (contentLength > maxBytes) {
+          await response.body?.cancel();
           return {
             ok: false,
             status: response.status,
@@ -132,6 +145,7 @@ export class SafeFetcher {
           status: response.status,
           latencyMs: Date.now() - startedAt,
           body: Buffer.from(bytes).toString('utf8'),
+          contentType: response.headers.get('content-type') ?? undefined,
           finalUrl: url.toString(),
         };
       } catch (error) {
@@ -171,12 +185,13 @@ export class SafeFetcher {
         const response = await fetch(url, {
           redirect: 'manual',
           signal: controller.signal,
-          headers: { 'user-agent': options.userAgent ?? 'MboloTV/0.1', accept: '*/*', ...options.headers },
+          headers: { 'user-agent': options.userAgent ?? DEFAULT_USER_AGENT, accept: '*/*', ...options.headers },
         });
 
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
           if (!location) {
+            await response.body?.cancel();
             return {
               ok: false,
               status: response.status,
@@ -184,11 +199,13 @@ export class SafeFetcher {
               error: 'Redirection sans destination',
             };
           }
+          await response.body?.cancel();
           url = await assertSafeUrl(new URL(location, url).toString());
           continue;
         }
 
         if (!response.ok) {
+          await response.body?.cancel();
           return {
             ok: false,
             status: response.status,
@@ -199,6 +216,7 @@ export class SafeFetcher {
 
         const contentLength = Number(response.headers.get('content-length') ?? '0');
         if (contentLength > maxBytes) {
+          await response.body?.cancel();
           return {
             ok: false,
             status: response.status,
@@ -212,6 +230,7 @@ export class SafeFetcher {
           status: response.status,
           latencyMs: Date.now() - startedAt,
           stream: response.body ?? undefined,
+          contentType: response.headers.get('content-type') ?? undefined,
           finalUrl: url.toString(),
         };
       } catch (error) {

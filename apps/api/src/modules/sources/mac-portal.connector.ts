@@ -20,33 +20,43 @@ interface StalkerGenre {
 }
 
 const MAX_API_BYTES = 50 * 1024 * 1024;
+const CONNECTOR_TIMEOUT_MS = 60_000;
 
 export async function fetchMacPortalEntries(connection: MacPortalConnection): Promise<{ entries: ParsedChannel[] }> {
   const base = connection.url.replace(/\/+$/, '');
   const mac = connection.macAddress.trim().toUpperCase();
   const fetcher = new SafeFetcher();
-  const headers = { MAC: mac };
+  // Le portail identifie l'appareil par le header MAC ET le cookie mac= (obligatoire).
+  const headers = { MAC: mac, Cookie: `mac=${mac};stb_lang=en` };
 
   const token = await getPortalToken(fetcher, base, headers);
 
   const genresById = await getGenres(fetcher, base, token, headers);
 
   const channelsResult = await fetcher.fetch(
-    `${base}/portal.php?type=stb&action=get_all_channels&token=${encodeURIComponent(token)}&JsHttpRequest=1-xml`,
-    { maxBytes: MAX_API_BYTES, headers },
+    `${base}/portal.php?type=stb&action=get_all_channels&token=${encodeURIComponent(token)}&JsHttpRequest=1-json`,
+    { maxBytes: MAX_API_BYTES, headers, timeoutMs: CONNECTOR_TIMEOUT_MS },
   );
   if (!channelsResult.ok || channelsResult.body === undefined) {
     throw new Error(channelsResult.error ?? 'Récupération des chaînes refusée');
   }
 
+  const rawBody = channelsResult.body.trim();
+  if (!rawBody) {
+    throw new Error('Le portail n’a renvoyé aucune chaîne (abonnement invalide ou liste vide)');
+  }
+
   let payload: { js?: StalkerChannel[] };
   try {
-    payload = JSON.parse(channelsResult.body);
+    payload = JSON.parse(rawBody);
   } catch {
     throw new Error('Réponse du portail invalide (JSON attendu)');
   }
 
   const channels = Array.isArray(payload.js) ? payload.js : [];
+  if (channels.length === 0) {
+    throw new Error('Le portail n’a renvoyé aucune chaîne (abonnement invalide ou liste vide)');
+  }
   const entries = channels
     .filter((channel) => channel.id != null)
     .map<ParsedChannel>((channel) => ({
@@ -66,8 +76,8 @@ async function getPortalToken(
   headers: Record<string, string>,
 ): Promise<string> {
   const handshake = await fetcher.fetch(
-    `${base}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml`,
-    { headers },
+    `${base}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-json`,
+    { headers, timeoutMs: CONNECTOR_TIMEOUT_MS },
   );
   if (!handshake.ok || handshake.body === undefined) {
     throw new Error(handshake.error ?? 'Handshake du portail refusé');
@@ -94,8 +104,8 @@ async function getGenres(
   const genresById = new Map<number, string>();
   try {
     const genresResult = await fetcher.fetch(
-      `${base}/portal.php?type=stb&action=get_genres&token=${encodeURIComponent(token)}&JsHttpRequest=1-xml`,
-      { headers },
+      `${base}/portal.php?type=stb&action=get_genres&token=${encodeURIComponent(token)}&JsHttpRequest=1-json`,
+      { headers, timeoutMs: CONNECTOR_TIMEOUT_MS },
     );
     if (!genresResult.ok || genresResult.body === undefined) return genresById;
     const payload: { js?: StalkerGenre[] } = JSON.parse(genresResult.body);

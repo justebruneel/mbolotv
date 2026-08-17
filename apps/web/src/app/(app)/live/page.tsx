@@ -5,19 +5,17 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useCategories,
-  useChannelRow,
   useCountries,
   useInfiniteChannels,
 } from '../../../shared/api/queries';
 import { FilterPanel } from '../../../features/live-tv/components/FilterPanel';
-import { GenreRow } from '../../../features/live-tv/components/GenreRow';
+import { BouquetTabs } from '../../../features/live-tv/components/BouquetTabs';
 import { GenreTabs } from '../../../features/live-tv/components/GenreTabs';
 import { SearchIcon, SlidersIcon, XIcon } from '../../../features/live-tv/components/Icons';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
 import { categoryLabel, formatCategoryName, isBouquetCategory } from '../../../features/live-tv/utils';
 
 const PAGE_SIZE = 48;
-const MAX_ROWS = 12;
 const MAX_BOUQUETS = 24;
 const MAX_TABS = 20;
 const SCROLL_KEY = 'mbolo:live:scroll';
@@ -44,7 +42,6 @@ function LiveContent() {
   const countriesQuery = useCountries();
 
   const categories = categoriesQuery.data ?? [];
-  const genres = useMemo(() => categories.filter((genre) => !isBouquetCategory(genre.name)), [categories]);
   const bouquets = useMemo(
     () =>
       categories
@@ -61,20 +58,7 @@ function LiveContent() {
     [categories],
   );
 
-  const rowCategories = useMemo(() => {
-    const list = [...genres, ...bouquets.filter((bouquet) => (bouquet.channelCount ?? 0) > 20)];
-    return list.slice(0, MAX_ROWS);
-  }, [genres, bouquets]);
-
   const isFiltering = category !== undefined || country !== undefined || deferredQuery.trim() !== '';
-
-  const rowQueries = useMemo(() => {
-    return Array.from({ length: MAX_ROWS }, (_, index) => rowCategories[index]);
-  }, [rowCategories]);
-
-  const rowHooks = rowQueries.map((rowCategory, index) =>
-    useChannelRow(rowCategory?.slug, 24, !isFiltering && index < rowCategories.length),
-  );
 
   const channelsQuery = useInfiniteChannels(
     {
@@ -130,7 +114,7 @@ function LiveContent() {
     router.replace(params.toString() ? `/live?${params}` : '/live', { scroll: false });
   };
 
-  const contentReady = !categoriesQuery.isLoading && (isFiltering ? !channelsQuery.isLoading : true);
+  const contentReady = !channelsQuery.isLoading;
   const savedScroll = useRef<number | null>(null);
   const restoredOnce = useRef(false);
 
@@ -192,6 +176,18 @@ function LiveContent() {
         <GenreTabs genres={tabCategories} active={category} onSelect={selectCategory} isLoading={categoriesQuery.isLoading} />
       </div>
 
+      {/* Bouquets — barre horizontale scrollable, si des bouquets existent */}
+      {bouquets.length > 0 && (
+        <div className="px-4 py-2.5 border-b border-border/60">
+          <BouquetTabs
+            bouquets={bouquets}
+            active={isBouquetCategory(selectedCategoryName ?? '') ? category : undefined}
+            onSelect={(slug) => (slug ? selectBouquet(slug) : selectCategory(undefined))}
+            isLoading={categoriesQuery.isLoading}
+          />
+        </div>
+      )}
+
       {/* Filtres — séparés des genres */}
       <div className="px-4 py-2.5 flex flex-wrap items-center gap-2 border-b border-border/60">
         <button
@@ -243,49 +239,36 @@ function LiveContent() {
         />
       )}
 
-      {/* Contenu */}
+      {/* Contenu : toutes les chaînes en liste défilante, avec ou sans filtre */}
       <main className="px-4 py-6 space-y-8">
-        {isFiltering ? (
-          channelsQuery.isLoading ? (
-            <div className="flex justify-center py-16">
-              <Spinner />
-            </div>
-          ) : channels.length > 0 ? (
-            <>
-              <ResultsGrid channels={channels} total={total} watchContext={watchContext} />
-              {channelsQuery.hasNextPage ? (
-                <div className="flex justify-center mt-6">
-                  <Button variant="primary" onClick={() => channelsQuery.fetchNextPage()} disabled={channelsQuery.isFetchingNextPage}>
-                    {channelsQuery.isFetchingNextPage ? 'Chargement…' : 'Charger plus de chaînes'}
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-center text-muted mt-6">{total} chaînes affichées</p>
-              )}
-            </>
-          ) : (
-            <div className="text-center py-16">
-              <p className="text-foreground font-medium">Aucune chaîne ne correspond à ces filtres.</p>
-              <button type="button" onClick={resetAll} className="mt-2 text-accent text-sm font-medium hover:underline">
-                Réinitialiser les filtres
-              </button>
-            </div>
-          )
-        ) : categoriesQuery.isLoading ? (
+        {channelsQuery.isLoading ? (
           <div className="flex justify-center py-16">
             <Spinner />
           </div>
+        ) : channels.length > 0 ? (
+          <>
+            <ResultsGrid channels={channels} total={total} watchContext={watchContext} />
+            {channelsQuery.hasNextPage ? (
+              <div className="flex justify-center mt-6">
+                <Button variant="primary" onClick={() => channelsQuery.fetchNextPage()} disabled={channelsQuery.isFetchingNextPage}>
+                  {channelsQuery.isFetchingNextPage ? 'Chargement…' : 'Charger plus de chaînes'}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-center text-muted mt-6">{total} chaînes affichées</p>
+            )}
+          </>
         ) : (
-          rowCategories.map((rowCategory, index) => (
-            <GenreRow
-              key={rowCategory.id}
-              category={rowCategory}
-              channels={rowHooks[index]?.data?.items ?? []}
-              isLoading={rowHooks[index]?.isLoading ?? false}
-              onSeeAll={() => selectCategory(rowCategory.slug)}
-              watchContext={{ category: rowCategory.slug }}
-            />
-          ))
+          <div className="text-center py-16">
+            <p className="text-foreground font-medium">
+              {isFiltering ? 'Aucune chaîne ne correspond à ces filtres.' : 'Aucune chaîne disponible.'}
+            </p>
+            {isFiltering && (
+              <button type="button" onClick={resetAll} className="mt-2 text-accent text-sm font-medium hover:underline">
+                Réinitialiser les filtres
+              </button>
+            )}
+          </div>
         )}
       </main>
     </div>
