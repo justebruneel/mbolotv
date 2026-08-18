@@ -25,9 +25,6 @@ import { StorageService } from '../../common/storage/storage.interface';
 import { SafeFetcher } from './safe-fetcher';
 
 const ACTIVE_IMPORT_STATES = ['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING'];
-
-// Aligné sur le bodyLimit du FastifyAdapter (main.ts) : le corps est rejeté
-// en amont par Fastify, ce garde-fou ne sert que de seconde ligne.
 const UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
 
 @Injectable()
@@ -54,12 +51,8 @@ export class SourcesService {
     const variantsCount = await this.prisma.streamVariant.count({ where: { sourceId: id } });
     let connectionMasked: Record<string, string> = {};
     try {
-      const connection = JSON.parse(
-        this.crypto.decrypt(source.connectionEncrypted),
-      ) as Record<string, string>;
-      connectionMasked = Object.fromEntries(
-        Object.entries(connection).map(([key, value]) => [key, this.maskValue(value)]),
-      );
+      const connection = JSON.parse(this.crypto.decrypt(source.connectionEncrypted)) as Record<string, string>;
+      connectionMasked = Object.fromEntries(Object.entries(connection).map(([key, value]) => [key, this.maskValue(value)]));
     } catch {
       connectionMasked = { error: 'Impossible de déchiffrer la connexion' };
     }
@@ -69,22 +62,10 @@ export class SourcesService {
   async create(ownerId: string, input: SourceCreateInput): Promise<SourceResponse> {
     const encrypted = this.crypto.encrypt(JSON.stringify(input.connection));
     const source = await this.prisma.source.create({
-      data: {
-        ownerId,
-        name: input.name,
-        kind: input.kind,
-        connectionEncrypted: encrypted,
-        status: 'PENDING',
-      },
+      data: { ownerId, name: input.name, kind: input.kind, connectionEncrypted: encrypted, status: 'PENDING' },
     });
-    await this.audit.log(ownerId, 'source.create', 'source', source.id, {
-      kind: input.kind,
-      name: input.name,
-    });
-
+    await this.audit.log(ownerId, 'source.create', 'source', source.id, { kind: input.kind, name: input.name });
     if (input.kind === 'M3U' && (input.connection['url'] || input.connection['playlistUrl'])) {
-      // Pas d'auto-import si la connexion est vide (le téléversement d'un
-      // fichier local déclenche son propre import après écriture).
       await this.startImport(ownerId, source.id, { silentAudit: true });
     }
     return this.serialize(source, null);
@@ -94,11 +75,7 @@ export class SourcesService {
     await this.findOwned(ownerId, id);
     const updated = await this.prisma.source.update({
       where: { id },
-      data: {
-        name: input.name,
-        priority: input.priority,
-        status: input.status,
-      },
+      data: { name: input.name, priority: input.priority, status: input.status },
     });
     await this.audit.log(ownerId, 'source.update', 'source', id, { changes: input });
     return this.serialize(updated, null);
@@ -107,37 +84,21 @@ export class SourcesService {
   async remove(ownerId: string, id: string): Promise<void> {
     const source = await this.findOwned(ownerId, id);
     await this.prisma.source.delete({ where: { id } });
-    // Les chaînes qui ne dépendent que de cette source deviennent orphelines
-    // (plus aucune variante) : on les supprime pour ne pas les afficher.
-    const orphans = await this.prisma.channel.findMany({
-      where: { variants: { none: {} } },
-      select: { id: true },
-    });
+    const orphans = await this.prisma.channel.findMany({ where: { variants: { none: {} } }, select: { id: true } });
     let removed = 0;
     for (let i = 0; i < orphans.length; i += 10_000) {
       const chunk = orphans.slice(i, i + 10_000);
-      const result = await this.prisma.channel.deleteMany({
-        where: { id: { in: chunk.map((channel) => channel.id) } },
-      });
+      const result = await this.prisma.channel.deleteMany({ where: { id: { in: chunk.map((channel) => channel.id) } } });
       removed += result.count;
     }
-    await this.audit.log(ownerId, 'source.delete', 'source', id, {
-      name: source.name,
-      orphanChannelsRemoved: removed,
-    });
+    await this.audit.log(ownerId, 'source.delete', 'source', id, { name: source.name, orphanChannelsRemoved: removed });
   }
 
   async test(ownerId: string, id: string): Promise<ConnectTestResponse> {
     const source = await this.findOwned(ownerId, id);
-    const connection = JSON.parse(
-      this.crypto.decrypt(source.connectionEncrypted),
-    ) as Record<string, string>;
-
+    const connection = JSON.parse(this.crypto.decrypt(source.connectionEncrypted)) as Record<string, string>;
     const probe = this.buildProbe(source.kind, connection);
     await this.audit.log(ownerId, 'source.test', 'source', id);
-
-    // Source M3U à fichier local : rien à sonder sur le réseau, on vérifie
-    // seulement que le fichier téléversé existe toujours sur disque.
     if (source.kind === 'M3U' && connection['filePath']) {
       const root = resolve(this.config.get<string>('STORAGE_LOCAL_DIR', './uploads'));
       const absolute = resolve(root, connection['filePath']);
@@ -148,84 +109,48 @@ export class SourcesService {
         return { ok: false, latencyMs: null, error: 'Fichier local introuvable' };
       }
     }
-
-    if (!probe) {
-      return { ok: false, latencyMs: null, error: 'Connexion incomplète : paramètres manquants' };
-    }
-
-    const fetcher = new SafeFetcher();
-    const result = await fetcher.fetch(probe);
-    return {
-      ok: result.ok,
-      latencyMs: result.latencyMs,
-      error: result.error ?? null,
-    };
+    if (!probe) return { ok: false, latencyMs: null, error: 'Connexion incomplète : paramètres manquants' };
+    const result = await new SafeFetcher().fetch(probe);
+    return { ok: result.ok, latencyMs: result.latencyMs, error: result.error ?? null };
   }
 
   async importNow(ownerId: string, id: string): Promise<ImportRun> {
     return this.startImport(ownerId, id);
   }
 
-  /**
-   * Téléversement d'un fichier .m3u depuis la console : le fichier est écrit
-   * dans le storage local, la connexion de la source pointe dessus
-   * (`filePath`) et l'import démarre immédiatement.
-   */
   async replacePlaylist(ownerId: string, id: string, body: Buffer): Promise<SourceResponse> {
     const source = await this.findOwned(ownerId, id);
-    if (source.kind !== 'M3U') {
-      throw new BadRequestException('Le téléversement de playlist ne concerne que les sources M3U');
-    }
-    if (this.config.get<string>('STORAGE_DRIVER', 'local') !== 'local') {
-      throw new BadRequestException('Le téléversement nécessite STORAGE_DRIVER=local');
-    }
-    if (!body || body.byteLength === 0) {
-      throw new BadRequestException('Fichier vide');
-    }
-    if (body.byteLength > UPLOAD_MAX_BYTES) {
-      throw new PayloadTooLargeException(
-        `Fichier trop volumineux (max ${UPLOAD_MAX_BYTES / (1024 * 1024)} Mo)`,
-      );
-    }
-    // BOM UTF-8 et retours à la ligne tolérés avant l'en-tête obligatoire.
+    if (source.kind !== 'M3U') throw new BadRequestException('Le téléversement de playlist ne concerne que les sources M3U');
+    if (this.config.get<string>('STORAGE_DRIVER', 'local') !== 'local') throw new BadRequestException('Le téléversement nécessite STORAGE_DRIVER=local');
+    if (!body || body.byteLength === 0) throw new BadRequestException('Fichier vide');
+    if (body.byteLength > UPLOAD_MAX_BYTES) throw new PayloadTooLargeException(`Fichier trop volumineux (max ${UPLOAD_MAX_BYTES / (1024 * 1024)} Mo)`);
     const head = body.subarray(0, Math.min(body.byteLength, 512)).toString('utf8').trimStart();
-    if (!head.startsWith('#EXTM3U')) {
-      throw new BadRequestException(
-        'Le fichier ne ressemble pas à une playlist M3U (en-tête #EXTM3U manquant)',
-      );
-    }
+    if (!head.startsWith('#EXTM3U')) throw new BadRequestException('Le fichier ne ressemble pas à une playlist M3U (en-tête #EXTM3U manquant)');
 
     const key = `playlists/${source.id}.m3u`;
     await this.storage.put(key, body, 'application/x-mpegurl');
     const updated = await this.prisma.source.update({
       where: { id },
-      data: {
-        connectionEncrypted: this.crypto.encrypt(JSON.stringify({ filePath: key })),
-        status: 'PENDING',
-      },
+      data: { connectionEncrypted: this.crypto.encrypt(JSON.stringify({ filePath: key })), status: 'PENDING' },
     });
-    await this.audit.log(ownerId, 'source.upload_playlist', 'source', id, {
-      bytes: body.byteLength,
-    });
+    await this.audit.log(ownerId, 'source.upload_playlist', 'source', id, { bytes: body.byteLength });
     await this.startImport(ownerId, id);
     return this.serialize(updated, null);
   }
 
-  async listImports(): Promise<ImportRunListResponse> {
+  async listImports(ownerId: string): Promise<ImportRunListResponse> {
     const runs = await this.prisma.importRun.findMany({
+      where: { source: { ownerId } },
       include: { source: true },
       orderBy: { startedAt: 'desc' },
       take: 100,
     });
-    return {
-      items: runs.map((run) => this.serializeRun(run)),
-      total: runs.length,
-    };
+    return { items: runs.map((run) => this.serializeRun(run)), total: runs.length };
   }
 
-  async importDetail(id: string): Promise<ImportRun> {
-    const run = await this.prisma.importRun.findUnique({
-      where: { id },
+  async importDetail(ownerId: string, id: string): Promise<ImportRun> {
+    const run = await this.prisma.importRun.findFirst({
+      where: { id, source: { ownerId } },
       include: { source: true },
     });
     if (!run) throw new NotFoundException('Import introuvable');
@@ -235,24 +160,12 @@ export class SourcesService {
   private async startImport(ownerId: string, sourceId: string, options?: { silentAudit?: boolean }): Promise<ImportRun> {
     const source = await this.prisma.source.findUnique({ where: { id: sourceId } });
     if (!source) throw new NotFoundException('Source introuvable');
-    if (source.status === 'DISABLED') {
-      throw new ConflictException('Source désactivée : réactivez-la avant d’importer');
-    }
-
-    const activeRun = await this.prisma.importRun.findFirst({
-      where: { sourceId, state: { in: ACTIVE_IMPORT_STATES } },
-    });
-    if (activeRun) {
-      throw new ConflictException('Un import est déjà en cours pour cette source');
-    }
-
-    const run = await this.prisma.importRun.create({
-      data: { sourceId, state: 'QUEUED', startedAt: new Date() },
-    });
+    if (source.status === 'DISABLED') throw new ConflictException('Source désactivée : réactivez-la avant d’importer');
+    const activeRun = await this.prisma.importRun.findFirst({ where: { sourceId, state: { in: ACTIVE_IMPORT_STATES } } });
+    if (activeRun) throw new ConflictException('Un import est déjà en cours pour cette source');
+    const run = await this.prisma.importRun.create({ data: { sourceId, state: 'QUEUED', startedAt: new Date() } });
     await this.queue.enqueue('source.import', { sourceId, importRunId: run.id });
-    if (!options?.silentAudit) {
-      await this.audit.log(ownerId, 'source.import_request', 'source', sourceId, { importRunId: run.id });
-    }
+    if (!options?.silentAudit) await this.audit.log(ownerId, 'source.import_request', 'source', sourceId, { importRunId: run.id });
     return this.serializeRun({ ...run, source });
   }
 
@@ -263,8 +176,7 @@ export class SourcesService {
       const username = connection['username'];
       const password = connection['password'];
       if (!host || !username || !password) return null;
-      const base = host.replace(/\/+$/, '');
-      return `${base}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+      return `${host.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
     }
     if (kind === 'MAC_PORTAL') {
       const portal = connection['portal'] ?? connection['url'];
@@ -285,19 +197,7 @@ export class SourcesService {
     return source;
   }
 
-  private serialize(
-    source: {
-      id: string;
-      name: string;
-      kind: string;
-      status: string;
-      priority: number;
-      lastSyncedAt: Date | null;
-      createdAt: Date;
-    },
-    _unused?: null,
-    extra?: Partial<SourceDetail>,
-  ): SourceResponse & Partial<SourceDetail> {
+  private serialize(source: { id: string; name: string; kind: string; status: string; priority: number; lastSyncedAt: Date | null; createdAt: Date }, _unused?: null, extra?: Partial<SourceDetail>): SourceResponse & Partial<SourceDetail> {
     return {
       id: source.id,
       name: source.name,
@@ -310,17 +210,7 @@ export class SourcesService {
     };
   }
 
-  private serializeRun(run: {
-    id: string;
-    sourceId: string;
-    state: string;
-    metrics: unknown;
-    errorCode: string | null;
-    errorMessage: string | null;
-    startedAt: Date;
-    completedAt: Date | null;
-    source?: { name: string };
-  }): ImportRun {
+  private serializeRun(run: { id: string; sourceId: string; state: string; metrics: unknown; errorCode: string | null; errorMessage: string | null; startedAt: Date; completedAt: Date | null; source?: { name: string } }): ImportRun {
     return {
       id: run.id,
       sourceId: run.sourceId,
