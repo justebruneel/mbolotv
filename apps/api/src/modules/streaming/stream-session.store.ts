@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
+import Redis from 'ioredis';
 
 export interface StreamSession {
   id: string;
@@ -14,185 +15,70 @@ export interface StreamSession {
   expiresAt: number;
 }
 
-interface AliasEntry {
-  url: string;
-  expiresAt: number;
-}
-
-const DEFAULT_MAX_SESSIONS = 512;
-const DEFAULT_PRUNE_INTERVAL_MS = 60_000;
+interface AliasEntry { url: string; expiresAt: number; }
+type SessionInput = Omit<StreamSession, 'id' | 'createdAt' | 'idleExpiresAt' | 'expiresAt' | 'discoveredHosts'>;
 
 @Injectable()
 export abstract class StreamSessionStore {
-  abstract create(
-    input: Omit<StreamSession, 'id' | 'createdAt' | 'idleExpiresAt' | 'expiresAt' | 'discoveredHosts'>,
-    idleTtlMs: number,
-    absoluteTtlMs: number,
-  ): StreamSession;
-
-  abstract get(id: string): StreamSession | undefined;
-  abstract touch(id: string, idleTtlMs: number): void;
-  abstract delete(id: string): void;
-
-  abstract addAlias(sessionId: string, alias: string, url: string, ttlMs: number): void;
-  abstract getAlias(sessionId: string, alias: string): string | undefined;
-  abstract getAliasByKey(sessionId: string, key: string): string | undefined;
-  abstract setAliasByKey(sessionId: string, key: string, alias: string): void;
-  abstract deleteAliases(sessionId: string): void;
-  abstract prune(now?: number): void;
+  abstract create(input: SessionInput, idleTtlMs: number, absoluteTtlMs: number): Promise<StreamSession>;
+  abstract get(id: string): Promise<StreamSession | undefined>;
+  abstract touch(id: string, idleTtlMs: number): Promise<void>;
+  abstract update(session: StreamSession): Promise<void>;
+  abstract delete(id: string): Promise<void>;
+  abstract addAlias(sessionId: string, alias: string, url: string, ttlMs: number): Promise<void>;
+  abstract getAlias(sessionId: string, alias: string): Promise<string | undefined>;
+  abstract getAliasByKey(sessionId: string, key: string): Promise<string | undefined>;
+  abstract setAliasByKey(sessionId: string, key: string, alias: string): Promise<void>;
+  abstract deleteAliases(sessionId: string): Promise<void>;
+  abstract prune(now?: number): Promise<void>;
 }
 
 @Injectable()
-export class InMemoryStreamSessionStore
-  extends StreamSessionStore
-  implements OnModuleInit, OnModuleDestroy
-{
+export class InMemoryStreamSessionStore extends StreamSessionStore implements OnModuleInit, OnModuleDestroy {
   private readonly sessions = new Map<string, StreamSession>();
   private readonly aliases = new Map<string, Map<string, AliasEntry>>();
   private readonly keyAliases = new Map<string, Map<string, string>>();
-  private readonly maxSessions: number;
-  private readonly pruneIntervalMs: number;
   private timer: NodeJS.Timeout | null = null;
-
-  constructor(private readonly config: ConfigService) {
-    super();
-    this.maxSessions = Number(this.config.get('STREAM_MAX_SESSIONS', DEFAULT_MAX_SESSIONS));
-    this.pruneIntervalMs = Number(
-      this.config.get('STREAM_PRUNE_INTERVAL_MS', DEFAULT_PRUNE_INTERVAL_MS),
-    );
-  }
-
-  onModuleInit(): void {
-    this.timer = setInterval(() => this.prune(), this.pruneIntervalMs);
-    this.timer.unref();
-  }
-
-  onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
-  }
-
-  create(
-    input: Omit<StreamSession, 'id' | 'createdAt' | 'idleExpiresAt' | 'expiresAt' | 'discoveredHosts'>,
-    idleTtlMs: number,
-    absoluteTtlMs: number,
-  ): StreamSession {
-    this.evictIfFull();
+  constructor(private readonly config: ConfigService) { super(); }
+  onModuleInit(): void { this.timer = setInterval(() => void this.prune(), Number(this.config.get('STREAM_PRUNE_INTERVAL_MS', 60_000))); this.timer.unref(); }
+  onModuleDestroy(): void { if (this.timer) clearInterval(this.timer); }
+  async create(input: SessionInput, idleTtlMs: number, absoluteTtlMs: number): Promise<StreamSession> {
     const now = Date.now();
-    const session: StreamSession = {
-      id: randomBytes(18).toString('base64url'),
-      channelId: input.channelId,
-      variantId: input.variantId,
-      sourceId: input.sourceId,
-      providerHostname: input.providerHostname,
-      discoveredHosts: [],
-      createdAt: now,
-      idleExpiresAt: now + idleTtlMs,
-      expiresAt: now + absoluteTtlMs,
-    };
+    const session: StreamSession = { ...input, id: randomBytes(18).toString('base64url'), discoveredHosts: [], createdAt: now, idleExpiresAt: now + idleTtlMs, expiresAt: now + absoluteTtlMs };
     this.sessions.set(session.id, session);
     return session;
   }
+  async get(id: string): Promise<StreamSession | undefined> { const session = this.sessions.get(id); if (!session) return undefined; if (session.expiresAt <= Date.now() || session.idleExpiresAt <= Date.now()) { await this.delete(id); return undefined; } return session; }
+  async touch(id: string, idleTtlMs: number): Promise<void> { const session = await this.get(id); if (!session) return; session.idleExpiresAt = Math.min(Date.now() + idleTtlMs, session.expiresAt); }
+  async update(session: StreamSession): Promise<void> { this.sessions.set(session.id, session); }
+  async delete(id: string): Promise<void> { this.sessions.delete(id); this.aliases.delete(id); this.keyAliases.delete(id); }
+  async addAlias(sessionId: string, alias: string, url: string, ttlMs: number): Promise<void> { if (!this.sessions.has(sessionId)) return; let map = this.aliases.get(sessionId); if (!map) { map = new Map(); this.aliases.set(sessionId, map); } map.set(alias, { url, expiresAt: Date.now() + ttlMs }); }
+  async getAlias(sessionId: string, alias: string): Promise<string | undefined> { const entry = this.aliases.get(sessionId)?.get(alias); if (!entry) return undefined; if (entry.expiresAt <= Date.now()) { this.aliases.get(sessionId)?.delete(alias); return undefined; } return entry.url; }
+  async getAliasByKey(sessionId: string, key: string): Promise<string | undefined> { return this.keyAliases.get(sessionId)?.get(key); }
+  async setAliasByKey(sessionId: string, key: string, alias: string): Promise<void> { let map = this.keyAliases.get(sessionId); if (!map) { map = new Map(); this.keyAliases.set(sessionId, map); } map.set(key, alias); }
+  async deleteAliases(sessionId: string): Promise<void> { this.aliases.delete(sessionId); this.keyAliases.delete(sessionId); }
+  async prune(now = Date.now()): Promise<void> { for (const [id, session] of this.sessions) if (session.expiresAt <= now || session.idleExpiresAt <= now) await this.delete(id); }
+}
 
-  get(id: string): StreamSession | undefined {
-    const session = this.sessions.get(id);
-    if (!session) return undefined;
-    const now = Date.now();
-    if (session.expiresAt <= now || session.idleExpiresAt <= now) {
-      this.delete(id);
-      return undefined;
-    }
-    return session;
-  }
-
-  touch(id: string, idleTtlMs: number): void {
-    const session = this.sessions.get(id);
-    if (!session) return;
-    const now = Date.now();
-    if (session.expiresAt <= now) {
-      this.delete(id);
-      return;
-    }
-    session.idleExpiresAt = Math.min(now + idleTtlMs, session.expiresAt);
-  }
-
-  delete(id: string): void {
-    this.sessions.delete(id);
-    this.aliases.delete(id);
-    this.keyAliases.delete(id);
-  }
-
-  addAlias(sessionId: string, alias: string, url: string, ttlMs: number): void {
-    if (!this.sessions.has(sessionId)) return;
-    let map = this.aliases.get(sessionId);
-    if (!map) {
-      map = new Map<string, AliasEntry>();
-      this.aliases.set(sessionId, map);
-    }
-    map.set(alias, { url, expiresAt: Date.now() + ttlMs });
-  }
-
-  getAlias(sessionId: string, alias: string): string | undefined {
-    const map = this.aliases.get(sessionId);
-    if (!map) return undefined;
-    const entry = map.get(alias);
-    if (!entry) return undefined;
-    if (entry.expiresAt <= Date.now()) {
-      map.delete(alias);
-      return undefined;
-    }
-    return entry.url;
-  }
-
-  getAliasByKey(sessionId: string, key: string): string | undefined {
-    return this.keyAliases.get(sessionId)?.get(key);
-  }
-
-  setAliasByKey(sessionId: string, key: string, alias: string): void {
-    if (!this.sessions.has(sessionId)) return;
-    let map = this.keyAliases.get(sessionId);
-    if (!map) {
-      map = new Map<string, string>();
-      this.keyAliases.set(sessionId, map);
-    }
-    map.set(key, alias);
-  }
-
-  deleteAliases(sessionId: string): void {
-    this.aliases.delete(sessionId);
-  }
-
-  prune(now = Date.now()): void {
-    for (const [id, session] of this.sessions) {
-      if (session.expiresAt <= now || session.idleExpiresAt <= now) {
-        this.sessions.delete(id);
-        this.aliases.delete(id);
-        continue;
-      }
-      const map = this.aliases.get(id);
-      if (!map) continue;
-      for (const [alias, entry] of map) {
-        if (entry.expiresAt <= now) map.delete(alias);
-      }
-      if (map.size === 0) {
-        this.aliases.delete(id);
-        this.keyAliases.delete(id);
-        continue;
-      }
-      const keyMap = this.keyAliases.get(id);
-      if (keyMap) {
-        for (const [key, alias] of keyMap) {
-          if (!map.has(alias)) keyMap.delete(key);
-        }
-        if (keyMap.size === 0) this.keyAliases.delete(id);
-      }
-    }
-  }
-
-  private evictIfFull(): void {
-    if (this.sessions.size < this.maxSessions) return;
-    const oldest = [...this.sessions.entries()].sort(
-      (a, b) => a[1].idleExpiresAt - b[1].idleExpiresAt,
-    )[0];
-    if (oldest) this.delete(oldest[0]);
-  }
+@Injectable()
+export class RedisStreamSessionStore extends StreamSessionStore implements OnModuleDestroy {
+  private readonly redis: Redis;
+  private readonly prefix = 'mbolo:stream:';
+  constructor(config: ConfigService) { super(); this.redis = new Redis(config.getOrThrow<string>('REDIS_URL'), { lazyConnect: false, maxRetriesPerRequest: 2 }); }
+  onModuleDestroy(): void { void this.redis.quit(); }
+  private key(id: string): string { return `${this.prefix}session:${id}`; }
+  private aliasKey(id: string): string { return `${this.prefix}aliases:${id}`; }
+  private mapKey(id: string): string { return `${this.prefix}alias-keys:${id}`; }
+  private async save(session: StreamSession): Promise<void> { const ttl = Math.max(1, Math.min(session.expiresAt - Date.now(), session.idleExpiresAt - Date.now())); await this.redis.set(this.key(session.id), JSON.stringify(session), 'PX', ttl); }
+  async create(input: SessionInput, idleTtlMs: number, absoluteTtlMs: number): Promise<StreamSession> { const now = Date.now(); const session: StreamSession = { ...input, id: randomBytes(18).toString('base64url'), discoveredHosts: [], createdAt: now, idleExpiresAt: now + idleTtlMs, expiresAt: now + absoluteTtlMs }; await this.save(session); return session; }
+  async get(id: string): Promise<StreamSession | undefined> { const raw = await this.redis.get(this.key(id)); if (!raw) return undefined; const session = JSON.parse(raw) as StreamSession; if (session.expiresAt <= Date.now() || session.idleExpiresAt <= Date.now()) { await this.delete(id); return undefined; } return session; }
+  async touch(id: string, idleTtlMs: number): Promise<void> { const session = await this.get(id); if (!session) return; session.idleExpiresAt = Math.min(Date.now() + idleTtlMs, session.expiresAt); await this.save(session); }
+  async update(session: StreamSession): Promise<void> { await this.save(session); }
+  async delete(id: string): Promise<void> { await this.redis.del(this.key(id), this.aliasKey(id), this.mapKey(id)); }
+  async addAlias(sessionId: string, alias: string, url: string, ttlMs: number): Promise<void> { if (!(await this.get(sessionId))) return; await this.redis.hset(this.aliasKey(sessionId), alias, JSON.stringify({ url, expiresAt: Date.now() + ttlMs })); }
+  async getAlias(sessionId: string, alias: string): Promise<string | undefined> { const raw = await this.redis.hget(this.aliasKey(sessionId), alias); if (!raw) return undefined; const entry = JSON.parse(raw) as AliasEntry; if (entry.expiresAt <= Date.now()) { await this.redis.hdel(this.aliasKey(sessionId), alias); return undefined; } return entry.url; }
+  async getAliasByKey(sessionId: string, key: string): Promise<string | undefined> { return (await this.redis.hget(this.mapKey(sessionId), key)) || undefined; }
+  async setAliasByKey(sessionId: string, key: string, alias: string): Promise<void> { await this.redis.hset(this.mapKey(sessionId), key, alias); }
+  async deleteAliases(sessionId: string): Promise<void> { await this.redis.del(this.aliasKey(sessionId), this.mapKey(sessionId)); }
+  async prune(): Promise<void> { /* Redis TTLs remove expired sessions; alias expiry is checked on read. */ }
 }
