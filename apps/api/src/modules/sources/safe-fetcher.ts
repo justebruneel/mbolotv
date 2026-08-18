@@ -10,7 +10,6 @@ export function isPrivateIp(address: string): boolean {
   const normalized = address.trim().toLowerCase();
   const mappedIpv4 = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
   if (mappedIpv4) return isPrivateIp(mappedIpv4[1]);
-
   const ip = isIP(normalized);
   if (ip === 4) {
     const parts = normalized.split('.').map(Number);
@@ -40,11 +39,9 @@ export async function assertSafeUrl(rawUrl: string): Promise<URL> {
   let url: URL;
   try { url = new URL(rawUrl); } catch { throw new BadRequestException('URL invalide'); }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new BadRequestException('Protocole non autorisé (http/https uniquement)');
-
   const hostname = url.hostname.replace(/\.$/, '').toLowerCase();
   if (!hostname) throw new BadRequestException('Hôte invalide');
-  if (isPrivateIp(hostname)) throw new BadRequestException('Adresse IP privée ou locale interdite');
-
+  if (isIP(hostname) !== 0 && isPrivateIp(hostname)) throw new BadRequestException('Adresse IP privée ou locale interdite');
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (addresses.length === 0 || addresses.some(({ address }) => isPrivateIp(address))) throw new BadRequestException('Adresse IP privée ou locale interdite');
   return url;
