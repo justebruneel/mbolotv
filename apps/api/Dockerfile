@@ -1,4 +1,4 @@
-# Contexte de build : racine du monorepo (flyctl deploy depuis la racine).
+# Contexte de build : racine du monorepo (Render, Fly ou autre avec Docker).
 FROM node:22-slim AS builder
 
 ENV PNPM_HOME="/pnpm"
@@ -26,5 +26,5 @@ WORKDIR /app
 COPY --from=builder /app /app
 
 EXPOSE 4000
-# Migrations SQLite appliquées sur le volume persistant avant le démarrage.
+# Migrations PostgreSQL (Prisma) appliquées avant le démarrage.
 CMD ["sh", "-c", "pnpm --filter @mbolo/api exec prisma migrate deploy && node apps/api/dist/main.js"]

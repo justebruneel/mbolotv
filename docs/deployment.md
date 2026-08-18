@@ -1,103 +1,107 @@
-# Déploiement (Vercel + Fly.io)
+# Déploiement gratuit sans carte bancaire (Vercel + Render + Neon + Supabase)
 
-Architecture cible :
+Architecture cible — 100 % tier gratuit, **aucune carte bancaire** :
 
 - **Web (Next.js)** → [Vercel](https://vercel.com) — gratuit, auto-deploy sur chaque push vers `main`.
-- **API (NestJS)** → [Fly.io](https://fly.io) — 3 VM gratuites, volume persistant 3 Go (SQLite + uploads + logos), 160 Go d'egress/mois.
+- **API (NestJS)** → [Render](https://render.com) — web service Docker gratuit (512 Mo RAM, 100 Go egress/mois).
+- **Base de données (PostgreSQL)** → [Neon](https://neon.tech) — gratuit (0,5 Go), persistant, sans carte.
+- **Logos + playlists téléversées** → [Supabase Storage](https://supabase.com) (S3 compatible, 1 Go gratuit).
 
 L'API ne peut pas tourner sur Vercel : le proxy vidéo exige un process long-running
 (timeouts serverless, pas de stockage persistant, sessions en mémoire perdues à chaque cold start).
+Fly.io ne propose plus de tier gratuit aux nouveaux comptes (carte obligatoire) — d'où Render.
 
-## 1. Fly.io — API
+## 1. Neon — base de données PostgreSQL
 
-Prérequis : compte Fly.io (gratuit, pas de carte bancaire) et `flyctl` :
+1. Inscrire un compte sur neon.tech (gratuit, sans carte).
+2. Créer un projet (région proche, ex. `eu-central-1` (Francfort)).
+3. Dans *Connection Details*, copier la chaîne de connexion du pooler **direct**
+   (`postgresql://user:password@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require`).
+4. Créer une branche `dev` (pour les essais locaux) et une branche `main` (production).
 
-```sh
-curl -L https://fly.io/install.sh | sh
-fly auth login
-```
+## 2. Supabase Storage — logos et playlists (optionnel mais recommandé)
 
-Créer l'app et le volume, puis déployer (la config est dans `fly.toml` à la racine) :
+1. Inscrire un compte sur supabase.com (gratuit, sans carte) et créer un projet.
+2. *Storage → S3 Access Keys* : créer une clé, noter l'access key et la secret key.
+3. Créer un bucket privé (ex. `mbolo`) — les logos sont servis via URL signées, pas besoin de bucket public.
+4. Endpoint S3 : `https://<project-ref>.supabase.co/storage/v1/s3` (région `us-east-1`).
 
-```sh
-fly apps create mbolo-tv-api
-fly volumes create mbolo_data --app mbolo-tv-api --size 1 --region ams
-fly deploy --remote-only
-```
+> Sans Supabase, garder `STORAGE_DRIVER=local` : logos et playlists téléversées vivent
+> sur le disque éphémère de Render et sont perdus à chaque redéploiement.
 
-> `--remote-only` : le build Docker est fait sur les machines de Fly (aucun Docker local requis).
+## 3. Render — API
 
-### Secrets (jamais dans le repo)
+Prérequis : compte Render (gratuit, sans carte) connecté à GitHub.
 
-```sh
-fly secrets set --app mbolo-tv-api \
-  JWT_ACCESS_SECRET="$(openssl rand -base64 48)" \
-  JWT_REFRESH_SECRET="$(openssl rand -base64 48)" \
-  ENCRYPTION_KEY="$(openssl rand -base64 32)" \
-  OWNER_CONSOLE_PATH="/control/CHANGEZ-CE-CHEMIN" \
-  OWNER_EMAIL="votre@email.com" \
-  OWNER_PASSWORD="UN-MOT-DE-PASSE-FORT" \
-  CORS_ALLOWED_ORIGINS="https://VOTRE-APP.vercel.app" \
-  APP_URL="https://VOTRE-APP.vercel.app" \
-  API_URL="https://mbolo-tv-api.fly.dev" \
-  PUBLIC_API_URL="https://mbolo-tv-api.fly.dev"
-```
+La config est dans `render.yaml` à la racine (blueprint) :
 
-- `ENCRYPTION_KEY` : base64 de 32 octets — **ne jamais changer après la première base de données** (les connexions chiffrées seraient indéchiffrables).
-- `OWNER_EMAIL` / `OWNER_PASSWORD` : le compte owner est provisionné automatiquement au premier démarrage.
-- `CORS_ALLOWED_ORIGINS` : remplacer `VOTRE-APP.vercel.app` par l'URL Vercel réelle.
-- Les valeurs par défaut (`QUEUE_DRIVER=inprocess`, `STREAM_SESSION_STORE=memory`, `DATABASE_URL=file:/data/dev.db`, …) sont déjà dans `fly.toml`.
-
-### Déploiement GitHub Actions
-
-Le workflow `.github/workflows/deploy.yml` déploie automatiquement l'API à chaque
-push sur `main` touchant l'API. Prérequis : un token d'accès Fly dans les secrets du repo :
-
-```sh
-fly tokens create deploy --app mbolo-tv-api
-```
-
-→ GitHub → repo → Settings → Secrets and variables → Actions → `FLY_API_TOKEN`.
-
-### Vérification
-
-```sh
-curl https://mbolo-tv-api.fly.dev/api/health
-# {"status":"ok","uptimeSeconds":...}
-```
-
-## 2. Vercel — Web
-
-1. vercel.com → *Add New Project* → importer le repo GitHub `mbolotv`.
-2. **Root Directory** : `apps/web`.
-3. Framework détecté : Next.js — build command et install command par défaut.
-4. Environment variables (build time, le client lit `NEXT_PUBLIC_API_URL`) :
+1. dashboard.render.com → *New +* → *Blueprint* → sélectionner le repo `mbolotv`.
+2. Le blueprint crée le service `mbolo-tv-api` (Docker, plan free, région Francfort, health check `/api/health`).
+3. Renseigner les variables d'environnement demandées (saisie unique dans le dashboard) :
 
    | Variable | Valeur |
    | --- | --- |
-   | `NEXT_PUBLIC_API_URL` | `https://mbolo-tv-api.fly.dev` |
+   | `DATABASE_URL` | chaîne de connexion Neon (branche `main`) |
+   | `ENCRYPTION_KEY` | `openssl rand -base64 32` — **ne jamais changer ensuite** (connexions chiffrées) |
+   | `OWNER_EMAIL` | compte owner (provisionné au boot) |
+   | `OWNER_CONSOLE_PATH` | chemin privé de la console (ex. `/control/mot-de-passe-long`) |
+   | `CORS_ALLOWED_ORIGINS` | `https://VOTRE-APP.vercel.app` (URL Vercel réelle) |
+   | `APP_URL` | `https://VOTRE-APP.vercel.app` |
+   | `PUBLIC_API_URL` | `https://mbolo-tv-api.onrender.com` |
+   | `STORAGE_DRIVER` | `s3` (ou `local` si pas de Supabase) |
+   | `S3_ENDPOINT` | `https://<project-ref>.supabase.co/storage/v1/s3` |
+   | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | clés Supabase S3 |
+   | `S3_BUCKET` | `mbolo` |
+   | `S3_REGION` | `us-east-1` |
+
+4. *Apply* → déploiement (build Docker, ~5-10 min au premier coup).
+5. Vérifier : `curl https://mbolo-tv-api.onrender.com/api/health` → `{"status":"ok",...}`.
+
+### Limites du tier gratuit Render
+
+- **Sleep** : l'instance dort après 15 min sans trafic ; la première requête après
+  réveil met ~1 min (cold start). En visionnage actif (segments toutes les 5-10 s),
+  l'instance reste éveillée.
+- **Disque éphémère** : toute donnée écrite hors Supabase (DB locale, uploads locaux) est
+  perdue à chaque redéploiement → la DB est sur Neon et le stockage sur Supabase par design.
+- **Egress** : 100 Go/mois cumulés (proxying vidéo + logos). ~1-2 Go/heure de visionnage.
+
+## 4. Vercel — Web
+
+1. vercel.com → *Add New Project* → importer le repo GitHub `mbolotv`.
+2. **Root Directory** : `apps/web`.
+3. Framework détecté : Next.js — build/install command par défaut.
+4. Environment variables :
+
+   | Variable | Valeur |
+   | --- | --- |
+   | `NEXT_PUBLIC_API_URL` | `https://mbolo-tv-api.onrender.com` |
 
 5. *Deploy*. Chaque push sur `main` redéploie automatiquement.
 
-Mettre à jour ensuite le secret Fly `CORS_ALLOWED_ORIGINS` et `APP_URL` avec l'URL
-`https://VOTRE-APP.vercel.app` réelle, puis redéployer l'API (`fly deploy`).
+## 5. Ordre de déploiement recommandé
 
-## 3. Limites du tier gratuit
+1. Neon (base) → 2. Supabase Storage → 3. Render (API, avec l'URL Vercel dans le CORS) → 4. Vercel.
 
-- **Egress** : 160 Go/mois cumulés (proxying vidéo + logos). Une heure de
-  visionnage ≈ 1-2 Go. Au-delà, l'instance reste up mais facturée à l'usage
-  (aucune coupure — surveiller le dashboard Fly).
-- **VM** : 256 Mo de RAM, 1 vCPU partagé. L'import M3U et l'upload de playlist
-  sont streamés (mémoire bornée), mais un import géant (500 Mo+) sera lent.
-- **Volume** : 3 Go gratuits (SQLite + uploads + logos). Les logos importés
-  comptent dans ce quota : surveiller `fly volume snapshots` / le dashboard.
-- **Vercel Hobby** : builds et fonctions en nombre limité — amplement suffisant
-  pour cette app (pages statiques + SSR minimal).
+## 6. Développement local
 
-## 4. Notes
+La base est désormais PostgreSQL partout (y compris en dev) :
 
-- La base SQLite vit sur le volume Fly (`/data/dev.db`) : les redéploiements
-  ne perdent rien. Pour repartir de zéro : `fly volumes destroy mbolo_data` puis recréer.
+```sh
+# apps/api/.env (et .env racine)
+DATABASE_URL=postgresql://user:password@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require
+```
+
+Utiliser la branche `dev` de Neon pour ne pas polluer la production.
+Les migrations sont appliquées automatiquement par `prisma migrate deploy` au boot du
+conteneur ; en local : `pnpm --filter @mbolo/api exec prisma migrate dev`.
+
+> Ancienne base SQLite locale (`apps/api/prisma/dev.db`) : non utilisée par le nouveau
+> schéma. Réimporter les sources depuis la console après le passage à Postgres.
+
+## 7. Notes
+
+- Le workflow GitHub Actions `ci.yml` valide typecheck + tests + build sur chaque push.
 - Les crons de health-check tournent dans le process API (in-process) — pas de service séparé.
 - `apps/worker` (BullMQ) n'est pas déployé : `QUEUE_DRIVER=inprocess` suffit pour un
   process unique. Si un jour plusieurs instances : `QUEUE_DRIVER=bullmq` + Redis géré

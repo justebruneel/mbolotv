@@ -1,5 +1,5 @@
-import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Transform, Readable } from 'node:stream';
@@ -19,6 +19,8 @@ export class LocalStorageService implements StorageService {
     try { await pipeline(stream, limiter, createWriteStream(file)); return bytes; } catch (error) { await rm(file, { force: true }); throw error; }
   }
   async get(key: string): Promise<Buffer | null> { try { return await readFile(this.filePath(key)); } catch { return null; } }
+  async getStream(key: string): Promise<Readable | null> { try { await stat(this.filePath(key)); return createReadStream(this.filePath(key)); } catch { return null; } }
+  async exists(key: string): Promise<boolean> { try { await stat(this.filePath(key)); return true; } catch { return false; } }
   async delete(key: string): Promise<void> { await rm(this.filePath(key), { force: true }); }
-  async signedUrl(key: string): Promise<string> { return `/uploads/${key}`; }
+  async signedUrl(key: string, _expiresInSeconds: number): Promise<string> { return `/uploads/${key}`; }
 }

@@ -3,9 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  // Variable d'environnement (ex. file:./dev.db?connection_limit=1&busy_timeout=30000
-  // en local via apps/api/.env, file:/data/dev.db sur Fly — volume persistant).
+  provider = "postgresql"
+  // Variable d'environnement : URL de connexion PostgreSQL (Neon, Supabase...).
+  // En local : postgresql://user:pass@host:5432/mbolo_tv (voir apps/api/.env).
   url = env("DATABASE_URL")
 }
 

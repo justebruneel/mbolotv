@@ -99,12 +99,17 @@ export class ImportProcessor implements OnModuleInit {
 
   private async importM3u(source: Source, connection: Record<string, string>, importRunId: string): Promise<ImportMetrics> {
     const url = connection.url ?? connection.playlistUrl;
+    const fileKey = connection.fileKey;
     const filePath = connection.filePath;
-    if (!url && !filePath) throw new ImportError('MISSING_URL', 'URL de playlist ou fichier local manquant');
+    if (!url && !fileKey && !filePath) throw new ImportError('MISSING_URL', 'URL de playlist ou fichier local manquant');
     await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } });
     const maxBytes = this.config.get<number>('IMPORT_MAX_BYTES', 512 * 1024 * 1024);
     let parsed: ParsedChannel[];
-    if (filePath) {
+    if (fileKey) {
+      const stream = await this.storage.getStream(fileKey);
+      if (!stream) throw new ImportError('FILE_NOT_FOUND', 'Playlist téléversée introuvable');
+      parsed = await parseM3uStream(stream, { maxBytes });
+    } else if (filePath) {
       const root = resolve(this.config.get<string>('STORAGE_LOCAL_DIR', './uploads'));
       const absolute = resolve(root, filePath);
       if (!absolute.startsWith(`${root}${sep}`)) throw new ImportError('INVALID_FILE_PATH', 'Chemin de fichier invalide');

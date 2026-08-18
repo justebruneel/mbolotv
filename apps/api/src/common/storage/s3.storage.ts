@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -19,6 +19,8 @@ export class S3StorageService implements StorageService {
     try { await pipeline(stream, limiter, body); await upload; return bytes; } catch (error) { body.destroy(); throw error; }
   }
   async get(key: string): Promise<Buffer | null> { try { const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key })); const bytes = await result.Body?.transformToByteArray(); return bytes ? Buffer.from(bytes) : null; } catch (error) { if (error instanceof Error && error.name === 'NoSuchKey') return null; throw error; } }
+  async getStream(key: string): Promise<Readable | null> { try { const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key })); return result.Body as Readable; } catch (error) { if (error instanceof Error && error.name === 'NoSuchKey') return null; throw error; } }
+  async exists(key: string): Promise<boolean> { try { await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key })); return true; } catch { return false; } }
   async delete(key: string): Promise<void> { await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key })); }
   async signedUrl(key: string, expiresInSeconds: number): Promise<string> { return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), { expiresIn: expiresInSeconds }); }
 }
