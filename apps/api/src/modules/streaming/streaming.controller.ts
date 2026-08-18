@@ -5,19 +5,18 @@ import { ConfigService } from '@nestjs/config';
 import { rewriteM3u8 } from './hls-rewriter';
 import { HostValidationCache } from './host-validation.cache';
 import { PlaylistCache } from './playlist-cache';
-import { SegmentCache } from './segment-cache';
 import { StreamProxy, StreamProxyResponse } from './stream-proxy';
 import { StreamSessionGuard } from './stream.guard';
 import { HealthCheckService } from '../channel-health/channel-health.service';
 import { StreamContext, StreamingService } from './streaming.service';
 
 const DEFAULT_MAX_PLAYLIST_BYTES = 2 * 1024 * 1024;
-const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 128 * 1024 * 1024;
 
 @Controller('stream')
 @UseGuards(StreamSessionGuard)
 export class StreamingController {
   private readonly maxPlaylistBytes: number;
+
   constructor(
     private readonly streamingService: StreamingService,
     private readonly config: ConfigService,
@@ -26,8 +25,6 @@ export class StreamingController {
     private readonly playlistCache: PlaylistCache,
   ) {
     this.maxPlaylistBytes = Number(this.config.get('STREAM_MAX_PLAYLIST_BYTES', DEFAULT_MAX_PLAYLIST_BYTES));
-    // Construct once so the cache remains bounded and shared by all requests.
-    void DEFAULT_SEGMENT_CACHE_MAX_BYTES;
   }
 
   @Get(':sessionId/master.m3u8')
@@ -87,7 +84,10 @@ export class StreamingController {
   }
 }
 
-function streamContextOf(request: FastifyRequest & { streamContext?: StreamContext }): StreamContext { if (!request.streamContext) throw new BadGatewayException('Contexte de session manquant'); return request.streamContext; }
+function streamContextOf(request: FastifyRequest & { streamContext?: StreamContext }): StreamContext {
+  if (!request.streamContext) throw new BadGatewayException('Contexte de session manquant');
+  return request.streamContext;
+}
 function looksLikePlaylist(contentType: string | null, url: string): boolean { return Boolean(contentType && /mpegurl/i.test(contentType)) || /\.m3u8(\?|$)/i.test(url); }
 async function readLimited(stream: Readable, maxBytes: number, label: string): Promise<Buffer> { const chunks: Buffer[] = []; let size = 0; try { for await (const chunk of stream) { size += chunk.length; if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`); chunks.push(chunk); } } finally { stream.destroy(); } return Buffer.concat(chunks); }
 function abortOnDisconnect(reply: FastifyReply, stream: Readable): void { reply.raw.on('close', () => { if (!reply.raw.writableFinished) stream.destroy(); }); }
