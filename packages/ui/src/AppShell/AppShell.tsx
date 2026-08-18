@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Menu } from 'lucide-react';
 import styles from './AppShell.module.css';
 
@@ -21,9 +22,7 @@ export interface AppShellProps {
 export function AppShell({ brand, navItems, activeHref, pathname, children }: AppShellProps) {
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
+  useEffect(() => setOpen(false), [pathname]);
 
   useEffect(() => {
     if (!open) return;
@@ -44,39 +43,24 @@ export function AppShell({ brand, navItems, activeHref, pathname, children }: Ap
   return (
     <div className={styles.shell}>
       <header className={styles.topbar}>
-        <button
-          type="button"
-          className={styles.menuButton}
-          onClick={() => setOpen(true)}
-          aria-label="Ouvrir le menu"
-          aria-expanded={open}
-        >
+        <button type="button" className={styles.menuButton} onClick={() => setOpen(true)} aria-label="Ouvrir le menu" aria-expanded={open}>
           <Menu size={20} aria-hidden />
         </button>
         <span className={styles.topbarBrand}>{brand}</span>
       </header>
 
-      <div
-        className={[styles.overlay, open ? styles.overlayVisible : ''].filter(Boolean).join(' ')}
-        onClick={() => setOpen(false)}
-        aria-hidden
-      />
+      <div className={[styles.overlay, open ? styles.overlayVisible : ''].filter(Boolean).join(' ')} onClick={() => setOpen(false)} aria-hidden="true" />
 
-      <aside className={[styles.sidebar, open ? styles.sidebarOpen : ''].filter(Boolean).join(' ')}>
+      <aside className={[styles.sidebar, open ? styles.sidebarOpen : ''].filter(Boolean).join(' ')} aria-label="Navigation principale">
         <div className={styles.brand}>{brand}</div>
         <nav className={styles.nav}>
           {navItems.map((item) => {
             const active = item.href === activeHref;
             return (
-              <a
-                key={item.href}
-                href={item.href}
-                className={[styles.item, active ? styles.active : ''].filter(Boolean).join(' ')}
-                aria-current={active ? 'page' : undefined}
-              >
+              <Link key={item.href} href={item.href} className={[styles.item, active ? styles.active : ''].filter(Boolean).join(' ')} aria-current={active ? 'page' : undefined}>
                 {item.icon && <span className={styles.icon}>{item.icon}</span>}
                 <span>{item.label}</span>
-              </a>
+              </Link>
             );
           })}
         </nav>
