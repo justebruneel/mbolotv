@@ -19,13 +19,8 @@ import { HealthCheckService } from '../channel-health/channel-health.service';
 import { StreamContext, StreamingService } from './streaming.service';
 
 const DEFAULT_MAX_PLAYLIST_BYTES = 2 * 1024 * 1024;
-const DEFAULT_PLAYLIST_STALE_TTL_MS = 25_000; // resert une playlist valide ~25 s en cas de pépin fournisseur (durée de rétention typique des segments)
+const DEFAULT_PLAYLIST_STALE_TTL_MS = 25_000;
 const MAX_CACHED_PLAYLISTS = 1000;
-// Segments plus gros que ce seuil : streaming direct sans mise en cache
-// (réponses Range de type VOD, segments très haute définition).
-const MAX_CACHED_SEGMENT_BYTES = 20 * 1024 * 1024;
-// Garde-fou de lecture quand le fournisseur n'envoie pas de content-length.
-const SEGMENT_READ_LIMIT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 128 * 1024 * 1024;
 
 interface CachedPlaylist {
@@ -47,47 +42,24 @@ export class StreamingController {
     private readonly hostValidation: HostValidationCache,
     private readonly health: HealthCheckService,
   ) {
-    this.maxPlaylistBytes = Number(
-      this.config.get('STREAM_MAX_PLAYLIST_BYTES', DEFAULT_MAX_PLAYLIST_BYTES),
-    );
-    this.playlistStaleTtlMs = Number(
-      this.config.get('STREAM_PLAYLIST_STALE_TTL_MS', DEFAULT_PLAYLIST_STALE_TTL_MS),
-    );
-    this.segmentCache = new SegmentCache(
-      Number(this.config.get('STREAM_SEGMENT_CACHE_MAX_BYTES', DEFAULT_SEGMENT_CACHE_MAX_BYTES)),
-    );
+    this.maxPlaylistBytes = Number(this.config.get('STREAM_MAX_PLAYLIST_BYTES', DEFAULT_MAX_PLAYLIST_BYTES));
+    this.playlistStaleTtlMs = Number(this.config.get('STREAM_PLAYLIST_STALE_TTL_MS', DEFAULT_PLAYLIST_STALE_TTL_MS));
+    this.segmentCache = new SegmentCache(Number(this.config.get('STREAM_SEGMENT_CACHE_MAX_BYTES', DEFAULT_SEGMENT_CACHE_MAX_BYTES)));
   }
 
   @Get(':sessionId/master.m3u8')
-  master(
-    @Param('sessionId') _sessionId: string,
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ): Promise<FastifyReply> {
+  master(@Param('sessionId') _sessionId: string, @Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<FastifyReply> {
     const context = streamContextOf(request);
-    const providerUrl = this.streamingService.resolveProviderUrl(context.session);
-    return this.proxy(reply, request, context, providerUrl, 'master');
+    return this.proxy(reply, request, context, this.streamingService.resolveProviderUrl(context.session), 'master');
   }
 
   @Get(':sessionId/f/:alias')
-  alias(
-    @Param('sessionId') _sessionId: string,
-    @Param('alias') alias: string,
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ): Promise<FastifyReply> {
+  alias(@Param('sessionId') _sessionId: string, @Param('alias') alias: string, @Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<FastifyReply> {
     const context = streamContextOf(request);
-    const providerUrl = this.streamingService.resolveProviderUrl(context.session, alias);
-    return this.proxy(reply, request, context, providerUrl, alias);
+    return this.proxy(reply, request, context, this.streamingService.resolveProviderUrl(context.session, alias), alias);
   }
 
-  private async proxy(
-    reply: FastifyReply,
-    request: FastifyRequest,
-    context: StreamContext,
-    providerUrl: string,
-    aliasId: string,
-  ): Promise<FastifyReply> {
+  private async proxy(reply: FastifyReply, request: FastifyRequest, context: StreamContext, providerUrl: string, aliasId: string): Promise<FastifyReply> {
     const proxy = new StreamProxy(undefined, this.hostValidation);
     const forwarded: Record<string, string> = {};
     const range = request.headers.range;
@@ -100,54 +72,24 @@ export class StreamingController {
         allowedHostnames: this.streamingService.allowedHostnames(context.session),
       });
     } catch (error) {
-      // Retour réactif de santé : le manifest est la source de vérité. S'il
-      // est injoignable (le proxy a déjà retenté 2×), la variante est très
-      // probablement morte. Un échec de segment n'est pas fiable (fenêtre
-      // live qui tourne, segment expiré en 404) : on ne remonte que master.
-      if (aliasId === 'master' && context.session.variantId) {
-        void this.health.recordFailure(context.session.variantId).catch(() => undefined);
-      }
-      // Serve-stale : si le fournisseur pêche brièvement, on resert la dernière
-      // version valide (playlist ou segment) au lieu de casser la lecture.
+      if (aliasId === 'master' && context.session.variantId) void this.health.recordFailure(context.session.variantId).catch(() => undefined);
       const stale = this.getCachedPlaylist(context.session.id, aliasId);
-      if (stale) {
-        return this.sendPlaylistContent(reply, stale);
-      }
+      if (stale) return this.sendPlaylistContent(reply, stale);
       const staleSegment = this.segmentCache.get(this.segmentKey(context.session.id, aliasId));
-      if (staleSegment) {
-        return this.sendBuffered(reply, staleSegment.buffer, staleSegment.contentType, 200);
-      }
+      if (staleSegment) return this.sendBuffered(reply, staleSegment.buffer, staleSegment.contentType, 200);
       throw error;
     }
 
     await this.streamingService.registerDiscoveredHost(context.session, response.finalUrl);
-
-    if (looksLikePlaylist(response.contentType, response.finalUrl)) {
-      return this.sendPlaylist(reply, context, response.stream, response.finalUrl, aliasId);
-    }
-
-    return this.sendSegment(reply, context, response, aliasId);
+    if (looksLikePlaylist(response.contentType, response.finalUrl)) return this.sendPlaylist(reply, context, response.stream, response.finalUrl, aliasId);
+    return this.sendSegment(reply, response);
   }
 
-  private async sendSegment(
-    reply: FastifyReply,
-    context: StreamContext,
-    response: StreamProxyResponse,
-    aliasId: string,
-  ): Promise<FastifyReply> {
-    // Réponse de grande taille connue (VOD, Range) : streaming direct sans cache.
-    if (response.contentLength !== null && response.contentLength > MAX_CACHED_SEGMENT_BYTES) {
-      return this.pipeSegment(reply, response);
-    }
-
-    // On bufferise le segment : c'est la seule façon de le mettre en cache et de
-    // servir le serve-stale si le fournisseur pêche au prochain segment. Les
-    // segments live font typiquement 0,5 à 8 Mo.
-    const buffer = await readLimited(response.stream, SEGMENT_READ_LIMIT_BYTES, 'Segment');
-    if (buffer.byteLength <= MAX_CACHED_SEGMENT_BYTES) {
-      this.segmentCache.set(this.segmentKey(context.session.id, aliasId), buffer, response.contentType);
-    }
-    return this.sendBuffered(reply, buffer, response.contentType, response.status);
+  private sendSegment(reply: FastifyReply, response: StreamProxyResponse): FastifyReply {
+    // Les segments sont envoyés avec backpressure. Les lire entièrement avant
+    // reply.send ajoutait la latence du segment et multipliait la mémoire par
+    // le nombre de spectateurs concurrents.
+    return this.pipeSegment(reply, response);
   }
 
   private pipeSegment(reply: FastifyReply, response: StreamProxyResponse): FastifyReply {
@@ -162,12 +104,7 @@ export class StreamingController {
     return reply.send(response.stream);
   }
 
-  private sendBuffered(
-    reply: FastifyReply,
-    buffer: Buffer,
-    contentType: string | null,
-    status: number,
-  ): FastifyReply {
+  private sendBuffered(reply: FastifyReply, buffer: Buffer, contentType: string | null, status: number): FastifyReply {
     if (contentType) reply.header('content-type', contentType);
     reply.header('content-length', String(buffer.byteLength));
     reply.header('cache-control', 'no-store');
@@ -180,21 +117,9 @@ export class StreamingController {
     return `${sessionId}:${aliasId}`;
   }
 
-  private async sendPlaylist(
-    reply: FastifyReply,
-    context: StreamContext,
-    stream: Readable,
-    providerUrl: string,
-    aliasId: string,
-  ): Promise<FastifyReply> {
+  private async sendPlaylist(reply: FastifyReply, context: StreamContext, stream: Readable, providerUrl: string, aliasId: string): Promise<FastifyReply> {
     const content = await readLimited(stream, this.maxPlaylistBytes, 'Playlist');
-
-    const rewritten = rewriteM3u8(
-      content.toString('utf8'),
-      providerUrl,
-      (absoluteUrl) => this.streamingService.registerAlias(context.session, absoluteUrl),
-    );
-
+    const rewritten = rewriteM3u8(content.toString('utf8'), providerUrl, (absoluteUrl) => this.streamingService.registerAlias(context.session, absoluteUrl));
     this.cachePlaylist(context.session.id, aliasId, rewritten);
     return this.sendPlaylistContent(reply, rewritten);
   }
@@ -209,19 +134,11 @@ export class StreamingController {
 
   private cachePlaylist(sessionId: string, aliasId: string, content: string): void {
     this.playlistCache.set(`${sessionId}:${aliasId}`, { content, ts: Date.now() });
-    // Évite une fuite mémoire : purge des entrées expirées à chaque écriture.
     const now = Date.now();
-    for (const [key, entry] of this.playlistCache) {
-      if (now - entry.ts > this.playlistStaleTtlMs) {
-        this.playlistCache.delete(key);
-      }
-    }
-    // Plafond de taille : évince les entrées les plus anciennes si besoin.
+    for (const [key, entry] of this.playlistCache) if (now - entry.ts > this.playlistStaleTtlMs) this.playlistCache.delete(key);
     if (this.playlistCache.size > MAX_CACHED_PLAYLISTS) {
       const oldest = [...this.playlistCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
-      for (let i = 0; i < oldest.length && this.playlistCache.size > MAX_CACHED_PLAYLISTS; i += 1) {
-        this.playlistCache.delete(oldest[i][0]);
-      }
+      for (let i = 0; i < oldest.length && this.playlistCache.size > MAX_CACHED_PLAYLISTS; i += 1) this.playlistCache.delete(oldest[i][0]);
     }
   }
 
@@ -237,9 +154,7 @@ export class StreamingController {
 }
 
 function streamContextOf(request: FastifyRequest & { streamContext?: StreamContext }): StreamContext {
-  if (!request.streamContext) {
-    throw new BadGatewayException('Contexte de session manquant');
-  }
+  if (!request.streamContext) throw new BadGatewayException('Contexte de session manquant');
   return request.streamContext;
 }
 
@@ -254,9 +169,7 @@ async function readLimited(stream: Readable, maxBytes: number, label = 'Contenu'
   try {
     for await (const chunk of stream) {
       size += chunk.length;
-      if (size > maxBytes) {
-        throw new BadGatewayException(`${label} fournisseur trop volumineux`);
-      }
+      if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`);
       chunks.push(chunk);
     }
   } finally {
