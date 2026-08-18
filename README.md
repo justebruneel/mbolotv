@@ -1,45 +1,48 @@
 # Mbolo TV
 
-Plateforme IPTV multi-sources. Mbolo TV **n’héberge ni ne fournit de flux**. Les sources sont administrées exclusivement par le propriétaire depuis une console sécurisée ; les utilisateurs finaux ne peuvent ni les voir ni les connecter.
+Plateforme IPTV multi-sources pour des flux dont l’utilisation est autorisée. Mbolo TV n’héberge ni ne fournit de flux : les sources sont administrées depuis une console propriétaire et leurs secrets ne sont jamais envoyés au navigateur.
 
-## Architecture retenue
+## Architecture
 
-Monorepo TypeScript avec séparation claire entre l’expérience web, l’API métier et le traitement asynchrone des playlists. **Aucun Docker ni aucune infrastructure locale requise.**
+Monorepo TypeScript avec séparation entre l’expérience web, l’API métier et le traitement asynchrone.
 
 | Composant | Rôle | Technologie |
 |---|---|---|
-| `apps/web` | Interface utilisateur et lecteur | Next.js / React, TypeScript |
-| `apps/api` | API REST, authentification, règles métier | NestJS, TypeScript |
-| `apps/worker` | Import, parsing, déduplication, EPG, indexation | Node.js, BullMQ |
-| Base de données | Catalogue et données relationnelles | SQLite (dev) via Prisma — Postgres possible en prod |
-| Files d’attente | Jobs d’import et d’EPG | In-process (dev) — BullMQ + Upstash Redis (prod) |
-| Stockage | Logos, EPG bruts, exports | Disque local (dev) — S3 / Cloudflare R2 (prod) |
+| `apps/web` | Interface utilisateur et lecteur HLS | Next.js, React, TypeScript |
+| `apps/api` | API REST, authentification, import et proxy de lecture | NestJS, Fastify, Prisma |
+| `apps/worker` | Point d’extension pour les jobs séparés | Node.js, BullMQ |
+| Base de données | Catalogue et données relationnelles | SQLite validé pour dev, migration Postgres à préparer pour prod |
+| Files d’attente | Imports et jobs asynchrones | In-process en dev, BullMQ/Redis en déploiement dédié |
+| Stockage | Playlists et logos | Disque local en dev, S3/R2 avec URLs signées en prod |
 
-Voir [`docs/architecture/overview.md`](docs/architecture/overview.md) pour les flux et [`docs/architecture/tree.md`](docs/architecture/tree.md) pour l’arborescence détaillée.
+Voir `docs/architecture/overview.md` et `docs/architecture/tree.md` pour les détails.
 
-## Démarrage local — sans Docker
+## Démarrage local
 
 ```bash
 cp .env.example .env
 pnpm install
-pnpm db:migrate   # crée la base SQLite (prisma/dev.db)
-pnpm dev          # web (http://localhost:3000) + api (http://localhost:4000)
+pnpm db:migrate
+pnpm dev
 ```
 
-## Hébergement en production
+Web : `http://localhost:3000`. API : `http://localhost:4000`.
 
-Deux trajectoires, toutes deux sans Docker :
+Le compte propriétaire nécessite `OWNER_EMAIL` et `OWNER_PASSWORD`. Le mot de passe n’est provisionné que si aucun hash propriétaire n’existe déjà, afin d’éviter de réinitialiser la console à chaque redémarrage.
 
-1. **Tout-en-un sur un VPS** — l’app, l’API et le worker sur un même serveur, SQLite en base avec sauvegardes via [Litestream](https://litestream.io). Zéro service managé.
-2. **Services managés** — Postgres (Neon ou Supabase), Redis (Upstash), stockage S3 (Cloudflare R2). Avec Prisma, la bascule SQLite → Postgres se limite à changer le `provider` du schéma et le `DATABASE_URL`.
+## Production
 
-Lors de la mise en production : `STORAGE_DRIVER=s3`, `QUEUE_DRIVER=bullmq`, secrets réels, et `OWNER_CONSOLE_PATH` privé.
+Le chemin recommandé est un déploiement avec Postgres, Redis et S3/R2 managés. Le schéma Prisma est actuellement SQLite et ne doit pas être basculé en production par simple changement d’URL sans migration et validation dédiées.
 
-## Principes non négociables
+En mode BullMQ, un consommateur doit être actif. La branche actuelle peut traiter les imports via l’API ; le worker séparé reste une étape de découplage à finaliser avant un déploiement multi-instance.
 
-- Aucun identifiant Xtream ou MAC n’est retourné au navigateur ni journalisé.
-- Les secrets de sources sont chiffrés au repos avec une clé applicative gérée hors Git.
-- La console propriétaire est protégée côté serveur par rôle `OWNER` et MFA, pas seulement par une URL discrète.
-- Les imports sont asynchrones et idempotents ; aucun parsing lourd dans une requête HTTP.
-- Le lecteur récupère un jeton court signé, jamais l’URL fournisseur stockée.
-- Toutes les opérations d’administration sont auditées.
+## Principes de sécurité
+
+- Aucun identifiant Xtream, MAC ou URL fournisseur brute n’est retourné au navigateur.
+- Les secrets de sources sont chiffrés au repos et les URLs de lecture sont temporaires.
+- Les accès owner, imports, audits et statistiques sont filtrés par propriétaire.
+- Les URLs externes passent par une validation SSRF, y compris les redirections et les adresses IPv6 privées.
+- Les imports sont asynchrones, bornés et idempotents autant que possible.
+- Le proxy HLS réécrit les playlists et stream les segments avec backpressure.
+- La console utilise une session httpOnly signée, avec expiration d’inactivité et plafond absolu. La MFA n’est pas implémentée dans cette version, ne pas la présenter comme une protection active.
+- Les opérations d’administration sont auditées.
