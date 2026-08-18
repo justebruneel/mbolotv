@@ -19,8 +19,8 @@ export class SourcesController {
   @UseGuards(OwnerAuthGuard) @Post(':id/import') importNow(@Req() request: FastifyRequest, @Param('id') id: string): Promise<ImportRun> { return this.sourcesService.importNow(this.ownerOf(request).userId, id); }
   @UseGuards(OwnerAuthGuard) @Post(':id/playlist') uploadPlaylist(@Req() request: FastifyRequest, @Param('id') id: string): Promise<SourceResponse> {
     const body = request.body;
-    if (!Buffer.isBuffer(body)) throw new BadRequestException('Corps de requête attendu (fichier .m3u)');
-    return this.sourcesService.replacePlaylistStream(this.ownerOf(request).userId, id, Readable.from(body));
+    if (!(body instanceof Readable)) throw new BadRequestException('Corps de requête attendu (flux .m3u)');
+    return this.sourcesService.replacePlaylistStream(this.ownerOf(request).userId, body, id);
   }
   private ownerOf(request: FastifyRequest): OwnerContext { return getOwnerContext(request); }
 }

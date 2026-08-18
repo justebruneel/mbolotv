@@ -28,8 +28,7 @@ export function isPrivateIp(address: string): boolean {
     if (normalized === '::' || normalized === '::1') return true;
     if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
     if (/^fe[89ab]/.test(normalized)) return true;
-    if (normalized.startsWith('ff')) return true;
-    if (normalized.startsWith('2001:db8:')) return true;
+    if (normalized.startsWith('ff') || normalized.startsWith('2001:db8:')) return true;
     return false;
   }
   return true;
@@ -37,13 +36,22 @@ export function isPrivateIp(address: string): boolean {
 
 export async function assertSafeUrl(rawUrl: string): Promise<URL> {
   let url: URL;
-  try { url = new URL(rawUrl); } catch { throw new BadRequestException('URL invalide'); }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new BadRequestException('Protocole non autorisé (http/https uniquement)');
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    throw new BadRequestException('URL fournisseur invalide');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new BadRequestException('Protocole fournisseur non autorisé');
   const hostname = url.hostname.replace(/\.$/, '').toLowerCase();
-  if (!hostname) throw new BadRequestException('Hôte invalide');
+  if (!hostname || /[\[\]]/.test(hostname)) throw new BadRequestException('Nom d’hôte fournisseur invalide');
   if (isIP(hostname) !== 0 && isPrivateIp(hostname)) throw new BadRequestException('Adresse IP privée ou locale interdite');
-  const addresses = await lookup(hostname, { all: true, verbatim: true });
-  if (addresses.length === 0 || addresses.some(({ address }) => isPrivateIp(address))) throw new BadRequestException('Adresse IP privée ou locale interdite');
+  try {
+    const addresses = await lookup(hostname, { all: true, verbatim: true });
+    if (addresses.length === 0 || addresses.some(({ address }) => isPrivateIp(address))) throw new BadRequestException('Adresse IP privée ou locale interdite');
+  } catch (error) {
+    if (error instanceof BadRequestException) throw error;
+    throw new BadRequestException('Hôte fournisseur introuvable ou DNS indisponible');
+  }
   return url;
 }
 
@@ -51,12 +59,17 @@ export interface FetchResult { ok: boolean; status: number; latencyMs: number; b
 export interface StreamFetchResult { ok: boolean; status: number; latencyMs: number; stream?: ReadableStream<Uint8Array>; contentType?: string; error?: string; finalUrl?: string; }
 export interface FetchOptions { maxBytes?: number; headers?: Record<string, string>; timeoutMs?: number; userAgent?: string; }
 
+function safeError(error: unknown): string {
+  return error instanceof BadRequestException ? error.message : 'Connexion fournisseur impossible';
+}
+
 export class SafeFetcher {
   async fetch(rawUrl: string, options: FetchOptions = {}): Promise<FetchResult> {
     const maxBytes = options.maxBytes ?? 20 * 1024 * 1024;
     const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
     const startedAt = Date.now();
-    let url = await assertSafeUrl(rawUrl);
+    let url: URL;
+    try { url = await assertSafeUrl(rawUrl); } catch (error) { return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: safeError(error) }; }
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -69,31 +82,26 @@ export class SafeFetcher {
           url = await assertSafeUrl(new URL(location, url).toString());
           continue;
         }
-        if (!response.ok) {
-          await response.body?.cancel();
-          return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: `Réponse HTTP ${response.status}` };
-        }
+        if (!response.ok) { await response.body?.cancel(); return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: `Réponse HTTP ${response.status}` }; }
         const contentLength = Number(response.headers.get('content-length') ?? '0');
-        if (contentLength > maxBytes) {
-          await response.body?.cancel();
-          return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Contenu trop volumineux' };
-        }
+        if (contentLength > maxBytes) { await response.body?.cancel(); return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Contenu trop volumineux' }; }
         const bytes = await response.arrayBuffer();
         if (bytes.byteLength > maxBytes) return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Contenu trop volumineux' };
         return { ok: true, status: response.status, latencyMs: Date.now() - startedAt, body: Buffer.from(bytes).toString('utf8'), contentType: response.headers.get('content-type') ?? undefined, finalUrl: url.toString() };
       } catch (error) {
         const reason = error instanceof Error ? error.name : 'UNKNOWN';
-        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: reason === 'AbortError' ? 'Délai dépassé' : 'Connexion impossible' };
+        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: reason === 'AbortError' ? 'Délai dépassé chez le fournisseur' : safeError(error) };
       } finally { clearTimeout(timer); }
     }
-    return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Trop de redirections' };
+    return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Trop de redirections fournisseur' };
   }
 
   async fetchStream(rawUrl: string, options: FetchOptions & { streamTimeoutMs?: number } = {}): Promise<StreamFetchResult> {
     const maxBytes = options.maxBytes ?? 20 * 1024 * 1024;
     const timeoutMs = options.streamTimeoutMs ?? 15 * 60_000;
     const startedAt = Date.now();
-    let url = await assertSafeUrl(rawUrl);
+    let url: URL;
+    try { url = await assertSafeUrl(rawUrl); } catch (error) { return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: safeError(error) }; }
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -106,21 +114,15 @@ export class SafeFetcher {
           url = await assertSafeUrl(new URL(location, url).toString());
           continue;
         }
-        if (!response.ok) {
-          await response.body?.cancel();
-          return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: `Réponse HTTP ${response.status}` };
-        }
+        if (!response.ok) { await response.body?.cancel(); return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: `Réponse HTTP ${response.status}` }; }
         const contentLength = Number(response.headers.get('content-length') ?? '0');
-        if (contentLength > maxBytes) {
-          await response.body?.cancel();
-          return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Contenu trop volumineux' };
-        }
+        if (contentLength > maxBytes) { await response.body?.cancel(); return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Contenu trop volumineux' }; }
         return { ok: true, status: response.status, latencyMs: Date.now() - startedAt, stream: response.body ?? undefined, contentType: response.headers.get('content-type') ?? undefined, finalUrl: url.toString() };
       } catch (error) {
         const reason = error instanceof Error ? error.name : 'UNKNOWN';
-        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: reason === 'AbortError' ? 'Délai dépassé' : 'Connexion impossible' };
+        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: reason === 'AbortError' ? 'Délai dépassé chez le fournisseur' : safeError(error) };
       } finally { clearTimeout(timer); }
     }
-    return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Trop de redirections' };
+    return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Trop de redirections fournisseur' };
   }
 }
