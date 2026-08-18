@@ -1,0 +1,36 @@
+# Config Fly.io de l'API Mbolo TV — déploiement : flyctl deploy (racine du repo)
+app = "mbolo-tv-api"
+
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  API_PORT = "4000"
+  DATABASE_URL = "file:/data/dev.db"
+  STORAGE_DRIVER = "local"
+  STORAGE_LOCAL_DIR = "/data/uploads"
+  QUEUE_DRIVER = "inprocess"
+  STREAM_SESSION_STORE = "memory"
+  STREAM_PLAYLIST_CACHE = "memory"
+  # Les secrets (JWT_*, ENCRYPTION_KEY, OWNER_*, CORS_ALLOWED_ORIGINS, APP_URL,
+  # API_URL, PUBLIC_API_URL) sont passés via `fly secrets set` — jamais ici.
+
+# Volume persistant : base SQLite + playlists téléversées + logos.
+[[mounts]]
+  source = "mbolo_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.checks]
+    [http_service.checks.health]
+      path = "/api/health"
+      interval = "30s"
+      timeout = "5s"
+      grace_period = "30s"

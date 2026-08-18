@@ -4,7 +4,9 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url = "file:./dev.db?connection_limit=1&busy_timeout=30000"
+  // Variable d'environnement (ex. file:./dev.db?connection_limit=1&busy_timeout=30000
+  // en local via apps/api/.env, file:/data/dev.db sur Fly — volume persistant).
+  url = env("DATABASE_URL")
 }
 
 model User {
