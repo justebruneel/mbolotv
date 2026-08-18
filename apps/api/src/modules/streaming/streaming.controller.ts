@@ -19,6 +19,7 @@ const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 128 * 1024 * 1024;
 export class StreamingController {
   private readonly maxPlaylistBytes: number;
   private readonly segmentCache: SegmentCache;
+  private readonly proxy: StreamProxy;
 
   constructor(
     private readonly streamingService: StreamingService,
@@ -29,26 +30,27 @@ export class StreamingController {
   ) {
     this.maxPlaylistBytes = Number(this.config.get('STREAM_MAX_PLAYLIST_BYTES', DEFAULT_MAX_PLAYLIST_BYTES));
     this.segmentCache = new SegmentCache(Number(this.config.get('STREAM_SEGMENT_CACHE_MAX_BYTES', DEFAULT_SEGMENT_CACHE_MAX_BYTES)));
+    this.proxy = new StreamProxy(undefined, this.hostValidation);
   }
 
   @Get(':sessionId/master.m3u8')
   async master(@Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<FastifyReply> {
     const context = streamContextOf(request);
-    return this.proxy(reply, request, context, await this.streamingService.resolveProviderUrl(context.session), 'master');
+    return this.forward(reply, request, context, await this.streamingService.resolveProviderUrl(context.session), 'master');
   }
 
   @Get(':sessionId/f/:alias')
   async alias(@Param('alias') alias: string, @Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<FastifyReply> {
     const context = streamContextOf(request);
-    return this.proxy(reply, request, context, await this.streamingService.resolveProviderUrl(context.session, alias), alias);
+    return this.forward(reply, request, context, await this.streamingService.resolveProviderUrl(context.session, alias), alias);
   }
 
-  private async proxy(reply: FastifyReply, request: FastifyRequest, context: StreamContext, providerUrl: string, aliasId: string): Promise<FastifyReply> {
+  private async forward(reply: FastifyReply, request: FastifyRequest, context: StreamContext, providerUrl: string, aliasId: string): Promise<FastifyReply> {
     const forwarded: Record<string, string> = {};
     if (typeof request.headers.range === 'string') forwarded.range = request.headers.range;
     let response: StreamProxyResponse;
     try {
-      response = await new StreamProxy(undefined, this.hostValidation).fetch(providerUrl, { headers: forwarded, allowedHostnames: this.streamingService.allowedHostnames(context.session) });
+      response = await this.proxy.fetch(providerUrl, { headers: forwarded, allowedHostnames: this.streamingService.allowedHostnames(context.session) });
     } catch (error) {
       if (aliasId === 'master' && context.session.variantId) void this.health.recordFailure(context.session.variantId).catch(() => undefined);
       const stalePlaylist = await this.playlistCache.get(context.session.id, aliasId);
@@ -67,7 +69,7 @@ export class StreamingController {
     if (response.contentLength !== null) reply.header('content-length', response.contentLength);
     if (response.contentRange) reply.header('content-range', response.contentRange);
     if (response.acceptRanges) reply.header('accept-ranges', response.acceptRanges);
-    reply.header('cache-control', 'no-store');
+    reply.header('cache-control', 'no-store, no-transform');
     reply.header('x-accel-buffering', 'no');
     reply.status(response.status);
     abortOnDisconnect(reply, response.stream);
@@ -78,7 +80,6 @@ export class StreamingController {
     if (contentType) reply.header('content-type', contentType);
     reply.header('content-length', String(buffer.byteLength));
     reply.header('cache-control', 'no-store');
-    reply.header('x-accel-buffering', 'no');
     reply.status(status);
     return reply.send(buffer);
   }
@@ -92,7 +93,7 @@ export class StreamingController {
 
   private sendPlaylistContent(reply: FastifyReply, content: string): FastifyReply {
     reply.header('content-type', 'application/vnd.apple.mpegurl');
-    reply.header('cache-control', 'no-store');
+    reply.header('cache-control', 'no-store, no-transform');
     reply.header('x-accel-buffering', 'no');
     reply.status(200);
     return reply.send(content);
@@ -101,5 +102,5 @@ export class StreamingController {
 
 function streamContextOf(request: FastifyRequest & { streamContext?: StreamContext }): StreamContext { if (!request.streamContext) throw new BadGatewayException('Contexte de session manquant'); return request.streamContext; }
 function looksLikePlaylist(contentType: string | null, url: string): boolean { return Boolean(contentType && /mpegurl/i.test(contentType)) || /\.m3u8(\?|$)/i.test(url); }
-async function readLimited(stream: Readable, maxBytes: number, label: string): Promise<Buffer> { const chunks: Buffer[] = []; let size = 0; try { for await (const chunk of stream) { size += chunk.length; if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`); chunks.push(chunk); } } finally { stream.destroy(); } return Buffer.concat(chunks); }
+async function readLimited(stream: Readable, maxBytes: number, label: string): Promise<Buffer> { const chunks: Buffer[] = []; let size = 0; try { for await (const chunk of stream) { size += chunk.length; if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`); chunks.push(chunk); } finally { stream.destroy(); } return Buffer.concat(chunks); }
 function abortOnDisconnect(reply: FastifyReply, stream: Readable): void { reply.raw.on('close', () => { if (!reply.raw.writableFinished) stream.destroy(); }); }
