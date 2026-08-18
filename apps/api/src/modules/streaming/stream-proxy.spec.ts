@@ -12,7 +12,10 @@ jest.mock('node:dns/promises', () => ({
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
-  return `http://127.0.0.1:${port}`;
+  // localhost (et non 127.0.0.1) : le littéral IP est refusé d'emblée par la
+  // protection SSRF, le hostname passe par le DNS simulé (8.8.8.8) et la
+  // connexion réelle reste locale via le résolveur système.
+  return `http://localhost:${port}`;
 }
 
 describe('StreamProxy', () => {
@@ -43,7 +46,7 @@ describe('StreamProxy', () => {
     try {
       const proxy = new StreamProxy();
       const response = await proxy.fetch(`${baseUrl}/seg.ts`, {
-        allowedHostnames: new Set(['127.0.0.1']),
+        allowedHostnames: new Set(['localhost']),
       });
       const stream = response.stream;
       let received = 0;
@@ -71,7 +74,7 @@ describe('StreamProxy', () => {
       const proxy = new StreamProxy();
       for (let i = 0; i < 3; i += 1) {
         const response = await proxy.fetch(`${baseUrl}/seg-${i}.ts`, {
-          allowedHostnames: new Set(['127.0.0.1']),
+          allowedHostnames: new Set(['localhost']),
         });
         const chunks: Buffer[] = [];
         for await (const chunk of response.stream) chunks.push(chunk as Buffer);

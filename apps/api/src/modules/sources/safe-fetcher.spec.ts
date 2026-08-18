@@ -12,7 +12,10 @@ jest.mock('node:dns/promises', () => ({
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
-  return `http://127.0.0.1:${port}`;
+  // localhost (et non 127.0.0.1) : le littéral IP est refusé d'emblée par la
+  // protection SSRF, le hostname passe par le DNS simulé (8.8.8.8) et la
+  // connexion réelle reste locale via le résolveur système.
+  return `http://localhost:${port}`;
 }
 
 function close(server: Server): Promise<void> {
