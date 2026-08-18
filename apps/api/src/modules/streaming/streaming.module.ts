@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChannelHealthModule } from '../channel-health/channel-health.module';
 import { HostValidationCache } from './host-validation.cache';
 import { InMemoryStreamSessionStore, RedisStreamSessionStore, StreamSessionStore } from './stream-session.store';
+import { PlaylistCache } from './playlist-cache';
 import { StreamSessionGuard } from './stream.guard';
 import { StreamingController } from './streaming.controller';
 import { StreamingService } from './streaming.service';
@@ -16,7 +17,7 @@ const sessionStoreProvider = {
 @Module({
   imports: [ChannelHealthModule],
   controllers: [StreamingController],
-  providers: [StreamingService, StreamSessionGuard, HostValidationCache, sessionStoreProvider],
+  providers: [StreamingService, StreamSessionGuard, HostValidationCache, PlaylistCache, sessionStoreProvider],
   exports: [StreamingService],
 })
 export class StreamingModule {}
