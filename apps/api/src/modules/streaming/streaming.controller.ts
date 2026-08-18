@@ -102,5 +102,18 @@ export class StreamingController {
 
 function streamContextOf(request: FastifyRequest & { streamContext?: StreamContext }): StreamContext { if (!request.streamContext) throw new BadGatewayException('Contexte de session manquant'); return request.streamContext; }
 function looksLikePlaylist(contentType: string | null, url: string): boolean { return Boolean(contentType && /mpegurl/i.test(contentType)) || /\.m3u8(\?|$)/i.test(url); }
-async function readLimited(stream: Readable, maxBytes: number, label: string): Promise<Buffer> { const chunks: Buffer[] = []; let size = 0; try { for await (const chunk of stream) { size += chunk.length; if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`); chunks.push(chunk); } finally { stream.destroy(); } return Buffer.concat(chunks); }
+async function readLimited(stream: Readable, maxBytes: number, label: string): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of stream) {
+      size += chunk.length;
+      if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`);
+      chunks.push(chunk);
+    }
+  } finally {
+    stream.destroy();
+  }
+  return Buffer.concat(chunks);
+}
 function abortOnDisconnect(reply: FastifyReply, stream: Readable): void { reply.raw.on('close', () => { if (!reply.raw.writableFinished) stream.destroy(); }); }
