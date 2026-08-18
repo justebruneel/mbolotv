@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, 'fix/**']
   pull_request:
@@ -12,7 +13,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -34,6 +35,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
 
       - name: Build
         run: pnpm build
