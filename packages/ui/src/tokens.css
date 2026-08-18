@@ -1,18 +1,19 @@
 :root {
-  --mbolo-bg: #0b0e14;
-  --mbolo-surface: #121722;
-  --mbolo-surface-2: #1a2130;
-  --mbolo-surface-3: #232c3d;
-  --mbolo-border: #232c3d;
-  --mbolo-text: #e8ecf3;
-  --mbolo-text-muted: #8b94a7;
-  --mbolo-primary: #38bdf8;
-  --mbolo-primary-hover: #0ea5e9;
-  --mbolo-on-primary: #0a1628;
-  --mbolo-accent: #38bdf8;
-  --mbolo-success: #34d399;
-  --mbolo-warning: #fbbf24;
-  --mbolo-danger: #f87171;
+  color-scheme: dark;
+  --mbolo-bg: oklch(0.16 0.025 258);
+  --mbolo-surface: oklch(0.20 0.030 258);
+  --mbolo-surface-2: oklch(0.24 0.035 258);
+  --mbolo-surface-3: oklch(0.29 0.042 258);
+  --mbolo-border: oklch(0.34 0.038 258);
+  --mbolo-text: oklch(0.94 0.018 250);
+  --mbolo-text-muted: oklch(0.72 0.035 258);
+  --mbolo-primary: oklch(0.78 0.145 178);
+  --mbolo-primary-hover: oklch(0.84 0.13 178);
+  --mbolo-on-primary: oklch(0.18 0.035 258);
+  --mbolo-accent: oklch(0.78 0.145 178);
+  --mbolo-success: oklch(0.78 0.15 150);
+  --mbolo-warning: oklch(0.84 0.14 90);
+  --mbolo-danger: oklch(0.72 0.17 25);
 
   --mbolo-radius-sm: 6px;
   --mbolo-radius: 10px;
