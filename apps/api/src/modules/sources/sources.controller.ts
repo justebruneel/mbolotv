@@ -20,7 +20,7 @@ export class SourcesController {
   @UseGuards(OwnerAuthGuard) @Post(':id/playlist') uploadPlaylist(@Req() request: FastifyRequest, @Param('id') id: string): Promise<SourceResponse> {
     const body = request.body;
     if (!(body instanceof Readable)) throw new BadRequestException('Corps de requête attendu (flux .m3u)');
-    return this.sourcesService.replacePlaylistStream(this.ownerOf(request).userId, body, id);
+    return this.sourcesService.replacePlaylistStream(this.ownerOf(request).userId, id, body);
   }
   private ownerOf(request: FastifyRequest): OwnerContext { return getOwnerContext(request); }
 }
