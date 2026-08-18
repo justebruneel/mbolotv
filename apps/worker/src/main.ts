@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Worker } from 'bullmq';
 
 const queueName = 'mbolo-jobs';
@@ -14,23 +15,12 @@ const worker = new Worker(
   async (job) => {
     const response = await fetch(`${apiUrl}/api/internal/jobs`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-mbolo-worker-secret': secret,
-      },
-      body: JSON.stringify({
-        id: job.id ?? crypto.randomUUID(),
-        name: job.name,
-        payload: job.data,
-        attemptsMade: job.attemptsMade,
-      }),
+      headers: { 'content-type': 'application/json', 'x-mbolo-worker-secret': secret },
+      body: JSON.stringify({ id: job.id ?? randomUUID(), name: job.name, payload: job.data, attemptsMade: job.attemptsMade }),
     });
     if (!response.ok) throw new Error(`API interne jobs: HTTP ${response.status}`);
   },
-  {
-    connection: { url: redisUrl },
-    concurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 1,
-  },
+  { connection: { url: redisUrl }, concurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 1 },
 );
 
 worker.on('ready', () => console.info('[worker] BullMQ consumer ready'));
