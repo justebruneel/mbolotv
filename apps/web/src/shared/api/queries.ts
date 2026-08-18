@@ -4,17 +4,12 @@ import type {
   ChannelListResponse,
   ChannelQuery,
   CountryOption,
-  EpgRangeQuery,
-  EpgRangeResponse,
-  Match,
-  MatchListResponse,
-  MatchQuery,
   PlayResponse,
   Programme,
   ProgrammeSearchResponse,
 } from '@mbolo/contracts';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { apiGet, apiPost } from './client';
+import { apiGet } from './client';
 
 export function useCategories() {
   return useQuery({
@@ -87,13 +82,6 @@ export function usePlayUrl(id: string) {
   });
 }
 
-export function useEpgRange(params: EpgRangeQuery) {
-  return useQuery({
-    queryKey: ['epg-range', params],
-    queryFn: () => apiGet<EpgRangeResponse>('/epg/range', params),
-  });
-}
-
 export function useProgrammeSearch(q: string, limit = 20) {
   const trimmed = q.trim();
   return useQuery({
@@ -103,32 +91,3 @@ export function useProgrammeSearch(q: string, limit = 20) {
     staleTime: 30_000,
   });
 }
-
-export function useMatches(params: MatchQuery, refetchInterval = 0) {
-  return useQuery({
-    queryKey: ['matches', params],
-    queryFn: () => apiGet<MatchListResponse>('/matches', params),
-    refetchInterval: refetchInterval || undefined,
-  });
-}
-
-export function useMatch(id: string, refetchInterval = 0) {
-  return useQuery({
-    queryKey: ['match', id],
-    queryFn: () => apiGet<Match>(`/matches/${id}`),
-    enabled: !!id,
-    refetchInterval: refetchInterval || undefined,
-  });
-}
-
-export function useMatchPlay(matchId: string, channelId?: string) {
-  return useQuery({
-    queryKey: ['match-play', matchId, channelId ?? 'best'],
-    queryFn: () =>
-      apiPost<PlayResponse>(`/matches/${matchId}/play`, channelId ? { channelId } : undefined),
-    enabled: !!matchId,
-    staleTime: 30 * 60_000,
-  });
-}
-
-export type { Match };

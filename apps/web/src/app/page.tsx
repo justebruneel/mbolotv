@@ -7,8 +7,6 @@ import { useSettingsStore } from '../shared/stores/settings';
 
 const SHORTCUTS = [
   { href: '/live', label: 'Live TV', description: 'Parcourir les chaînes en direct', icon: <Icon.Tv size={22} /> },
-  { href: '/epg', label: 'Guide TV', description: 'Voir la programmation', icon: <Icon.CalendarDays size={22} /> },
-  { href: '/matches', label: 'Matches', description: 'Les matchs à suivre', icon: <Icon.Trophy size={22} /> },
   { href: '/favorites', label: 'Favoris', description: 'Vos chaînes préférées', icon: <Icon.Heart size={22} /> },
 ];
 
