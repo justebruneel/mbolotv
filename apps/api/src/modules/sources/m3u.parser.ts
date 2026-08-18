@@ -1,6 +1,5 @@
 import { createInterface } from 'node:readline';
-import { Readable } from 'node:stream';
-import { Transform } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 
 export interface ParsedChannel { title: string; tvgId?: string; tvgLogo?: string; groupTitle?: string; url: string; }
 const EXTINF_ATTRIBUTE_PATTERN = /([a-zA-Z_-]+)="([^"]*)"/g;
@@ -8,7 +7,7 @@ const VIDEO_EXTENSIONS = new Set(['m3u8', 'ts', 'mp4', 'mpd', 'mpeg', 'mkv', 'av
 
 export function isFolderMarker(title: string): boolean { return /^#{2,}.+#{2,}$/.test(title.trim()); }
 function isContainerUrl(url: string): boolean { try { return new URL(url).pathname.toLowerCase().endsWith('.m3u'); } catch { return false; } }
-function hasVideoExtension(url: string): boolean { try { const ext = new URL(url).pathname.toLowerCase().split('.').pop() ?? ''; return VIDEO_EXTENSIONS.has(ext); } catch { return false; } }
+function hasVideoExtension(url: string): boolean { try { return VIDEO_EXTENSIONS.has(new URL(url).pathname.toLowerCase().split('.').pop() ?? ''); } catch { return false; } }
 function isSuspiciousTitle(title: string): boolean { return /(^|\s)(playlist|folder|dossier|groupe|group|collection|pack|list)(\s|$)/i.test(title) || isFolderMarker(title); }
 function isDirectoryEntry(pending: { attributes: Record<string, string>; displayName: string }, url: string): boolean { return isFolderMarker(pending.displayName) || isContainerUrl(url) || (isSuspiciousTitle(pending.attributes['tvg-name'] || pending.displayName) && !hasVideoExtension(url)); }
 function parseAttributes(line: string): Record<string, string> { const attributes: Record<string, string> = {}; for (const match of line.matchAll(EXTINF_ATTRIBUTE_PATTERN)) attributes[match[1]] = match[2]; return attributes; }
@@ -17,11 +16,10 @@ export function parseM3u(content: string): ParsedChannel[] { const channels: Par
 
 export async function parseM3uStream(input: Readable | ReadableStream<Uint8Array>, options: { maxBytes?: number } = {}): Promise<ParsedChannel[]> {
   const channels: ParsedChannel[] = [];
-  await parseM3uStreamBatched(input, { ...options, batchSize: Number.MAX_SAFE_INTEGER, onBatch: async (batch) => { channels.push(...batch); } });
+  await parseM3uStreamBatched(input, { ...options, batchSize: Number.MAX_SAFE_INTEGER, onBatch: (batch) => { channels.push(...batch); } });
   return channels;
 }
 
-/** Parse une playlist sans retenir deux copies de la ligne courante. Les gros imports peuvent consommer les entrées par lots. */
 export async function parseM3uStreamBatched(input: Readable | ReadableStream<Uint8Array>, options: { maxBytes?: number; batchSize?: number; onBatch: (batch: ParsedChannel[]) => Promise<void> | void }): Promise<number> {
   const maxBytes = options.maxBytes ?? 512 * 1024 * 1024;
   const batchSize = Math.max(1, options.batchSize ?? 5000);
@@ -29,18 +27,21 @@ export async function parseM3uStreamBatched(input: Readable | ReadableStream<Uin
   let received = 0;
   let total = 0;
   let batch: ParsedChannel[] = [];
+  const flushes: Promise<void>[] = [];
   const counter = new Transform({ transform(chunk: Buffer | string, _encoding, callback) { received += chunk.length; callback(received > maxBytes ? new Error('Contenu trop volumineux') : null, chunk); } });
   const parser = createParser([], (entry) => {
     batch.push(entry);
     total += 1;
-    if (batch.length >= batchSize) { const current = batch; batch = []; void options.onBatch(current); }
+    if (batch.length >= batchSize) {
+      const current = batch;
+      batch = [];
+      flushes.push(Promise.resolve(options.onBatch(current)));
+    }
   });
   const rl = createInterface({ input: source.pipe(counter), crlfDelay: Infinity });
-  for await (const rawLine of rl) {
-    parser.handleLine(rawLine);
-    if (batch.length === 0) await Promise.resolve();
-  }
-  if (batch.length > 0) await options.onBatch(batch);
+  for await (const rawLine of rl) parser.handleLine(rawLine);
+  if (batch.length > 0) flushes.push(Promise.resolve(options.onBatch(batch)));
+  await Promise.all(flushes);
   return total;
 }
 
