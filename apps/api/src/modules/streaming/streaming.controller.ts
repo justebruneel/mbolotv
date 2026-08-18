@@ -5,17 +5,20 @@ import { ConfigService } from '@nestjs/config';
 import { rewriteM3u8 } from './hls-rewriter';
 import { HostValidationCache } from './host-validation.cache';
 import { PlaylistCache } from './playlist-cache';
+import { SegmentCache } from './segment-cache';
 import { StreamProxy, StreamProxyResponse } from './stream-proxy';
 import { StreamSessionGuard } from './stream.guard';
 import { HealthCheckService } from '../channel-health/channel-health.service';
 import { StreamContext, StreamingService } from './streaming.service';
 
 const DEFAULT_MAX_PLAYLIST_BYTES = 2 * 1024 * 1024;
+const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 128 * 1024 * 1024;
 
 @Controller('stream')
 @UseGuards(StreamSessionGuard)
 export class StreamingController {
   private readonly maxPlaylistBytes: number;
+  private readonly segmentCache: SegmentCache;
 
   constructor(
     private readonly streamingService: StreamingService,
@@ -25,6 +28,7 @@ export class StreamingController {
     private readonly playlistCache: PlaylistCache,
   ) {
     this.maxPlaylistBytes = Number(this.config.get('STREAM_MAX_PLAYLIST_BYTES', DEFAULT_MAX_PLAYLIST_BYTES));
+    this.segmentCache = new SegmentCache(Number(this.config.get('STREAM_SEGMENT_CACHE_MAX_BYTES', DEFAULT_SEGMENT_CACHE_MAX_BYTES)));
   }
 
   @Get(':sessionId/master.m3u8')
@@ -47,16 +51,18 @@ export class StreamingController {
       response = await new StreamProxy(undefined, this.hostValidation).fetch(providerUrl, { headers: forwarded, allowedHostnames: this.streamingService.allowedHostnames(context.session) });
     } catch (error) {
       if (aliasId === 'master' && context.session.variantId) void this.health.recordFailure(context.session.variantId).catch(() => undefined);
-      const stale = await this.playlistCache.get(context.session.id, aliasId);
-      if (stale) return this.sendPlaylistContent(reply, stale);
+      const stalePlaylist = await this.playlistCache.get(context.session.id, aliasId);
+      if (stalePlaylist) return this.sendPlaylistContent(reply, stalePlaylist);
+      const staleSegment = this.segmentCache.get(`${context.session.id}:${aliasId}`);
+      if (staleSegment) return this.sendBuffered(reply, staleSegment.buffer, staleSegment.contentType, 200);
       throw error;
     }
     await this.streamingService.registerDiscoveredHost(context.session, response.finalUrl);
     if (looksLikePlaylist(response.contentType, response.finalUrl)) return this.sendPlaylist(reply, context, response.stream, response.finalUrl, aliasId);
-    return this.pipeSegment(reply, response);
+    return this.pipeSegment(reply, response, context.session.id, aliasId);
   }
 
-  private pipeSegment(reply: FastifyReply, response: StreamProxyResponse): FastifyReply {
+  private pipeSegment(reply: FastifyReply, response: StreamProxyResponse, sessionId: string, aliasId: string): FastifyReply {
     if (response.contentType) reply.header('content-type', response.contentType);
     if (response.contentLength !== null) reply.header('content-length', response.contentLength);
     if (response.contentRange) reply.header('content-range', response.contentRange);
@@ -66,6 +72,15 @@ export class StreamingController {
     reply.status(response.status);
     abortOnDisconnect(reply, response.stream);
     return reply.send(response.stream);
+  }
+
+  private sendBuffered(reply: FastifyReply, buffer: Buffer, contentType: string | null, status: number): FastifyReply {
+    if (contentType) reply.header('content-type', contentType);
+    reply.header('content-length', String(buffer.byteLength));
+    reply.header('cache-control', 'no-store');
+    reply.header('x-accel-buffering', 'no');
+    reply.status(status);
+    return reply.send(buffer);
   }
 
   private async sendPlaylist(reply: FastifyReply, context: StreamContext, stream: Readable, providerUrl: string, aliasId: string): Promise<FastifyReply> {
@@ -84,10 +99,7 @@ export class StreamingController {
   }
 }
 
-function streamContextOf(request: FastifyRequest & { streamContext?: StreamContext }): StreamContext {
-  if (!request.streamContext) throw new BadGatewayException('Contexte de session manquant');
-  return request.streamContext;
-}
+function streamContextOf(request: FastifyRequest & { streamContext?: StreamContext }): StreamContext { if (!request.streamContext) throw new BadGatewayException('Contexte de session manquant'); return request.streamContext; }
 function looksLikePlaylist(contentType: string | null, url: string): boolean { return Boolean(contentType && /mpegurl/i.test(contentType)) || /\.m3u8(\?|$)/i.test(url); }
 async function readLimited(stream: Readable, maxBytes: number, label: string): Promise<Buffer> { const chunks: Buffer[] = []; let size = 0; try { for await (const chunk of stream) { size += chunk.length; if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`); chunks.push(chunk); } } finally { stream.destroy(); } return Buffer.concat(chunks); }
 function abortOnDisconnect(reply: FastifyReply, stream: Readable): void { reply.raw.on('close', () => { if (!reply.raw.writableFinished) stream.destroy(); }); }
