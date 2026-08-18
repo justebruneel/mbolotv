@@ -59,10 +59,10 @@ export class StreamingController {
     }
     await this.streamingService.registerDiscoveredHost(context.session, response.finalUrl);
     if (looksLikePlaylist(response.contentType, response.finalUrl)) return this.sendPlaylist(reply, context, response.stream, response.finalUrl, aliasId);
-    return this.pipeSegment(reply, response, context.session.id, aliasId);
+    return this.pipeSegment(reply, response);
   }
 
-  private pipeSegment(reply: FastifyReply, response: StreamProxyResponse, sessionId: string, aliasId: string): FastifyReply {
+  private pipeSegment(reply: FastifyReply, response: StreamProxyResponse): FastifyReply {
     if (response.contentType) reply.header('content-type', response.contentType);
     if (response.contentLength !== null) reply.header('content-length', response.contentLength);
     if (response.contentRange) reply.header('content-range', response.contentRange);
