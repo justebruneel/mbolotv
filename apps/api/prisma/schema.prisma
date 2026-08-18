@@ -4,10 +4,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  // connection_limit=1 : évite les écritures concurrentes qui verrouillent
-  // SQLite (imports massifs). busy_timeout=5000 : attend au lieu d'échouer
-  // quand un autre process écrit.
-  url = "file:./dev.db?connection_limit=1&busy_timeout=5000"
+  url = "file:./dev.db?connection_limit=1&busy_timeout=30000"
 }
 
 model User {
@@ -92,7 +89,7 @@ model StreamVariant {
   encryptedLocator Bytes
   quality String?
   healthScore Float @default(0)
-  healthStatus String? // OK | DOWN
+  healthStatus String?
   healthCheckedAt DateTime?
   lastPlayedAt DateTime?
   isActive Boolean @default(true)
@@ -154,7 +151,6 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([actorId, createdAt])
 }
-
 model OwnerSession {
   id String @id @default(cuid())
   userId String
