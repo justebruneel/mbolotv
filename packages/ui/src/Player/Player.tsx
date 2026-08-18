@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Hls, { ErrorTypes } from 'hls.js';
 import type { ErrorData } from 'hls.js';
 import { Spinner } from '../Spinner/Spinner';
@@ -17,39 +17,39 @@ export interface PlayerProps {
   onDataSaverChange?: (enabled: boolean) => void;
 }
 
+interface QualityLevel { index: number; height: number; bitrate?: number; }
+interface PlaybackStats { startupMs: number | null; rebufferCount: number; bufferAhead: number; bitrate: number | null; latency: number | null; }
+
 const MAX_RETRIES = 2;
 const MAX_NETWORK_RETRIES = 2;
 const DATA_SAVER_MAX_HEIGHT = 480;
-const BUFFER_TARGET_SECONDS = 30;
-const LOAD_TIMEOUT_MS = 10_000;
 const STARTUP_DEADLINE_MS = 20_000;
 const DEBUG = false;
 
-interface QualityLevel { index: number; height: number; }
-function exponentialDelay(retryCount: number): number { return Math.min(1000 * 2 ** retryCount, 8000); }
+function exponentialDelay(attempt: number): number { return Math.min(1000 * 2 ** attempt, 8000); }
+function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
+function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
 
 export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, onVolumeChange, onLevelChange, onDataSaverChange }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const startupAtRef = useRef<number>(0);
+  const rebufferCountRef = useRef(0);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [buffering, setBuffering] = useState(false);
-  const [bufferProgress, setBufferProgress] = useState(0);
-  const [loadTimeout, setLoadTimeout] = useState(false);
   const [levels, setLevels] = useState<QualityLevel[]>([]);
   const [activeLevel, setActiveLevel] = useState(-1);
   const [selectedLevel, setSelectedLevel] = useState(initialLevel ?? -1);
   const [dataSaver, setDataSaver] = useState(initialDataSaver ?? false);
-  const urlsKey = urls.join('\n');
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [stats, setStats] = useState<PlaybackStats>({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
+  const [retrying, setRetrying] = useState(false);
+  const urlsKey = useMemo(() => urls.join('\n'), [urls]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || urls.length === 0) return;
     const el = video;
-    setStatus('loading');
-    setLevels([]);
-    setActiveLevel(-1);
-    setBufferProgress(0);
-    setLoadTimeout(false);
     let cancelled = false;
     let urlIndex = 0;
     let retries = 0;
@@ -58,180 +58,95 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let loadTimer: ReturnType<typeof setTimeout> | null = null;
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    startupAtRef.current = performance.now();
+    rebufferCountRef.current = 0;
+    setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setRetrying(false);
+    setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
 
-    const clearTimers = (): void => {
-      if (loadTimer) clearTimeout(loadTimer);
-      if (deadlineTimer) clearTimeout(deadlineTimer);
-      if (retryTimer) clearTimeout(retryTimer);
-      loadTimer = null;
-      deadlineTimer = null;
-      retryTimer = null;
-    };
-    const destroyCurrentHls = (): void => {
-      const hls = hlsRef.current;
-      if (hls) { hls.stopLoad(); hls.detachMedia(); hls.destroy(); }
-      hlsRef.current = null;
-      el.removeAttribute('src');
-      el.load();
-    };
-    const armLoadTimeout = (): void => {
-      if (loadTimer) clearTimeout(loadTimer);
-      loadTimer = setTimeout(() => { if (!cancelled) setLoadTimeout(true); }, LOAD_TIMEOUT_MS);
-    };
-    const updateBuffer = (): void => {
-      if (el.buffered.length === 0) return;
-      const bufferedEnd = el.buffered.end(el.buffered.length - 1);
-      const bufferAhead = bufferedEnd - el.currentTime;
-      setBufferProgress(Math.min(Math.max((bufferAhead / BUFFER_TARGET_SECONDS) * 100, 0), 100));
-    };
-    const markReady = (): void => {
-      if (cancelled) return;
-      started = true;
-      retries = 0;
-      networkRetries = 0;
-      setStatus('ready');
-      setBuffering(false);
-      setLoadTimeout(false);
-      if (loadTimer) clearTimeout(loadTimer);
-      if (deadlineTimer) clearTimeout(deadlineTimer);
-    };
-    const startOrAdvance = (): void => {
-      if (cancelled) return;
-      retries += 1;
-      if (retries <= MAX_RETRIES) { retryTimer = setTimeout(loadCurrentUrl, exponentialDelay(retries)); return; }
-      if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrentUrl(); return; }
-      setStatus('error');
-    };
+    const clearTimers = (): void => { if (loadTimer) clearTimeout(loadTimer); if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); loadTimer = deadlineTimer = retryTimer = null; };
+    const destroy = (): void => { const hls = hlsRef.current; if (hls) { hls.stopLoad(); hls.detachMedia(); hls.destroy(); } hlsRef.current = null; el.removeAttribute('src'); el.load(); };
+    const bufferAhead = (): number => { if (el.buffered.length === 0) return 0; return Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime); };
+    const updateStats = (latency: number | null = stats.latency): void => { const ahead = bufferAhead(); setStats((current) => ({ ...current, bufferAhead: ahead, latency })); };
+    const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); setStats((current) => ({ ...current, startupMs: current.startupMs ?? performance.now() - startupAtRef.current, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); if (loadTimer) clearTimeout(loadTimer); if (deadlineTimer) clearTimeout(deadlineTimer); };
+    const advance = (): void => { if (cancelled) return; retries += 1; setRetrying(true); if (retries <= MAX_RETRIES) { retryTimer = setTimeout(loadCurrent, exponentialDelay(retries)); return; } if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrent(); return; } setStatus('error'); setRetrying(false); };
 
-    function loadCurrentUrl(): void {
+    function loadCurrent(): void {
       if (cancelled) return;
-      clearTimers();
-      destroyCurrentHls();
-      setStatus('loading');
-      setLevels([]);
-      setActiveLevel(-1);
-      setBufferProgress(0);
-      setLoadTimeout(false);
-      armLoadTimeout();
+      clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
       if (!Hls.isSupported()) { el.src = urls[urlIndex]; el.load(); return; }
       started = false;
-      deadlineTimer = setTimeout(() => { if (!cancelled && !started) startOrAdvance(); }, STARTUP_DEADLINE_MS);
+      deadlineTimer = setTimeout(() => { if (!cancelled && !started) advance(); }, STARTUP_DEADLINE_MS);
       const hls = new Hls({
+        debug: DEBUG,
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 30,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        maxBufferSize: 60 * 1000 * 1000,
+        backBufferLength: 15,
+        maxBufferLength: 25,
+        maxMaxBufferLength: 45,
+        maxBufferSize: 50 * 1000 * 1000,
         maxBufferHole: 0.5,
         liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 10,
+        liveMaxLatencyDurationCount: 8,
         startLevel: -1,
-        abrEwmaDefaultEstimate: 1_000_000,
+        abrEwmaDefaultEstimate: 1_500_000,
         abrBandWidthFactor: 0.8,
+        abrBandWidthUpFactor: 0.6,
         abrMaxWithRealBitrate: true,
         capLevelToPlayerSize: true,
-        maxLoadingDelay: 5,
-        maxFragLookUpTolerance: 1.0,
-        manifestLoadingTimeOut: 15_000,
-        manifestLoadingMaxRetry: 3,
-        levelLoadingTimeOut: 15_000,
-        levelLoadingMaxRetry: 3,
-        fragLoadingTimeOut: 20_000,
-        fragLoadingMaxRetry: 4,
-        maxStarvationDelay: 10,
+        maxLoadingDelay: 4,
+        maxFragLookUpTolerance: 0.5,
+        manifestLoadingTimeOut: 12_000,
+        manifestLoadingMaxRetry: 2,
+        levelLoadingTimeOut: 12_000,
+        levelLoadingMaxRetry: 2,
+        fragLoadingTimeOut: 18_000,
+        fragLoadingMaxRetry: 3,
+        maxStarvationDelay: 8,
       });
       hlsRef.current = hls;
-      hls.loadSource(urls[urlIndex]);
-      hls.attachMedia(el);
+      hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
-        if (data.type === ErrorTypes.MEDIA_ERROR) {
-          if (el.buffered.length > 0 && el.currentTime + 1 < el.buffered.end(el.buffered.length - 1)) el.currentTime += 1;
-          hls.recoverMediaError();
-          return;
-        }
+        if (data.type === ErrorTypes.MEDIA_ERROR) { if (el.buffered.length > 0 && el.currentTime + 0.75 < el.buffered.end(el.buffered.length - 1)) el.currentTime += 0.75; hls.recoverMediaError(); return; }
         if (data.type === ErrorTypes.NETWORK_ERROR) {
-          const responseStatus = data.response?.code;
-          const isMasterManifest = typeof data.url === 'string' && data.url.includes('master.m3u8');
-          if (responseStatus === 401 || responseStatus === 403 || (responseStatus === 404 && isMasterManifest)) {
-            if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrentUrl(); }
-            else setStatus('error');
-            return;
-          }
-          const manifestOrLevelUnreachable = [Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT, Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT].includes(data.details);
-          if (manifestOrLevelUnreachable) { startOrAdvance(); return; }
+          const code = data.response?.code;
+          const master = typeof data.url === 'string' && data.url.includes('master.m3u8');
+          if (code === 401 || code === 403 || (code === 404 && master)) { if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrent(); } else setStatus('error'); return; }
+          if ([Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT, Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT].includes(data.details)) { advance(); return; }
           networkRetries += 1;
-          if (networkRetries <= MAX_NETWORK_RETRIES) {
-            retryTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) hls.startLoad(); }, Math.min(1000 * networkRetries, 3000));
-            return;
-          }
+          if (networkRetries <= MAX_NETWORK_RETRIES) { retryTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) hls.startLoad(); }, Math.min(1000 * networkRetries, 3000)); return; }
         }
-        startOrAdvance();
+        advance();
       });
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (cancelled || hlsRef.current !== hls) return;
-        setLevels(hls.levels.map((level, index) => ({ index, height: level.height })));
-        // Un autoplay refusé ne doit pas laisser l’interface bloquée en loading.
-        markReady();
-        void el.play().catch(() => undefined);
-      });
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) setActiveLevel(data.level); });
-      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; updateBuffer(); });
-      if (DEBUG) hls.on(Hls.Events.FRAG_CHANGED, (_event, data) => console.debug('[HLS] fragment', data.frag.sn));
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { if (cancelled || hlsRef.current !== hls) return; setLevels(hls.levels.map((level, index) => ({ index, height: level.height, bitrate: level.bitrate }))); markReady(); void el.play().catch(() => setAutoplayBlocked(true)); });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); const level = hls.levels[data.level]; setStats((current) => ({ ...current, bitrate: level?.bitrate ?? null })); } });
+      hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; updateStats(); });
     }
 
     const onPlaying = (): void => markReady();
     const onCanPlay = (): void => { if (!Hls.isSupported()) markReady(); };
-    const onWaiting = (): void => setBuffering(true);
-    const onNativeError = (): void => startOrAdvance();
-    video.addEventListener('playing', onPlaying);
-    video.addEventListener('canplay', onCanPlay);
-    video.addEventListener('waiting', onWaiting);
-    video.addEventListener('error', onNativeError);
-    if (Hls.isSupported()) loadCurrentUrl();
-    else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); }
-    else setStatus('error');
-
-    return () => {
-      cancelled = true;
-      clearTimers();
-      destroyCurrentHls();
-      video.removeEventListener('playing', onPlaying);
-      video.removeEventListener('canplay', onCanPlay);
-      video.removeEventListener('waiting', onWaiting);
-      video.removeEventListener('error', onNativeError);
-    };
+    const onWaiting = (): void => { if (started) { rebufferCountRef.current += 1; setStats((current) => ({ ...current, rebufferCount: rebufferCountRef.current })); } setBuffering(true); };
+    const onPlayingReset = (): void => { if (started) { setBuffering(false); updateStats(); } };
+    const onError = (): void => advance();
+    video.addEventListener('playing', onPlaying); video.addEventListener('canplay', onCanPlay); video.addEventListener('waiting', onWaiting); video.addEventListener('playing', onPlayingReset); video.addEventListener('error', onError);
+    if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else setStatus('error');
+    return () => { cancelled = true; clearTimers(); destroy(); video.removeEventListener('playing', onPlaying); video.removeEventListener('canplay', onCanPlay); video.removeEventListener('waiting', onWaiting); video.removeEventListener('playing', onPlayingReset); video.removeEventListener('error', onError); };
   }, [urlsKey]);
 
-  useEffect(() => {
-    const hls = hlsRef.current;
-    if (!hls || levels.length === 0 || hls.levels.length === 0) return;
-    hls.autoLevelCapping = dataSaver ? Math.max(0, ...levels.filter((level) => level.height <= DATA_SAVER_MAX_HEIGHT).map((level) => level.index)) : -1;
-    hls.currentLevel = dataSaver ? -1 : selectedLevel;
-  }, [dataSaver, selectedLevel, levels]);
+  const activeHeight = levels.find((level) => level.index === activeLevel)?.height;
+  const qualityLabel = selectedLevel === -1 ? `Auto${activeHeight ? ` · ${activeHeight}p` : ''}` : `${levels.find((level) => level.index === selectedLevel)?.height ?? 'Auto'}p`;
+  const retry = (): void => { setStatus('loading'); setRetrying(true); const video = videoRef.current; if (video) { video.pause(); video.load(); } };
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || initialVolume === undefined) return;
-    video.volume = initialVolume;
-    const handleVolumeChange = (): void => onVolumeChange?.(video.volume);
-    video.addEventListener('volumechange', handleVolumeChange);
-    return () => video.removeEventListener('volumechange', handleVolumeChange);
-  }, [initialVolume, onVolumeChange]);
+  useEffect(() => { const hls = hlsRef.current; if (!hls || levels.length === 0) return; hls.autoLevelCapping = dataSaver ? Math.max(0, ...levels.filter((level) => level.height <= DATA_SAVER_MAX_HEIGHT).map((level) => level.index)) : -1; hls.currentLevel = dataSaver ? -1 : selectedLevel; }, [dataSaver, selectedLevel, levels]);
+  useEffect(() => { const video = videoRef.current; if (!video || initialVolume === undefined) return; video.volume = initialVolume; const onVolume = (): void => onVolumeChange?.(video.volume); video.addEventListener('volumechange', onVolume); return () => video.removeEventListener('volumechange', onVolume); }, [initialVolume, onVolumeChange]);
+  const togglePlayback = (): void => { const video = videoRef.current; if (!video || status !== 'ready') return; if (video.paused) void video.play().catch(() => setAutoplayBlocked(true)); else video.pause(); };
 
-  const handleVideoClick = (): void => {
-    const video = videoRef.current;
-    if (!video || status !== 'ready') return;
-    if (video.paused) void video.play().catch(() => undefined); else video.pause();
-  };
-
-  return (
-    <div className={styles.player}>
-      <video ref={videoRef} className={styles.video} controls playsInline onClick={handleVideoClick} />
-      {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite">{status === 'loading' ? <><Spinner /><div className={styles.progressBar} aria-hidden="true"><div className={styles.progressFill} style={{ width: `${bufferProgress}%` }} /></div><p className={styles.hint}>{loadTimeout ? 'La chaîne met du temps à répondre…' : bufferProgress > 0 ? 'Chargement du flux…' : 'Connexion au serveur…'}</p></> : <><h2 className={styles.title}>Flux indisponible</h2><p className={styles.hint}>La diffusion de « {title} » n’est pas accessible pour le moment.</p></>}</div>}
-      {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /></div>}
-      {status === 'ready' && levels.length > 0 && <div className={styles.controls}><select className={styles.qualitySelect} value={dataSaver ? -1 : selectedLevel} aria-label="Qualité vidéo" onChange={(event) => { const level = Number(event.target.value); setSelectedLevel(level); onLevelChange?.(level); }}><option value={-1}>Auto{activeLevel >= 0 ? ` (${levels.find((level) => level.index === activeLevel)?.height ?? ''}p)` : ''}</option>{levels.slice().sort((a, b) => b.height - a.height).map((level) => <option key={level.index} value={level.index}>{level.height}p</option>)}</select><label className={styles.dataSaverToggle}><input type="checkbox" checked={dataSaver} onChange={(event) => { const enabled = event.target.checked; setDataSaver(enabled); onDataSaverChange?.(enabled); }} />Économie de données</label></div>}
-    </div>
-  );
+  return <div className={styles.player} data-state={status}>
+    <video ref={videoRef} className={styles.video} controls playsInline onClick={togglePlayback} aria-label={`Lecteur ${title}`} />
+    {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && <><Spinner /><p className={styles.hint}>Le lecteur cherche la meilleure qualité disponible.</p></>}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>Le fournisseur ne répond pas ou la session a expiré.</p><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
+    {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>Rattrapage du direct…</span></div>}
+    {status === 'ready' && autoplayBlocked && <button type="button" className={styles.playPrompt} onClick={() => { const video = videoRef.current; if (video) void video.play().then(() => setAutoplayBlocked(false)).catch(() => undefined); }}>Lancer la lecture</button>}
+    {status === 'ready' && <div className={styles.controlRail}><span className={styles.liveBadge}>DIRECT</span><span className={styles.stat}>Qualité {qualityLabel}</span><span className={styles.stat}>Buffer {formatBuffer(stats.bufferAhead)}</span><span className={styles.stat}>Démarrage {formatDuration(stats.startupMs)}</span>{stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}<select className={styles.qualitySelect} value={dataSaver ? -1 : selectedLevel} aria-label="Qualité vidéo" onChange={(event) => { const level = Number(event.target.value); setSelectedLevel(level); onLevelChange?.(level); }}><option value={-1}>Auto</option>{levels.slice().sort((a, b) => b.height - a.height).map((level) => <option key={level.index} value={level.index}>{level.height}p</option>)}</select><label className={styles.dataSaverToggle}><input type="checkbox" checked={dataSaver} onChange={(event) => { const enabled = event.target.checked; setDataSaver(enabled); onDataSaverChange?.(enabled); }} />Éco</label></div>}
+  </div>;
 }
