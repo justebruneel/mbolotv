@@ -1,0 +1,3 @@
+{
+  "buildCommand": "pnpm --filter @mbolo/contracts build && next build"
+}
