@@ -12,8 +12,10 @@ import type {
   SourceUpdateInput,
 } from '@mbolo/contracts';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
-export const BASE_URL = `${API_URL}/api`;
+// Même origine que le web : les appels passent par le proxy Next.js (rewrite
+// /api/owner/*), qui pose le cookie de session sur le domaine du web. Cela
+// évite les blocages de cookies en contexte cross-site (Vercel -> Render).
+export const BASE_URL = '/api';
 
 export type ApiError = { error: string; message?: string };
 

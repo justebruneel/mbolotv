@@ -75,9 +75,17 @@ La config est dans `render.yaml` à la racine (blueprint) :
 
    | Variable | Valeur |
    | --- | --- |
-   | `NEXT_PUBLIC_API_URL` | `https://mbolo-tv-api.onrender.com` |
+   | `NEXT_PUBLIC_API_URL` | `https://mbolo-tv-api.onrender.com` (routes publiques) |
+   | `API_URL` | `https://mbolo-tv-api.onrender.com` (côté serveur : middleware + proxy console) |
+   | `OWNER_CONSOLE_PATH` | chemin privé de la console (identique à Render) |
 
 5. *Deploy*. Chaque push sur `main` redéploie automatiquement.
+
+> **Console owner et cookies** : la console passe par un proxy même-origine
+> (`rewrite` Next.js de `/api/owner/*` vers l'API) — le cookie de session est posé
+> sur le domaine Vercel, aucun blocage de cookies tiers. **Limite** : les uploads de
+> playlist passant par Vercel sont plafonnés à ~4,5 Mo (limite des fonctions
+> serverless) ; au-delà, utiliser une URL de playlist à la place du fichier.
 
 ## 5. Ordre de déploiement recommandé
 
