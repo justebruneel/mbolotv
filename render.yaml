@@ -32,7 +32,15 @@ services:
       - key: PUBLIC_API_URL
         sync: false
       - key: STORAGE_DRIVER
+        value: cloudinary
+      - key: CLOUDINARY_CLOUD_NAME
         sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: mbolo-tv
       - key: S3_ENDPOINT
         sync: false
       - key: S3_ACCESS_KEY
