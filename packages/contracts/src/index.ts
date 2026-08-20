@@ -9,7 +9,7 @@ export type SourceKind = z.infer<typeof sourceKindSchema>;
 export const sourceStatusSchema = z.enum(['PENDING', 'IMPORTING', 'READY', 'DEGRADED', 'FAILED', 'DISABLED']);
 export type SourceStatus = z.infer<typeof sourceStatusSchema>;
 
-export const importStateSchema = z.enum(['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING', 'COMPLETED', 'FAILED']);
+export const importStateSchema = z.enum(['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING', 'COMPLETED', 'FAILED', 'CANCELED']);
 export type ImportState = z.infer<typeof importStateSchema>;
 
 export const matchStateSchema = z.enum(['SCHEDULED', 'LIVE', 'FINISHED', 'POSTPONED']);
@@ -121,12 +121,6 @@ export const epgRangeQuerySchema = z.object({
   category: z.string().optional(),
 });
 export type EpgRangeQuery = z.infer<typeof epgRangeQuerySchema>;
-
-export const epgEntrySchema = z.object({
-  channel: channelSchema.omit({ nowPlaying: true }),
-  programmes: z.array(programmeSchema),
-});
-export type EpgEntry = z.infer<typeof epgEntrySchema>;
 
 export const epgRangeResponseSchema = z.object({
   items: z.array(epgEntrySchema),
