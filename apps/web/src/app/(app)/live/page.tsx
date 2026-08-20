@@ -13,7 +13,6 @@ import { categoryLabel, formatCategoryName, isBouquetCategory } from '../../../f
 
 const PAGE_SIZE = 48;
 const MAX_BOUQUETS = 24;
-const MAX_TABS = 20;
 const SEARCH_DEBOUNCE_MS = 300;
 const SCROLL_KEY = 'mbolo:live:scroll';
 
@@ -58,7 +57,7 @@ function LiveContent() {
     [categories],
   );
   const tabCategories = useMemo(
-    () => [...categories].sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)).slice(0, MAX_TABS),
+    () => [...categories].sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)),
     [categories],
   );
   const isFiltering = category !== undefined || country !== undefined || deferredQuery.trim() !== '';

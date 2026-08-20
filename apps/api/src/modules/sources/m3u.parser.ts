@@ -8,7 +8,7 @@ const VIDEO_EXTENSIONS = new Set(['m3u8', 'ts', 'mp4', 'mpd', 'mpeg', 'mkv', 'av
 export function isFolderMarker(title: string): boolean { return /^#{2,}.+#{2,}$/.test(title.trim()); }
 function isContainerUrl(url: string): boolean { try { return new URL(url).pathname.toLowerCase().endsWith('.m3u'); } catch { return false; } }
 function hasVideoExtension(url: string): boolean { try { return VIDEO_EXTENSIONS.has(new URL(url).pathname.toLowerCase().split('.').pop() ?? ''); } catch { return false; } }
-function isSuspiciousTitle(title: string): boolean { return /(^|\s)(playlist|folder|dossier|groupe|group|collection|pack|list)(\s|$)/i.test(title) || isFolderMarker(title); }
+function isSuspiciousTitle(title: string): boolean { return /(^|\s)(playlist|folder|dossier)(\s|$)/i.test(title) || isFolderMarker(title); }
 function isDirectoryEntry(pending: { attributes: Record<string, string>; displayName: string }, url: string): boolean { return isFolderMarker(pending.displayName) || isContainerUrl(url) || (isSuspiciousTitle(pending.attributes['tvg-name'] || pending.displayName) && !hasVideoExtension(url)); }
 function parseAttributes(line: string): Record<string, string> { const attributes: Record<string, string> = {}; for (const match of line.matchAll(EXTINF_ATTRIBUTE_PATTERN)) attributes[match[1]] = match[2]; return attributes; }
 
