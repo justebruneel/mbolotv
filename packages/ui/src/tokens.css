@@ -1,36 +1,245 @@
+/* ============================================================
+   MBOLO TV — Design Tokens
+   Dark (Netflix/Disney+ style) + Light theme
+   ============================================================ */
+
+/* ---------- DARK THEME (default) ---------- */
 :root {
   color-scheme: dark;
-  --mbolo-bg: oklch(0.16 0.025 258);
-  --mbolo-surface: oklch(0.20 0.030 258);
-  --mbolo-surface-2: oklch(0.24 0.035 258);
-  --mbolo-surface-3: oklch(0.29 0.042 258);
-  --mbolo-border: oklch(0.34 0.038 258);
-  --mbolo-text: oklch(0.94 0.018 250);
-  --mbolo-text-muted: oklch(0.72 0.035 258);
-  --mbolo-primary: oklch(0.78 0.145 178);
-  --mbolo-primary-hover: oklch(0.84 0.13 178);
-  --mbolo-on-primary: oklch(0.18 0.035 258);
+
+  /* Background — deeper, richer blacks */
+  --mbolo-bg: oklch(0.10 0.018 260);
+  --mbolo-bg-elevated: oklch(0.13 0.020 260);
+
+  /* Surfaces — subtle blue tint, Netflix-style depth layers */
+  --mbolo-surface: oklch(0.145 0.022 260);
+  --mbolo-surface-2: oklch(0.185 0.026 260);
+  --mbolo-surface-3: oklch(0.23 0.030 260);
+  --mbolo-surface-hover: oklch(0.26 0.034 260);
+
+  /* Borders — very subtle, almost invisible */
+  --mbolo-border: oklch(0.28 0.025 260);
+  --mbolo-border-strong: oklch(0.35 0.030 260);
+
+  /* Text */
+  --mbolo-text: oklch(0.95 0.010 255);
+  --mbolo-text-secondary: oklch(0.80 0.020 258);
+  --mbolo-text-muted: oklch(0.62 0.025 258);
+  --mbolo-text-faint: oklch(0.48 0.020 258);
+
+  /* Accent — vibrant teal */
   --mbolo-accent: oklch(0.78 0.145 178);
-  --mbolo-success: oklch(0.78 0.15 150);
-  --mbolo-warning: oklch(0.84 0.14 90);
-  --mbolo-danger: oklch(0.72 0.17 25);
+  --mbolo-accent-hover: oklch(0.84 0.130 178);
+  --mbolo-accent-muted: oklch(0.78 0.145 178 / 0.15);
+  --mbolo-on-accent: oklch(0.13 0.025 260);
 
-  --mbolo-radius-sm: 6px;
-  --mbolo-radius: 10px;
+  /* Semantic colors */
+  --mbolo-primary: oklch(0.78 0.145 178);
+  --mbolo-primary-hover: oklch(0.84 0.130 178);
+  --mbolo-on-primary: oklch(0.13 0.025 260);
+  --mbolo-success: oklch(0.76 0.16 155);
+  --mbolo-success-muted: oklch(0.76 0.16 155 / 0.15);
+  --mbolo-warning: oklch(0.82 0.14 85);
+  --mbolo-warning-muted: oklch(0.82 0.14 85 / 0.15);
+  --mbolo-danger: oklch(0.70 0.18 25);
+  --mbolo-danger-muted: oklch(0.70 0.18 25 / 0.15);
+
+  /* Shadows — deep, cinematic */
+  --mbolo-shadow-sm: 0 1px 3px oklch(0.02 0.01 260 / 0.5), 0 1px 2px oklch(0.02 0.01 260 / 0.4);
+  --mbolo-shadow-md: 0 4px 12px oklch(0.02 0.01 260 / 0.5), 0 2px 4px oklch(0.02 0.01 260 / 0.3);
+  --mbolo-shadow-lg: 0 12px 40px oklch(0.02 0.01 260 / 0.6), 0 4px 12px oklch(0.02 0.01 260 / 0.3);
+  --mbolo-shadow-xl: 0 24px 64px oklch(0.02 0.01 260 / 0.7), 0 8px 20px oklch(0.02 0.01 260 / 0.4);
+  --mbolo-shadow-glow: 0 0 20px oklch(0.78 0.145 178 / 0.15), 0 0 60px oklch(0.78 0.145 178 / 0.08);
+
+  /* Radii */
+  --mbolo-radius-xs: 4px;
+  --mbolo-radius-sm: 8px;
+  --mbolo-radius: 12px;
   --mbolo-radius-lg: 16px;
+  --mbolo-radius-xl: 24px;
+  --mbolo-radius-full: 9999px;
 
+  /* Spacing scale */
+  --mbolo-space-0: 0;
   --mbolo-space-1: 4px;
   --mbolo-space-2: 8px;
   --mbolo-space-3: 12px;
   --mbolo-space-4: 16px;
   --mbolo-space-5: 24px;
   --mbolo-space-6: 32px;
+  --mbolo-space-7: 40px;
   --mbolo-space-8: 48px;
+  --mbolo-space-10: 64px;
+  --mbolo-space-12: 80px;
 
-  --mbolo-font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --mbolo-font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Typography */
+  --mbolo-font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mbolo-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --mbolo-font-size-xs: 0.75rem;
   --mbolo-font-size-sm: 0.8125rem;
   --mbolo-font-size-md: 0.9375rem;
   --mbolo-font-size-lg: 1.125rem;
   --mbolo-font-size-xl: 1.5rem;
+  --mbolo-font-size-2xl: 2rem;
+  --mbolo-font-size-3xl: 2.5rem;
+  --mbolo-line-height-tight: 1.2;
+  --mbolo-line-height-normal: 1.5;
+  --mbolo-line-height-relaxed: 1.65;
+
+  /* Animations */
+  --mbolo-duration-fast: 100ms;
+  --mbolo-duration-base: 180ms;
+  --mbolo-duration-slow: 280ms;
+  --mbolo-duration-slower: 400ms;
+  --mbolo-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --mbolo-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --mbolo-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --mbolo-transition-fast: var(--mbolo-duration-fast) var(--mbolo-ease-out);
+  --mbolo-transition-base: var(--mbolo-duration-base) var(--mbolo-ease-out);
+  --mbolo-transition-slow: var(--mbolo-duration-slow) var(--mbolo-ease-out);
+
+  /* Z-index scale */
+  --mbolo-z-base: 0;
+  --mbolo-z-dropdown: 100;
+  --mbolo-z-sticky: 200;
+  --mbolo-z-overlay: 300;
+  --mbolo-z-modal: 400;
+  --mbolo-z-toast: 500;
+}
+
+/* ---------- LIGHT THEME ---------- */
+[data-theme="light"],
+:root.light {
+  color-scheme: light;
+
+  --mbolo-bg: oklch(0.985 0.005 260);
+  --mbolo-bg-elevated: oklch(1.0 0 0);
+
+  --mbolo-surface: oklch(1.0 0 0);
+  --mbolo-surface-2: oklch(0.97 0.005 260);
+  --mbolo-surface-3: oklch(0.94 0.008 260);
+  --mbolo-surface-hover: oklch(0.93 0.010 260);
+
+  --mbolo-border: oklch(0.91 0.006 260);
+  --mbolo-border-strong: oklch(0.85 0.010 260);
+
+  --mbolo-text: oklch(0.13 0.020 260);
+  --mbolo-text-secondary: oklch(0.30 0.020 260);
+  --mbolo-text-muted: oklch(0.50 0.020 260);
+  --mbolo-text-faint: oklch(0.68 0.015 260);
+
+  --mbolo-accent: oklch(0.62 0.16 178);
+  --mbolo-accent-hover: oklch(0.55 0.17 178);
+  --mbolo-accent-muted: oklch(0.62 0.16 178 / 0.12);
+  --mbolo-on-accent: oklch(1.0 0 0);
+
+  --mbolo-primary: oklch(0.62 0.16 178);
+  --mbolo-primary-hover: oklch(0.55 0.17 178);
+  --mbolo-on-primary: oklch(1.0 0 0);
+  --mbolo-success: oklch(0.55 0.18 155);
+  --mbolo-success-muted: oklch(0.55 0.18 155 / 0.12);
+  --mbolo-warning: oklch(0.65 0.18 85);
+  --mbolo-warning-muted: oklch(0.65 0.18 85 / 0.12);
+  --mbolo-danger: oklch(0.58 0.20 25);
+  --mbolo-danger-muted: oklch(0.58 0.20 25 / 0.12);
+
+  --mbolo-shadow-sm: 0 1px 3px oklch(0.50 0.02 260 / 0.08), 0 1px 2px oklch(0.50 0.02 260 / 0.06);
+  --mbolo-shadow-md: 0 4px 12px oklch(0.50 0.02 260 / 0.10), 0 2px 4px oklch(0.50 0.02 260 / 0.06);
+  --mbolo-shadow-lg: 0 12px 40px oklch(0.50 0.02 260 / 0.12), 0 4px 12px oklch(0.50 0.02 260 / 0.06);
+  --mbolo-shadow-xl: 0 24px 64px oklch(0.50 0.02 260 / 0.14), 0 8px 20px oklch(0.50 0.02 260 / 0.08);
+  --mbolo-shadow-glow: 0 0 20px oklch(0.62 0.16 178 / 0.12), 0 0 60px oklch(0.62 0.16 178 / 0.06);
+}
+
+/* ---------- SYSTEM PREFERENCE (auto) ---------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --mbolo-bg: oklch(0.985 0.005 260);
+    --mbolo-bg-elevated: oklch(1.0 0 0);
+
+    --mbolo-surface: oklch(1.0 0 0);
+    --mbolo-surface-2: oklch(0.97 0.005 260);
+    --mbolo-surface-3: oklch(0.94 0.008 260);
+    --mbolo-surface-hover: oklch(0.93 0.010 260);
+
+    --mbolo-border: oklch(0.91 0.006 260);
+    --mbolo-border-strong: oklch(0.85 0.010 260);
+
+    --mbolo-text: oklch(0.13 0.020 260);
+    --mbolo-text-secondary: oklch(0.30 0.020 260);
+    --mbolo-text-muted: oklch(0.50 0.020 260);
+    --mbolo-text-faint: oklch(0.68 0.015 260);
+
+    --mbolo-accent: oklch(0.62 0.16 178);
+    --mbolo-accent-hover: oklch(0.55 0.17 178);
+    --mbolo-accent-muted: oklch(0.62 0.16 178 / 0.12);
+    --mbolo-on-accent: oklch(1.0 0 0);
+
+    --mbolo-primary: oklch(0.62 0.16 178);
+    --mbolo-primary-hover: oklch(0.55 0.17 178);
+    --mbolo-on-primary: oklch(1.0 0 0);
+    --mbolo-success: oklch(0.55 0.18 155);
+    --mbolo-success-muted: oklch(0.55 0.18 155 / 0.12);
+    --mbolo-warning: oklch(0.65 0.18 85);
+    --mbolo-warning-muted: oklch(0.65 0.18 85 / 0.12);
+    --mbolo-danger: oklch(0.58 0.20 25);
+    --mbolo-danger-muted: oklch(0.58 0.20 25 / 0.12);
+
+    --mbolo-shadow-sm: 0 1px 3px oklch(0.50 0.02 260 / 0.08), 0 1px 2px oklch(0.50 0.02 260 / 0.06);
+    --mbolo-shadow-md: 0 4px 12px oklch(0.50 0.02 260 / 0.10), 0 2px 4px oklch(0.50 0.02 260 / 0.06);
+    --mbolo-shadow-lg: 0 12px 40px oklch(0.50 0.02 260 / 0.12), 0 4px 12px oklch(0.50 0.02 260 / 0.06);
+    --mbolo-shadow-xl: 0 24px 64px oklch(0.50 0.02 260 / 0.14), 0 8px 20px oklch(0.50 0.02 260 / 0.08);
+    --mbolo-shadow-glow: 0 0 20px oklch(0.62 0.16 178 / 0.12), 0 0 60px oklch(0.62 0.16 178 / 0.06);
+  }
+}
+
+/* ---------- GLOBAL ANIMATIONS ---------- */
+@keyframes mbolo-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mbolo-slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mbolo-slide-down {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mbolo-scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes mbolo-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes mbolo-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes mbolo-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mbolo-glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px oklch(0.78 0.145 178 / 0.2); }
+  50% { box-shadow: 0 0 20px oklch(0.78 0.145 178 / 0.4); }
+}
+
+/* ---------- REDUCED MOTION ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

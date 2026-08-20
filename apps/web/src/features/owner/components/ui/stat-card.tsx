@@ -10,12 +10,12 @@ const TONE_STYLES: Record<Tone, string> = {
   danger: 'text-danger',
 };
 
-const TONE_BAR: Record<Tone, string> = {
-  default: 'bg-border',
-  accent: 'bg-accent',
-  success: 'bg-success',
-  warning: 'bg-warning',
-  danger: 'bg-danger',
+const TONE_BG: Record<Tone, string> = {
+  default: 'bg-border/50',
+  accent: 'bg-accent-muted',
+  success: 'bg-success-muted',
+  warning: 'bg-warning-muted',
+  danger: 'bg-danger-muted',
 };
 
 export function StatCard({
@@ -32,14 +32,25 @@ export function StatCard({
   tone?: Tone;
 }) {
   return (
-    <div className="card card-interactive relative overflow-hidden p-5">
-      <span className={`absolute inset-y-0 left-0 w-0.5 ${TONE_BAR[tone]}`} aria-hidden />
-      <div className="flex items-center justify-between gap-3">
-        {icon ? <span className={`${TONE_STYLES[tone]}`}>{icon}</span> : <span />}
-        <span className="font-mono text-2xl font-semibold tabular-nums tracking-tight">{value}</span>
+    <div className="group relative overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-sm transition-all duration-300 hover:border-accent/30 hover:shadow-md hover:-translate-y-0.5">
+      {/* Accent glow on hover */}
+      <div className="absolute inset-0 bg-gradient-to-br from-accent/5 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+
+      <div className="relative flex items-center justify-between gap-3">
+        {icon ? (
+          <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${TONE_BG[tone]} ${TONE_STYLES[tone]}`}>
+            {icon}
+          </span>
+        ) : (
+          <span />
+        )}
+        <span className="font-mono text-3xl font-extrabold tabular-nums tracking-tight">
+          {value}
+        </span>
       </div>
-      <p className="mt-3 text-sm font-medium text-muted">{label}</p>
-      {sub && <p className="mt-0.5 text-xs text-muted/70">{sub}</p>}
+
+      <p className="relative mt-3 text-sm font-semibold text-secondary">{label}</p>
+      {sub && <p className="relative mt-0.5 text-xs text-faint">{sub}</p>}
     </div>
   );
 }

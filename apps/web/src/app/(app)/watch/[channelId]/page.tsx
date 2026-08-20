@@ -5,7 +5,6 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo } from 'react';
 import { useChannel, useChannelEpg, useInfiniteChannels, usePlayUrl } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
-import { PageHeader } from '../../../../shared/components/PageHeader';
 import { useSettingsStore } from '../../../../shared/stores/settings';
 import { buildWatchHref } from '../../../../features/live-tv/utils';
 
@@ -63,24 +62,96 @@ export default function WatchPage() {
     else router.replace('/live');
   };
 
-  if (channelQuery.isLoading || !channelQuery.data) return <div className="flex justify-center p-12"><Spinner /></div>;
+  if (channelQuery.isLoading || !channelQuery.data) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
   const channel = channelQuery.data;
 
   return (
-    <>
-      <button type="button" onClick={goBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-accent"><Icon.ChevronLeft size={15} aria-hidden /> Retour</button>
-      <PageHeader
-        title={<span className="flex items-center gap-2">{channel.name}{channel.country && <Badge tone="accent">{channel.country}</Badge>}</span>}
-        actions={<><FavoriteToggle channelId={channel.id} /><Button variant="ghost" size="small" onClick={() => navigate('prev')}><Icon.ChevronLeft size={16} /> Précédente</Button><Button variant="ghost" size="small" onClick={() => navigate('next')}>Suivante <Icon.ChevronRight size={16} /></Button></>}
-      />
-      {playQuery.isLoading ? (
-        <div className="aspect-video flex items-center justify-center rounded-2xl bg-black"><Spinner /></div>
-      ) : playUrls.length > 0 ? (
-        <Player urls={playUrls} title={channel.name} initialVolume={volume} initialLevel={preferredLevel} initialDataSaver={dataSaver} onVolumeChange={setVolume} onLevelChange={setPreferredLevel} onDataSaverChange={setDataSaver} />
-      ) : (
-        <EmptyState title="Lecture indisponible" hint="Impossible de récupérer un flux pour cette chaîne." />
-      )}
-      <div className="mt-5">{now ? <ChannelRow channel={channel} now={now} next={next} /> : <EmptyState title="Aucune programmation" hint="Pas de programme en cours pour cette chaîne." />}</div>
-    </>
+    <div className="animate-fade-in">
+      {/* Back button */}
+      <button
+        type="button"
+        onClick={goBack}
+        className="mb-6 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-muted transition-all duration-200 hover:bg-surface-2 hover:text-accent"
+      >
+        <Icon.ChevronLeft size={16} aria-hidden /> Retour
+      </button>
+
+      {/* Channel header */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 animate-slide-up">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-extrabold tracking-tight">{channel.name}</h1>
+          {channel.country && (
+            <Badge tone="accent">{channel.country}</Badge>
+          )}
+          {channel.nowPlaying && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-wide text-white">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+              DIRECT
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <FavoriteToggle channelId={channel.id} />
+          <div className="hidden sm:flex items-center gap-1 rounded-xl border border-border bg-surface p-1">
+            <Button variant="ghost" size="small" onClick={() => navigate('prev')} className="!rounded-lg">
+              <Icon.ChevronLeft size={16} />
+            </Button>
+            <span className="px-2 text-xs text-muted font-medium">Navigation</span>
+            <Button variant="ghost" size="small" onClick={() => navigate('next')} className="!rounded-lg">
+              <Icon.ChevronRight size={16} />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Player */}
+      <div className="animate-scale-in stagger-1">
+        {playQuery.isLoading ? (
+          <div className="aspect-video flex items-center justify-center rounded-2xl bg-surface border border-border">
+            <Spinner />
+          </div>
+        ) : playUrls.length > 0 ? (
+          <Player
+            urls={playUrls}
+            title={channel.name}
+            initialVolume={volume}
+            initialLevel={preferredLevel}
+            initialDataSaver={dataSaver}
+            onVolumeChange={setVolume}
+            onLevelChange={setPreferredLevel}
+            onDataSaverChange={setDataSaver}
+          />
+        ) : (
+          <EmptyState title="Lecture indisponible" hint="Impossible de récupérer un flux pour cette chaîne." />
+        )}
+      </div>
+
+      {/* EPG info */}
+      <div className="mt-6 animate-slide-up stagger-2">
+        {now ? (
+          <ChannelRow channel={channel} now={now} next={next} />
+        ) : (
+          <EmptyState title="Aucune programmation" hint="Pas de programme en cours pour cette chaîne." />
+        )}
+      </div>
+
+      {/* Mobile nav */}
+      <div className="mt-6 flex sm:hidden items-center justify-center gap-2">
+        <Button variant="ghost" onClick={() => navigate('prev')}>
+          <Icon.ChevronLeft size={16} /> Précédente
+        </Button>
+        <Button variant="ghost" onClick={() => navigate('next')}>
+          Suivante <Icon.ChevronRight size={16} />
+        </Button>
+      </div>
+    </div>
   );
 }
