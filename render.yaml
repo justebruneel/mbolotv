@@ -11,6 +11,10 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      # URL Neon directe, sans -pooler. Si absente, le Dockerfile la dérive
+      # automatiquement depuis DATABASE_URL pour les migrations Prisma.
+      - key: DIRECT_URL
+        sync: false
       - key: ENCRYPTION_KEY
         sync: false
       - key: OWNER_EMAIL

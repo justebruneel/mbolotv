@@ -28,7 +28,7 @@ WORKDIR /app
 COPY --from=builder /app /app
 
 EXPOSE 4000
-# Migrations PostgreSQL (Prisma) appliquées avant le démarrage.
-# PRISMA_MIGRATE_SKIP_ADVISORY_LOCKING : tolère une URL "pooled" (Neon) ; avec une
-# connexion directe la variable est sans effet.
-CMD ["sh", "-c", "PRISMA_MIGRATE_SKIP_ADVISORY_LOCKING=1 pnpm --filter @mbolo/api exec prisma migrate deploy && node apps/api/dist/main.js"]
+# Neon fournit souvent DATABASE_URL via PgBouncer (-pooler), mais Prisma Migrate
+# a besoin d’une connexion directe pour pg_advisory_lock. DIRECT_URL est prioritaire;
+# sinon on dérive l’URL directe depuis l’URL Neon poolée.
+CMD ["sh", "-c", "MIGRATION_DATABASE_URL=\"${DIRECT_URL:-${DATABASE_URL/-pooler./.}}\" && DATABASE_URL=\"$MIGRATION_DATABASE_URL\" pnpm --filter @mbolo/api exec prisma migrate deploy && node apps/api/dist/main.js"]
