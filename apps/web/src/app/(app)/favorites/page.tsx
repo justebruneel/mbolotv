@@ -1,6 +1,6 @@
 'use client';
 
-import { EmptyState, Icon, Spinner } from '@mbolo/ui';
+import { Icon, Spinner } from '@mbolo/ui';
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { useChannels } from '../../../shared/api/queries';
