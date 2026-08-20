@@ -29,6 +29,7 @@ COPY --from=builder /app /app
 
 EXPOSE 4000
 # Neon fournit souvent DATABASE_URL via PgBouncer (-pooler), mais Prisma Migrate
-# a besoin d’une connexion directe pour pg_advisory_lock. DIRECT_URL est prioritaire;
-# sinon on dérive l’URL directe depuis l’URL Neon poolée.
-CMD ["sh", "-c", "MIGRATION_DATABASE_URL=\"${DIRECT_URL:-$(printf '%s' \"$DATABASE_URL\" | sed 's/-pooler\\././')}\" && DATABASE_URL=\"$MIGRATION_DATABASE_URL\" pnpm --filter @mbolo/api exec prisma migrate deploy && node apps/api/dist/main.js"]
+# a besoin d’une connexion directe pour pg_advisory_lock. DIRECT_URL est prioritaire.
+# La base existait avant l’ajout de Prisma Migrate : si la migration initiale est
+# enregistrée FAILED (P3009), on la réconcilie comme baseline déjà appliquée.
+CMD ["sh", "-c", "MIGRATION_DATABASE_URL=\"${DIRECT_URL:-$(printf '%s' \"$DATABASE_URL\" | sed 's/-pooler\\././')}\" && export DATABASE_URL=\"$MIGRATION_DATABASE_URL\" && (pnpm --filter @mbolo/api exec prisma migrate resolve --applied 20260818000000_init >/dev/null 2>&1 || true) && pnpm --filter @mbolo/api exec prisma migrate deploy && node apps/api/dist/main.js"]
