@@ -36,11 +36,7 @@ export function isPrivateIp(address: string): boolean {
 
 export async function assertSafeUrl(rawUrl: string): Promise<URL> {
   let url: URL;
-  try {
-    url = new URL(rawUrl.trim());
-  } catch {
-    throw new BadRequestException('URL fournisseur invalide');
-  }
+  try { url = new URL(rawUrl.trim()); } catch { throw new BadRequestException('URL fournisseur invalide'); }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new BadRequestException('Protocole fournisseur non autorisé');
   const hostname = url.hostname.replace(/\.$/, '').toLowerCase();
   if (!hostname || /[\[\]]/.test(hostname)) throw new BadRequestException('Nom d’hôte fournisseur invalide');
@@ -57,11 +53,9 @@ export async function assertSafeUrl(rawUrl: string): Promise<URL> {
 
 export interface FetchResult { ok: boolean; status: number; latencyMs: number; body?: string; contentType?: string; error?: string; finalUrl?: string; }
 export interface StreamFetchResult { ok: boolean; status: number; latencyMs: number; stream?: ReadableStream<Uint8Array>; contentType?: string; error?: string; finalUrl?: string; }
-export interface FetchOptions { maxBytes?: number; headers?: Record<string, string>; timeoutMs?: number; userAgent?: string; }
+export interface FetchOptions { maxBytes?: number; headers?: Record<string, string>; timeoutMs?: number; userAgent?: string; signal?: AbortSignal; }
 
-function safeError(error: unknown): string {
-  return error instanceof BadRequestException ? error.message : 'Connexion fournisseur impossible';
-}
+function safeError(error: unknown): string { return error instanceof BadRequestException ? error.message : 'Connexion fournisseur impossible'; }
 
 export class SafeFetcher {
   async fetch(rawUrl: string, options: FetchOptions = {}): Promise<FetchResult> {
@@ -72,15 +66,16 @@ export class SafeFetcher {
     try { url = await assertSafeUrl(rawUrl); } catch (error) { return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: safeError(error) }; }
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       const controller = new AbortController();
+      const abort = () => controller.abort();
+      if (options.signal?.aborted) return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Import annulé' };
+      options.signal?.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': options.userAgent ?? DEFAULT_USER_AGENT, accept: '*/*', ...options.headers } });
         if (response.status >= 300 && response.status < 400) {
-          const location = response.headers.get('location');
-          await response.body?.cancel();
+          const location = response.headers.get('location'); await response.body?.cancel();
           if (!location) return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Redirection sans destination' };
-          url = await assertSafeUrl(new URL(location, url).toString());
-          continue;
+          url = await assertSafeUrl(new URL(location, url).toString()); continue;
         }
         if (!response.ok) { await response.body?.cancel(); return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: `Réponse HTTP ${response.status}` }; }
         const contentLength = Number(response.headers.get('content-length') ?? '0');
@@ -90,8 +85,8 @@ export class SafeFetcher {
         return { ok: true, status: response.status, latencyMs: Date.now() - startedAt, body: Buffer.from(bytes).toString('utf8'), contentType: response.headers.get('content-type') ?? undefined, finalUrl: url.toString() };
       } catch (error) {
         const reason = error instanceof Error ? error.name : 'UNKNOWN';
-        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: reason === 'AbortError' ? 'Délai dépassé chez le fournisseur' : safeError(error) };
-      } finally { clearTimeout(timer); }
+        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: options.signal?.aborted ? 'Import annulé' : reason === 'AbortError' ? 'Délai dépassé chez le fournisseur' : safeError(error) };
+      } finally { clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
     }
     return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Trop de redirections fournisseur' };
   }
@@ -104,24 +99,27 @@ export class SafeFetcher {
     try { url = await assertSafeUrl(rawUrl); } catch (error) { return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: safeError(error) }; }
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       const controller = new AbortController();
+      const abort = () => controller.abort();
+      if (options.signal?.aborted) return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Import annulé' };
+      options.signal?.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let keepAbortListener = false;
       try {
         const response = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': options.userAgent ?? DEFAULT_USER_AGENT, accept: '*/*', ...options.headers } });
         if (response.status >= 300 && response.status < 400) {
-          const location = response.headers.get('location');
-          await response.body?.cancel();
+          const location = response.headers.get('location'); await response.body?.cancel();
           if (!location) return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Redirection sans destination' };
-          url = await assertSafeUrl(new URL(location, url).toString());
-          continue;
+          url = await assertSafeUrl(new URL(location, url).toString()); continue;
         }
         if (!response.ok) { await response.body?.cancel(); return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: `Réponse HTTP ${response.status}` }; }
         const contentLength = Number(response.headers.get('content-length') ?? '0');
         if (contentLength > maxBytes) { await response.body?.cancel(); return { ok: false, status: response.status, latencyMs: Date.now() - startedAt, error: 'Contenu trop volumineux' }; }
+        keepAbortListener = true;
         return { ok: true, status: response.status, latencyMs: Date.now() - startedAt, stream: response.body ?? undefined, contentType: response.headers.get('content-type') ?? undefined, finalUrl: url.toString() };
       } catch (error) {
         const reason = error instanceof Error ? error.name : 'UNKNOWN';
-        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: reason === 'AbortError' ? 'Délai dépassé chez le fournisseur' : safeError(error) };
-      } finally { clearTimeout(timer); }
+        return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: options.signal?.aborted ? 'Import annulé' : reason === 'AbortError' ? 'Délai dépassé chez le fournisseur' : safeError(error) };
+      } finally { clearTimeout(timer); if (!keepAbortListener) options.signal?.removeEventListener('abort', abort); }
     }
     return { ok: false, status: 0, latencyMs: Date.now() - startedAt, error: 'Trop de redirections fournisseur' };
   }

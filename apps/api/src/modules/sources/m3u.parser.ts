@@ -26,41 +26,46 @@ export async function parseM3uStreamBatched(input: Readable | ReadableStream<Uin
   const source = input instanceof Readable ? input : Readable.fromWeb(input as import('node:stream/web').ReadableStream);
   let received = 0;
   let total = 0;
-  let batch: ParsedChannel[] = [];
-  const flushes: Promise<void>[] = [];
   const counter = new Transform({ transform(chunk: Buffer | string, _encoding, callback) { received += chunk.length; callback(received > maxBytes ? new Error('Contenu trop volumineux') : null, chunk); } });
-  const parser = createParser([], (entry) => {
-    batch.push(entry);
-    total += 1;
-    if (batch.length >= batchSize) {
-      const current = batch;
-      batch = [];
-      flushes.push(Promise.resolve(options.onBatch(current)));
-    }
-  });
+  const parser = createParser([], (entry) => { total += 1; return entry; }, batchSize);
   const rl = createInterface({ input: source.pipe(counter), crlfDelay: Infinity });
-  for await (const rawLine of rl) parser.handleLine(rawLine);
-  if (batch.length > 0) flushes.push(Promise.resolve(options.onBatch(batch)));
-  await Promise.all(flushes);
+  for await (const rawLine of rl) {
+    parser.handleLine(rawLine);
+    const ready = parser.takeBatch();
+    if (ready) await options.onBatch(ready);
+  }
+  const remaining = parser.takeRemaining();
+  if (remaining.length > 0) await options.onBatch(remaining);
   return total;
 }
 
-function createParser(channels: ParsedChannel[], onEntry?: (entry: ParsedChannel) => void): { handleLine: (rawLine: string) => void } {
+type Parser = { handleLine: (rawLine: string) => void; takeBatch: () => ParsedChannel[] | null; takeRemaining: () => ParsedChannel[] };
+function createParser(channels: ParsedChannel[], onEntry?: (entry: ParsedChannel) => ParsedChannel, batchSize?: number): Parser {
   let pending: { attributes: Record<string, string>; displayName: string } | null = null;
   let inGroup = '';
-  return { handleLine(rawLine: string): void {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#EXTM3U')) return;
-    if (line.startsWith('#EXTGRP:')) { inGroup = line.slice(8).trim(); return; }
-    if (line.startsWith('#EXTINF:')) { pending = { attributes: parseAttributes(line), displayName: line.replace(/^#EXTINF:[^,]*,\s*/, '').trim() }; return; }
-    if (line.startsWith('#')) return;
-    if (pending && /^[a-z][a-z0-9+.-]*:\/\//i.test(line)) {
-      const title = pending.attributes['tvg-name'] || pending.displayName.split(';')[0]?.trim() || pending.attributes['tvg-id'] || 'Sans titre';
-      if (!isDirectoryEntry(pending, line)) {
-        const entry: ParsedChannel = { title, tvgId: pending.attributes['tvg-id'] || undefined, tvgLogo: pending.attributes['tvg-logo'] || undefined, groupTitle: pending.attributes['group-title'] || inGroup || undefined, url: line };
-        if (onEntry) onEntry(entry); else channels.push(entry);
+  let batch: ParsedChannel[] = [];
+  let readyBatch: ParsedChannel[] | null = null;
+  const push = (entry: ParsedChannel) => {
+    const value = onEntry ? onEntry(entry) : entry;
+    if (batchSize) {
+      batch.push(value);
+      if (batch.length >= batchSize && !readyBatch) { readyBatch = batch; batch = []; }
+    } else channels.push(value);
+  };
+  return {
+    handleLine(rawLine: string): void {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#EXTM3U')) return;
+      if (line.startsWith('#EXTGRP:')) { inGroup = line.slice(8).trim(); return; }
+      if (line.startsWith('#EXTINF:')) { pending = { attributes: parseAttributes(line), displayName: line.replace(/^#EXTINF:[^,]*,\s*/, '').trim() }; return; }
+      if (line.startsWith('#')) return;
+      if (pending && /^[a-z][a-z0-9+.-]*:\/\//i.test(line)) {
+        const title = pending.attributes['tvg-name'] || pending.displayName.split(';')[0]?.trim() || pending.attributes['tvg-id'] || 'Sans titre';
+        if (!isDirectoryEntry(pending, line)) push({ title, tvgId: pending.attributes['tvg-id'] || undefined, tvgLogo: pending.attributes['tvg-logo'] || undefined, groupTitle: pending.attributes['group-title'] || inGroup || undefined, url: line });
       }
-    }
-    pending = null;
-  } };
+      pending = null;
+    },
+    takeBatch(): ParsedChannel[] | null { const value = readyBatch; readyBatch = null; return value; },
+    takeRemaining(): ParsedChannel[] { const value = batch; batch = []; return value; },
+  };
 }
