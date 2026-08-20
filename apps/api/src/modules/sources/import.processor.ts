@@ -68,7 +68,7 @@ export class ImportProcessor implements OnModuleInit {
     try {
       await this.assertNotCanceled(importRunId);
       const metrics = source.kind === 'M3U' ? await this.importM3u(source, connection, importRunId) : source.kind === 'XTREAM' ? await this.importXtream(source, connection, importRunId) : source.kind === 'MAC_PORTAL' ? await this.importMac(source, connection, importRunId) : (() => { throw new ImportError('UNSUPPORTED_KIND', 'Type de source non pris en charge'); })();
-      const completed = await this.prisma.importRun.updateMany({ where: { id: importRunId, state: { not: 'CANCELED' } }, data: { state: 'COMPLETED', metrics: metrics as unknown as Prisma.InputJsonValue, completedAt: new Date() } });
+      const completed = await this.prisma.importRun.updateMany({ where: { id: importRunId, state: { not: 'CANCELED' } }, data: { state: 'COMPLETED', metrics: JSON.parse(JSON.stringify(metrics)), completedAt: new Date() } });
       if (!completed.count) return;
       await this.prisma.source.update({ where: { id: sourceId }, data: { status: 'READY', lastSyncedAt: new Date() } });
       await this.audit.log(source.ownerId, 'import.completed', 'source', source.id, { importRunId, metrics });
@@ -194,7 +194,7 @@ export class ImportProcessor implements OnModuleInit {
     metrics.updated += updates.length + variantUpdates.length;
     metrics.processed = metrics.read;
     metrics.ignored = Math.max(0, metrics.read - metrics.created - metrics.updated - metrics.duplicates - metrics.errors);
-    await this.prisma.importRun.update({ where: { id: importRunId }, data: { metrics: metrics as unknown as Prisma.InputJsonValue } });
+    await this.prisma.importRun.update({ where: { id: importRunId }, data: { metrics: JSON.parse(JSON.stringify(metrics)) } });
     return finalize ? this.finalizeIngest(source, importRunId, state) : metrics;
   }
 
@@ -204,7 +204,7 @@ export class ImportProcessor implements OnModuleInit {
     const toPrune = active.filter((variant) => !state.seenChannelIds.has(variant.channelId));
     for (const part of chunks(toPrune, 500)) { const result = await this.prisma.streamVariant.updateMany({ where: { id: { in: part.map((variant) => variant.id) } }, data: { isActive: false } }); state.metrics.pruned += result.count; }
     state.metrics.ignored = Math.max(0, state.metrics.read - state.metrics.created - state.metrics.updated - state.metrics.duplicates - state.metrics.errors);
-    await this.prisma.importRun.update({ where: { id: importRunId }, data: { metrics: state.metrics as unknown as Prisma.InputJsonValue } });
+    await this.prisma.importRun.update({ where: { id: importRunId }, data: { metrics: JSON.parse(JSON.stringify(state.metrics)) } });
     return state.metrics;
   }
 
