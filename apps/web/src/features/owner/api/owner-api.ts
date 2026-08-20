@@ -15,6 +15,7 @@ import type {
 export const BASE_URL = '/api';
 export type ApiError = { error: string; message?: string };
 const JSON_HEADERS: Record<string, string> = { 'content-type': 'application/json' };
+const AUTH_TIMEOUT_MS = 15_000;
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (response.ok) return (response.status === 204 ? null : response.json()) as T;
@@ -26,7 +27,11 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 export const ownerApi = {
   auth: {
-    login: (input: OwnerLoginInput): Promise<OwnerMe> => fetch(`${BASE_URL}/owner/auth/login`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerMe>),
+    login: (input: OwnerLoginInput): Promise<OwnerMe> => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+      return fetch(`${BASE_URL}/owner/auth/login`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input), signal: controller.signal }).then(parseResponse<OwnerMe>).finally(() => window.clearTimeout(timer));
+    },
     logout: (): Promise<void> => fetch(`${BASE_URL}/owner/auth/logout`, { method: 'POST', credentials: 'include' }).then(parseResponse<void>),
   },
   overview: (): Promise<Overview> => fetch(`${BASE_URL}/owner/overview`, { credentials: 'include' }).then(parseResponse<Overview>),
