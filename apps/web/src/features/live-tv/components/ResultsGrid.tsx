@@ -6,32 +6,7 @@ import { ChannelTile } from './ChannelTile';
 import type { WatchContext } from '../utils';
 
 const VIRTUALIZE_THRESHOLD = 500;
-
-export function ResultsGrid({
-  channels,
-  total,
-  watchContext,
-}: {
-  channels: Channel[];
-  total?: number;
-  watchContext?: WatchContext;
-}) {
-  if (channels.length > VIRTUALIZE_THRESHOLD) {
-    return <VirtualChannelGrid channels={channels} total={total} watchContext={watchContext} />;
-  }
-
-  return (
-    <div>
-      {typeof total === 'number' && (
-        <p className="text-sm text-muted mb-4">
-          {total} chaîne{total > 1 ? 's' : ''} trouvée{total > 1 ? 's' : ''}
-        </p>
-      )}
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4">
-        {channels.map((channel) => (
-          <ChannelTile key={channel.id} channel={channel} watchContext={watchContext} />
-        ))}
-      </div>
-    </div>
-  );
+export function ResultsGrid({ channels, total, watchContext }: { channels: Channel[]; total?: number; watchContext?: WatchContext }) {
+  if (channels.length > VIRTUALIZE_THRESHOLD) return <VirtualChannelGrid channels={channels} total={total} watchContext={watchContext} />;
+  return <section aria-label="Résultats des chaînes"><div className="mb-5 flex items-end justify-between gap-4"><p className="text-sm font-medium text-muted">{typeof total === 'number' ? `${total.toLocaleString('fr-FR')} chaîne${total > 1 ? 's' : ''}` : 'Chaînes'}</p></div><div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-x-5 gap-y-8 sm:grid-cols-[repeat(auto-fit,minmax(170px,1fr))] lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">{channels.map((channel) => <ChannelTile key={channel.id} channel={channel} watchContext={watchContext} />)}</div></section>;
 }

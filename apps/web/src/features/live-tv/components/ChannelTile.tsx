@@ -14,48 +14,9 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
   const has = useFavoritesStore((state) => state.has);
   const toggle = useFavoritesStore((state) => state.toggle);
   const [logoError, setLogoError] = useState(false);
-  const badge = channelBadge(channel.name);
-  const live = channel.nowPlaying != null;
-  const down = channel.healthStatus === 'DOWN';
   const href = buildWatchHref(channel.id, watchContext);
-
-  const prefetch = (): void => {
-    if (down) return;
-    void queryClient.prefetchQuery({
-      queryKey: ['channel', channel.id],
-      queryFn: () => apiGet<Channel>(`/channels/${channel.id}`),
-      staleTime: 30 * 60_000,
-    });
-  };
-
-  const tileClass = down
-    ? 'relative aspect-square rounded-xl bg-surface-2 border border-border overflow-hidden flex items-center justify-center opacity-50 grayscale cursor-not-allowed'
-    : 'relative aspect-square rounded-xl bg-surface-3 border border-border overflow-hidden flex items-center justify-center transition-colors group-hover:border-accent/60 focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer';
-
-  const visual = (
-    <>
-      {channel.logoUrl != null && !logoError ? (
-        <img src={channel.logoUrl} alt="" width={72} height={72} loading="lazy" decoding="async" onError={() => setLogoError(true)} className="object-contain p-2" />
-      ) : (
-        <span className="text-2xl font-bold text-muted transition-colors group-hover:text-accent">{channelInitials(channel.name)}</span>
-      )}
-      {badge && <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-accent text-on-accent leading-none">{badge}</span>}
-      {down ? (
-        <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-bg/80 text-[10px] font-semibold text-muted leading-none">Hors ligne</span>
-      ) : (
-        live && <span className="absolute bottom-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-bg/80 text-[10px] font-semibold text-danger leading-none"><span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-danger" /></span>DIRECT</span>
-      )}
-    </>
-  );
-
-  return (
-    <article className="group relative w-32 shrink-0" onMouseEnter={prefetch}>
-      {down ? <div className={tileClass}>{visual}</div> : <Link href={href} aria-label={`Regarder ${channel.name}`} className={tileClass}>{visual}</Link>}
-      <span className="absolute top-1 right-1 z-10 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity" onClick={(event) => event.stopPropagation()}>
-        <FavoriteButton isActive={has(channel.id)} onToggle={() => toggle(channel.id)} />
-      </span>
-      {down ? <p className="mt-1.5 text-sm font-medium text-foreground truncate">{channel.name}</p> : <Link href={href} className="mt-1.5 block text-sm font-medium text-foreground truncate hover:text-accent focus-visible:text-accent">{channel.name}</Link>}
-      {channel.country && <p className="text-xs text-muted truncate">{channel.country}</p>}
-    </article>
-  );
+  const down = channel.healthStatus === 'DOWN';
+  const prefetch = (): void => { if (!down) void queryClient.prefetchQuery({ queryKey: ['channel', channel.id], queryFn: () => apiGet<Channel>(`/channels/${channel.id}`), staleTime: 30 * 60_000 }); };
+  const visual = <><div className="flex h-full w-full items-center justify-center p-4"><span className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-2xl font-bold text-muted">{channel.logoUrl && !logoError ? <img src={channel.logoUrl} alt="" width={96} height={96} loading="lazy" decoding="async" onError={() => setLogoError(true)} className="h-full w-full object-contain p-3" /> : channelInitials(channel.name)}</span></div>{channel.nowPlaying && <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-bg px-2 py-1 text-[10px] font-bold text-danger"><span className="h-1.5 w-1.5 rounded-full bg-danger" />DIRECT</span>}{channelBadge(channel.name) && <span className="absolute left-2 top-2 rounded bg-accent px-1.5 py-1 text-[10px] font-bold text-on-accent">{channelBadge(channel.name)}</span>}</>;
+  return <article className={`group relative min-w-0 ${down ? 'opacity-50 grayscale' : ''}`} onMouseEnter={prefetch}><div className="relative aspect-square overflow-hidden rounded-2xl border border-border bg-surface-3 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:border-accent/60">{down ? <div aria-disabled="true">{visual}</div> : <Link href={href} aria-label={`Regarder ${channel.name}`} className="block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset">{visual}</Link>}<span className="absolute right-2 top-2 z-10" onClick={(event) => event.stopPropagation()}><FavoriteButton label={has(channel.id) ? `Retirer ${channel.name} des favoris` : `Ajouter ${channel.name} aux favoris`} isActive={has(channel.id)} onToggle={() => toggle(channel.id)} /></span></div><Link href={href} className="mt-2 block truncate text-sm font-semibold text-foreground hover:text-accent">{channel.name}</Link>{channel.country && <p className="mt-0.5 truncate text-xs text-muted">{channel.country}</p>}</article>;
 }

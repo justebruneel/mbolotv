@@ -11,15 +11,11 @@ export class ChannelsService {
   private readonly storageDriver: string;
   private readonly logoUrlTtlSeconds: number;
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly streaming: StreamingService,
-    private readonly storage: StorageService,
-    config: ConfigService,
-  ) {
+  constructor(private readonly prisma: PrismaService, private readonly streaming: StreamingService, private readonly storage: StorageService, config: ConfigService) {
     this.publicApiUrl = (config.get<string>('PUBLIC_API_URL') ?? config.get<string>('API_URL') ?? 'http://localhost:4000').replace(/\/+$/, '');
-    this.storageDriver = config.get<string>('STORAGE_DRIVER', 'local');
-    this.logoUrlTtlSeconds = config.get<number>('S3_LOGO_URL_TTL_SECONDS', 300);
+    const configuredDriver = config.get<string>('STORAGE_DRIVER', 'local').trim().toLowerCase();
+    this.storageDriver = configuredDriver === 's3' || Boolean(config.get<string>('S3_ENDPOINT') && config.get<string>('S3_BUCKET')) ? 's3' : 'local';
+    this.logoUrlTtlSeconds = Math.min(Math.max(config.get<number>('S3_LOGO_URL_TTL_SECONDS', 300), 60), 3600);
   }
 
   async list(query: ChannelQuery): Promise<ChannelListResponse> {
@@ -47,9 +43,7 @@ export class ChannelsService {
   async findOne(id: string): Promise<Channel> {
     const channel = await this.prisma.channel.findFirst({ where: { id, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } } });
     if (!channel) throw new NotFoundException('Channel not found');
-    const nowPlaying = (await this.findNowPlaying([id])).get(id) ?? null;
-    const healthStatus = (await this.findHealthStatus([id])).get(id) ?? null;
-    return this.serialize(channel, nowPlaying, healthStatus);
+    return this.serialize(channel, (await this.findNowPlaying([id])).get(id) ?? null, (await this.findHealthStatus([id])).get(id) ?? null);
   }
 
   async epg(id: string): Promise<Programme[]> {
@@ -62,15 +56,13 @@ export class ChannelsService {
   }
 
   async play(id: string): Promise<PlayResponse> {
-    const channel = await this.prisma.channel.findUnique({ where: { id } });
-    if (!channel) throw new NotFoundException('Channel not found');
+    if (!(await this.prisma.channel.findUnique({ where: { id } }))) throw new NotFoundException('Channel not found');
     return this.streaming.createPlay(id);
   }
 
   private async findNowPlaying(channelIds: string[]): Promise<Map<string, NowPlaying>> {
     if (channelIds.length === 0) return new Map();
-    const now = new Date();
-    const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: { in: channelIds }, startsAt: { lte: now }, endsAt: { gt: now } } });
+    const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: { in: channelIds }, startsAt: { lte: new Date() }, endsAt: { gt: new Date() } } });
     const map = new Map<string, NowPlaying>();
     for (const programme of programmes) if (!map.has(programme.channelId)) map.set(programme.channelId, { startsAt: programme.startsAt.toISOString(), endsAt: programme.endsAt.toISOString(), title: programme.title });
     return map;
@@ -80,11 +72,7 @@ export class ChannelsService {
     if (channelIds.length === 0) return new Map();
     const variants = await this.prisma.streamVariant.findMany({ where: { channelId: { in: channelIds }, isActive: true }, select: { channelId: true, healthStatus: true } });
     const map = new Map<string, 'OK' | 'DOWN'>();
-    for (const variant of variants) {
-      if (variant.healthStatus === null) continue;
-      const current = map.get(variant.channelId);
-      if (current === undefined || variant.healthStatus === 'OK') map.set(variant.channelId, variant.healthStatus as 'OK' | 'DOWN');
-    }
+    for (const variant of variants) if (variant.healthStatus !== null && (map.get(variant.channelId) === undefined || variant.healthStatus === 'OK')) map.set(variant.channelId, variant.healthStatus as 'OK' | 'DOWN');
     return map;
   }
 
@@ -94,9 +82,10 @@ export class ChannelsService {
 
   private async resolveLogoUrl(logoKey: string | null): Promise<string | null> {
     if (!logoKey || /^https?:\/\//i.test(logoKey)) return null;
-    if (this.storageDriver === 's3') {
-      try { return await this.storage.signedUrl(logoKey, this.logoUrlTtlSeconds); } catch { return null; }
+    try {
+      return this.storageDriver === 's3' ? await this.storage.signedUrl(logoKey, this.logoUrlTtlSeconds) : `${this.publicApiUrl}/uploads/${logoKey}`;
+    } catch {
+      return null;
     }
-    return `${this.publicApiUrl}/uploads/${logoKey}`;
   }
 }
