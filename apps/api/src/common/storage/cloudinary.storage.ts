@@ -74,11 +74,17 @@ export class CloudinaryStorageService implements StorageService {
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = sha1(`public_id=${publicId}&timestamp=${timestamp}${this.apiSecret}`);
     const form = new FormData();
-    form.append('file', new Blob([body], { type: contentType ?? 'application/octet-stream' }));
+
+    // Buffer<ArrayBufferLike> n’est pas accepté comme BlobPart par les types
+    // Node 22. On copie les octets dans un ArrayBuffer strict avant upload.
+    const bytes = new Uint8Array(body.byteLength);
+    bytes.set(body);
+    form.append('file', new Blob([bytes.buffer], { type: contentType ?? 'application/octet-stream' }));
     form.append('api_key', this.apiKey);
     form.append('timestamp', String(timestamp));
     form.append('public_id', publicId);
     form.append('signature', signature);
+
     const response = await fetch(`https://api.cloudinary.com/v1_1/${this.cloudName}/${resourceType}/upload`, { method: 'POST', body: form });
     if (!response.ok) throw new Error(`Cloudinary upload failed (${response.status})`);
   }
