@@ -22,7 +22,7 @@ export function ResultsGrid({ channels, total, watchContext }: { channels: Chann
         </p>
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-x-5 gap-y-8 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] lg:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
+      <div className="grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] lg:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
         {channels.map((channel, index) => (
           <div
             key={channel.id}

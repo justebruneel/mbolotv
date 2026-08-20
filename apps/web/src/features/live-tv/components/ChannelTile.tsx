@@ -11,7 +11,7 @@ import { channelBadge, channelInitials, buildWatchHref, type WatchContext } from
 
 export function ChannelTile({ channel, watchContext }: { channel: Channel; watchContext?: WatchContext }) {
   const queryClient = useQueryClient();
-  const has = useFavoritesStore((state) => state.has);
+  const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
   const toggle = useFavoritesStore((state) => state.toggle);
   const [logoError, setLogoError] = useState(false);
   const href = buildWatchHref(channel.id, watchContext);
@@ -79,7 +79,7 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
         )}
 
         {/* Hover overlay */}
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/60 via-black/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+        <div className="absolute inset-0 z-0 flex items-center justify-center bg-gradient-to-t from-black/60 via-black/20 to-transparent opacity-0 pointer-events-none transition-opacity duration-300 group-hover:opacity-100 group-hover:pointer-events-auto">
           {!down && (
             <Link
               href={href}
@@ -94,12 +94,12 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
         </div>
 
         <span
-          className="absolute right-2 top-2 z-10"
+          className="absolute right-2 top-2 z-20"
           onClick={(event) => event.stopPropagation()}
         >
           <FavoriteButton
-            label={has(channel.id) ? `Retirer ${channel.name} des favoris` : `Ajouter ${channel.name} aux favoris`}
-            isActive={has(channel.id)}
+            label={isFavorite ? `Retirer ${channel.name} des favoris` : `Ajouter ${channel.name} aux favoris`}
+            isActive={isFavorite}
             onToggle={() => toggle(channel.id)}
           />
         </span>

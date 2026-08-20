@@ -275,6 +275,7 @@
     display: flex;
   }
   .sidebar {
+    z-index: 60;
     width: 280px;
     transform: translateX(-100%);
     transition: transform var(--mbolo-duration-slower) var(--mbolo-ease-out);
