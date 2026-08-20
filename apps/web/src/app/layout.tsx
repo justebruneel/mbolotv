@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import '@mbolo/ui/src/tokens.css';
 import './globals.css';
 import '../styles/pwa.css';
+import { PwaRegister } from '../shared/components/PwaRegister';
 
 export const metadata: Metadata = {
   title: { default: 'Mbolo TV', template: '%s · Mbolo TV' },
@@ -13,4 +14,4 @@ export const metadata: Metadata = {
 };
 export const viewport: Viewport = { themeColor: '#101823', width: 'device-width', initialScale: 1, viewportFit: 'cover' };
 
-export default function RootLayout({ children }: { children: ReactNode }) { return <html lang="fr"><body>{children}</body></html>; }
+export default function RootLayout({ children }: { children: ReactNode }) { return <html lang="fr"><body><PwaRegister />{children}</body></html>; }
