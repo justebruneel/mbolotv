@@ -7,8 +7,6 @@ import { QueryProvider } from '../../shared/components/QueryProvider';
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
-  { href: '/epg', label: 'Guide TV', icon: <Icon.CalendarDays size={20} /> },
-  { href: '/matches', label: 'Matches', icon: <Icon.Trophy size={20} /> },
   { href: '/favorites', label: 'Favoris', icon: <Icon.Heart size={20} /> },
 ];
 const UTILITY_ITEMS = [
