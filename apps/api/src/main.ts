@@ -18,23 +18,32 @@ async function bootstrap(): Promise<void> {
   const instance = app.getHttpAdapter().getInstance();
   await instance.register(cookie);
 
-  // Ne pas utiliser parseAs=buffer ici: une playlist de 500 Mo ne doit jamais
-  // être matérialisée entièrement dans le heap Node. Le handler reçoit le flux.
+  // Les playlists sont traitées en flux, jamais matérialisées entièrement dans le heap.
   for (const contentType of ['application/octet-stream', 'text/plain', 'application/x-mpegurl']) {
     instance.addContentTypeParser(contentType, (request, payload, done) => done(null, payload));
   }
 
-  app.enableCors({ origin: corsOrigins(config), credentials: true, methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'] });
+  app.enableCors({
+    origin: corsOrigins(config),
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['content-type', 'authorization', 'range', 'x-requested-with'],
+    exposedHeaders: ['content-length', 'content-range', 'accept-ranges'],
+    maxAge: 86_400,
+  });
   app.setGlobalPrefix('api');
+
   if (config.get<string>('STORAGE_DRIVER', 'local') === 'local') {
     const uploadsDir = resolve(config.get<string>('STORAGE_LOCAL_DIR', './uploads'));
     await mkdir(uploadsDir, { recursive: true });
     await instance.register(fastifyStatic, { root: uploadsDir, prefix: '/uploads/' });
   }
+
   const port = config.get<number>('API_PORT', 4000);
   await app.listen(port, '0.0.0.0');
   console.info(`Mbolo TV API listening on http://localhost:${port}`);
 }
+
 void bootstrap();
 
 function installProcessSafetyNet(): void {
@@ -42,11 +51,18 @@ function installProcessSafetyNet(): void {
   process.on('uncaughtException', (error) => log('uncaughtException', error));
   process.on('unhandledRejection', (reason) => log('unhandledRejection', reason));
 }
+
 function corsOrigins(config: ConfigService): string[] | true {
-  // Si CORS_ALLOWED_ORIGINS est défini, seule cette liste est autorisée.
-  const fromEnv = (config.get<string>('CORS_ALLOWED_ORIGINS', '') ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
-  if (fromEnv.length > 0) return fromEnv;
-  // Par défaut : refléter l'origine du navigateur (l'API est publique :
-  // chaînes, catégories et proxy de streaming n'ont pas d'authentification).
-  return true;
+  // Render peut conserver une ancienne valeur CORS_ALLOWED_ORIGINS qui ne
+  // correspond pas au domaine Vercel actif. Le mode permissif est volontaire:
+  // l’API catalogue et le proxy de lecture sont publics, et SameSite=strict
+  // protège les cookies de la console owner contre les requêtes cross-site.
+  const mode = (config.get<string>('CORS_MODE', 'permissive') ?? 'permissive').trim().toLowerCase();
+  if (mode !== 'strict') return true;
+
+  const origins = (config.get<string>('CORS_ALLOWED_ORIGINS', '') ?? '')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  return origins.length > 0 ? origins : true;
 }
