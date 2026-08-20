@@ -5,6 +5,9 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.interface';
 import { StreamingService } from '../streaming/streaming.service';
 
+type ListedChannel = { id: string; name: string; canonicalName: string; country: string | null; categoryId: string | null; logoKey: string | null };
+type CountryRow = { country: string | null; _count: { country: number } };
+
 @Injectable()
 export class ChannelsService {
   private readonly publicApiUrl: string;
@@ -29,15 +32,15 @@ export class ChannelsService {
       this.prisma.channel.findMany({ where, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], take: query.limit ?? 48, skip: query.offset ?? 0 }),
       this.prisma.channel.count({ where }),
     ]);
-    const nowPlaying = await this.findNowPlaying(channels.map((channel) => channel.id));
-    const healthByChannel = await this.findHealthStatus(channels.map((channel) => channel.id));
-    const items = await Promise.all(channels.map((channel) => this.serialize(channel, nowPlaying.get(channel.id) ?? null, healthByChannel.get(channel.id) ?? null)));
+    const nowPlaying = await this.findNowPlaying(channels.map((channel: { id: string }) => channel.id));
+    const healthByChannel = await this.findHealthStatus(channels.map((channel: { id: string }) => channel.id));
+    const items = await Promise.all(channels.map((channel: ListedChannel) => this.serialize(channel, nowPlaying.get(channel.id) ?? null, healthByChannel.get(channel.id) ?? null)));
     return { items, total, hasMore: (query.offset ?? 0) + items.length < total };
   }
 
   async countries(): Promise<CountryOption[]> {
     const rows = await this.prisma.channel.groupBy({ by: ['country'], where: { country: { not: null }, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } }, _count: { country: true } });
-    return rows.filter((row) => row.country !== null).map((row) => ({ slug: row.country as string, name: row.country as string, count: row._count.country })).sort((a, b) => b.count - a.count);
+    return rows.filter((row: CountryRow) => row.country !== null).map((row: CountryRow) => ({ slug: row.country as string, name: row.country as string, count: row._count.country })).sort((a: CountryOption, b: CountryOption) => b.count - a.count);
   }
 
   async findOne(id: string): Promise<Channel> {
@@ -76,7 +79,7 @@ export class ChannelsService {
     return map;
   }
 
-  private async serialize(channel: { id: string; name: string; canonicalName: string; country: string | null; categoryId: string | null; logoKey: string | null }, nowPlaying: NowPlaying | null, healthStatus: 'OK' | 'DOWN' | null): Promise<Channel> {
+  private async serialize(channel: ListedChannel, nowPlaying: NowPlaying | null, healthStatus: 'OK' | 'DOWN' | null): Promise<Channel> {
     return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, country: channel.country, categoryId: channel.categoryId, logoUrl: await this.resolveLogoUrl(channel.logoKey), healthStatus, nowPlaying };
   }
 
