@@ -2,13 +2,13 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException, 
 import { ConfigService } from '@nestjs/config';
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { PassThrough, Readable } from 'node:stream';
 import type { ConnectTestResponse, ImportRun, ImportRunListResponse, SourceCreateInput, SourceDetail, SourceResponse, SourceUpdateInput } from '@mbolo/contracts';
 import { AuditService } from '../../common/audit/audit.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JobQueue } from '../../common/queue/queue.interface';
 import { StorageService } from '../../common/storage/storage.interface';
+import { ImportCancellationRegistry } from './import-cancellation';
 import { SafeFetcher } from './safe-fetcher';
 
 const ACTIVE_IMPORT_STATES = ['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING'];
@@ -16,27 +16,29 @@ const UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
 
 @Injectable()
 export class SourcesService {
-  constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService, private readonly audit: AuditService, private readonly queue: JobQueue, private readonly storage: StorageService, private readonly config: ConfigService) {}
+  constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService, private readonly audit: AuditService, private readonly queue: JobQueue, private readonly storage: StorageService, private readonly config: ConfigService, private readonly cancellation: ImportCancellationRegistry) {}
   async list(ownerId: string): Promise<SourceResponse[]> { const rows = await this.prisma.source.findMany({ where: { ownerId }, orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }] }); return rows.map((row) => this.serialize(row)); }
   async detail(ownerId: string, id: string): Promise<SourceDetail> { const source = await this.findOwned(ownerId, id); const variantsCount = await this.prisma.streamVariant.count({ where: { sourceId: id } }); let connectionMasked: Record<string, string> = {}; try { const connection = JSON.parse(this.crypto.decrypt(source.connectionEncrypted)) as Record<string, string>; connectionMasked = Object.fromEntries(Object.entries(connection).map(([key, value]) => [key, this.maskValue(value)])); } catch { connectionMasked = { error: 'Impossible de déchiffrer la connexion' }; } return { ...this.serialize(source), connectionMasked, variantsCount }; }
   async create(ownerId: string, input: SourceCreateInput): Promise<SourceResponse> { const source = await this.prisma.source.create({ data: { ownerId, name: input.name, kind: input.kind, connectionEncrypted: this.crypto.encrypt(JSON.stringify(input.connection)), status: 'PENDING' } }); await this.audit.log(ownerId, 'source.create', 'source', source.id, { kind: input.kind, name: input.name }); if (input.kind === 'M3U' && (input.connection['url'] || input.connection['playlistUrl'])) await this.startImport(ownerId, source.id, true); return this.serialize(source); }
   async update(ownerId: string, id: string, input: SourceUpdateInput): Promise<SourceResponse> { await this.findOwned(ownerId, id); const source = await this.prisma.source.update({ where: { id }, data: { name: input.name, priority: input.priority, status: input.status } }); await this.audit.log(ownerId, 'source.update', 'source', id, { changes: input }); return this.serialize(source); }
-  async remove(ownerId: string, id: string): Promise<void> {
-    const source = await this.findOwned(ownerId, id);
-    const activeRun = await this.prisma.importRun.findFirst({ where: { sourceId: id, state: { in: ACTIVE_IMPORT_STATES } }, select: { id: true } });
-    if (activeRun) throw new ConflictException('Impossible de supprimer une source pendant un import. Attendez la fin ou arrêtez l’import.');
-    await this.withDbRetry(() => this.prisma.source.delete({ where: { id } }));
-    const orphans = await this.prisma.channel.findMany({ where: { variants: { none: {} } }, select: { id: true } });
-    let orphanChannelsRemoved = 0;
-    for (let i = 0; i < orphans.length; i += 10000) {
-      const result = await this.withDbRetry(() => this.prisma.channel.deleteMany({ where: { id: { in: orphans.slice(i, i + 10000).map((row) => row.id) } } }));
-      orphanChannelsRemoved += result.count;
-    }
-    await this.audit.log(ownerId, 'source.delete', 'source', id, { name: source.name, orphanChannelsRemoved });
-  }
+  async remove(ownerId: string, id: string): Promise<void> { const source = await this.findOwned(ownerId, id); const activeRun = await this.prisma.importRun.findFirst({ where: { sourceId: id, state: { in: ACTIVE_IMPORT_STATES } }, select: { id: true } }); if (activeRun) throw new ConflictException('Impossible de supprimer une source pendant un import. Annulez l’import puis réessayez.'); await this.withDbRetry(() => this.prisma.source.delete({ where: { id } })); const orphans = await this.prisma.channel.findMany({ where: { variants: { none: {} } }, select: { id: true } }); let orphanChannelsRemoved = 0; for (let i = 0; i < orphans.length; i += 10000) { const result = await this.withDbRetry(() => this.prisma.channel.deleteMany({ where: { id: { in: orphans.slice(i, i + 10000).map((row) => row.id) } } })); orphanChannelsRemoved += result.count; } await this.audit.log(ownerId, 'source.delete', 'source', id, { name: source.name, orphanChannelsRemoved }); }
   async test(ownerId: string, id: string): Promise<ConnectTestResponse> { const source = await this.findOwned(ownerId, id); const connection = JSON.parse(this.crypto.decrypt(source.connectionEncrypted)) as Record<string, string>; if (source.kind === 'M3U' && connection['fileKey']) { const ok = await this.storage.exists(connection['fileKey']); return { ok, latencyMs: null, error: ok ? null : 'Playlist téléversée introuvable' }; } if (source.kind === 'M3U' && connection['filePath']) { const absolute = resolve(this.config.get<string>('STORAGE_LOCAL_DIR', './uploads'), connection['filePath']); try { const info = await stat(absolute); return { ok: info.isFile(), latencyMs: null, error: info.isFile() ? null : 'Fichier local introuvable' }; } catch { return { ok: false, latencyMs: null, error: 'Fichier local introuvable' }; } } const probe = this.buildProbe(source.kind, connection); if (!probe) return { ok: false, latencyMs: null, error: 'Connexion incomplète : paramètres manquants' }; const result = await new SafeFetcher().fetch(probe); return { ok: result.ok, latencyMs: result.latencyMs, error: result.error ?? null }; }
   async importNow(ownerId: string, id: string): Promise<ImportRun> { return this.startImport(ownerId, id, false); }
-  async replacePlaylistStream(ownerId: string, id: string, input: Readable): Promise<SourceResponse> { const source = await this.findOwned(ownerId, id); if (source.kind !== 'M3U') throw new BadRequestException('Le téléversement concerne uniquement les sources M3U'); const key = `playlists/${source.id}.m3u`; const pass = new PassThrough(); const upload = this.storage.putStream(key, pass, 'application/x-mpegurl', UPLOAD_MAX_BYTES); let head = Buffer.alloc(0); let bytes = 0; try { for await (const chunk of input) { const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); bytes += buffer.byteLength; if (bytes > UPLOAD_MAX_BYTES) throw new PayloadTooLargeException('Fichier trop volumineux'); if (head.byteLength < 512) head = Buffer.concat([head, buffer.subarray(0, 512 - head.byteLength)]); if (!pass.write(buffer)) await new Promise<void>((resolveDrain) => pass.once('drain', resolveDrain)); } pass.end(); await upload; } catch (error) { pass.destroy(); await this.storage.delete(key); throw error; } if (!head.toString('utf8').trimStart().startsWith('#EXTM3U')) { await this.storage.delete(key); throw new BadRequestException('En-tête #EXTM3U manquant'); } const updated = await this.prisma.source.update({ where: { id }, data: { connectionEncrypted: this.crypto.encrypt(JSON.stringify({ fileKey: key })), status: 'PENDING' } }); await this.audit.log(ownerId, 'source.upload_playlist', 'source', id, { bytes }); await this.startImport(ownerId, id, false); return this.serialize(updated); }
+  async cancelImport(ownerId: string, id: string): Promise<ImportRun> {
+    const current = await this.prisma.importRun.findFirst({ where: { id, source: { ownerId } }, include: { source: true } });
+    if (!current) throw new NotFoundException('Import introuvable');
+    if (!ACTIVE_IMPORT_STATES.includes(current.state)) return this.serializeRun(current);
+    const canceled = await this.prisma.importRun.updateMany({ where: { id, state: { in: ACTIVE_IMPORT_STATES } }, data: { state: 'CANCELED', errorCode: 'CANCELED', errorMessage: 'Import annulé par l’utilisateur', completedAt: new Date() } });
+    if (canceled.count) {
+      this.cancellation.cancel(id);
+      await this.prisma.source.updateMany({ where: { id: current.sourceId, status: 'IMPORTING' }, data: { status: 'READY' } });
+      await this.audit.log(ownerId, 'import.canceled', 'source', current.sourceId, { importRunId: id });
+    }
+    const row = await this.prisma.importRun.findUnique({ where: { id }, include: { source: true } });
+    if (!row) throw new NotFoundException('Import introuvable');
+    return this.serializeRun(row);
+  }
+  async replacePlaylistStream(ownerId: string, id: string, input: import('node:stream').Readable): Promise<SourceResponse> { const source = await this.findOwned(ownerId, id); if (source.kind !== 'M3U') throw new BadRequestException('Le téléversement concerne uniquement les sources M3U'); const key = `playlists/${source.id}.m3u`; const pass = new (await import('node:stream')).PassThrough(); const upload = this.storage.putStream(key, pass, 'application/x-mpegurl', UPLOAD_MAX_BYTES); let head = Buffer.alloc(0); let bytes = 0; try { for await (const chunk of input) { const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); bytes += buffer.byteLength; if (bytes > UPLOAD_MAX_BYTES) throw new PayloadTooLargeException('Fichier trop volumineux'); if (head.byteLength < 512) head = Buffer.concat([head, buffer.subarray(0, 512 - head.byteLength)]); if (!pass.write(buffer)) await new Promise<void>((resolveDrain) => pass.once('drain', resolveDrain)); } pass.end(); await upload; } catch (error) { pass.destroy(); await this.storage.delete(key); throw error; } if (!head.toString('utf8').trimStart().startsWith('#EXTM3U')) { await this.storage.delete(key); throw new BadRequestException('En-tête #EXTM3U manquant'); } const updated = await this.prisma.source.update({ where: { id }, data: { connectionEncrypted: this.crypto.encrypt(JSON.stringify({ fileKey: key })), status: 'PENDING' } }); await this.audit.log(ownerId, 'source.upload_playlist', 'source', id, { bytes }); await this.startImport(ownerId, id, false); return this.serialize(updated); }
   async listImports(ownerId: string): Promise<ImportRunListResponse> { const rows = await this.prisma.importRun.findMany({ where: { source: { ownerId } }, include: { source: true }, orderBy: { startedAt: 'desc' }, take: 100 }); return { items: rows.map((row) => this.serializeRun(row)), total: rows.length }; }
   async importDetail(ownerId: string, id: string): Promise<ImportRun> { const row = await this.prisma.importRun.findFirst({ where: { id, source: { ownerId } }, include: { source: true } }); if (!row) throw new NotFoundException('Import introuvable'); return this.serializeRun(row); }
   private async startImport(ownerId: string, sourceId: string, silentAudit: boolean): Promise<ImportRun> { const source = await this.prisma.source.findFirst({ where: { id: sourceId, ownerId } }); if (!source) throw new NotFoundException('Source introuvable'); if (source.status === 'DISABLED') throw new ConflictException('Source désactivée'); const active = await this.prisma.importRun.findFirst({ where: { sourceId, state: { in: ACTIVE_IMPORT_STATES } } }); if (active) throw new ConflictException('Un import est déjà en cours pour cette source'); const run = await this.prisma.importRun.create({ data: { sourceId, state: 'QUEUED', startedAt: new Date() } }); await this.queue.enqueue('source.import', { sourceId, importRunId: run.id }); if (!silentAudit) await this.audit.log(ownerId, 'source.import_request', 'source', sourceId, { importRunId: run.id }); return this.serializeRun({ ...run, source }); }
@@ -48,8 +50,4 @@ export class SourcesService {
   private serializeRun(run: { id: string; sourceId: string; state: string; metrics: unknown; errorCode: string | null; errorMessage: string | null; startedAt: Date; completedAt: Date | null; source?: { name: string } }): ImportRun { return { id: run.id, sourceId: run.sourceId, sourceName: run.source?.name ?? 'source supprimée', state: run.state as ImportRun['state'], metrics: run.metrics as ImportRun['metrics'], errorCode: run.errorCode, errorMessage: run.errorMessage, startedAt: run.startedAt.toISOString(), completedAt: run.completedAt?.toISOString() ?? null }; }
 }
 
-function isTransientDbError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const candidate = error as { code?: string; message?: string };
-  return candidate.code === 'P1008' || /database is locked|socket timeout/i.test(candidate.message ?? '');
-}
+function isTransientDbError(error: unknown): boolean { if (!error || typeof error !== 'object') return false; const candidate = error as { code?: string; message?: string }; return candidate.code === 'P1008' || /database is locked|socket timeout/i.test(candidate.message ?? ''); }
