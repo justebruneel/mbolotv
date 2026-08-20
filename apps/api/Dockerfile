@@ -29,4 +29,6 @@ COPY --from=builder /app /app
 
 EXPOSE 4000
 # Migrations PostgreSQL (Prisma) appliquées avant le démarrage.
-CMD ["sh", "-c", "pnpm --filter @mbolo/api exec prisma migrate deploy && node apps/api/dist/main.js"]
+# PRISMA_MIGRATE_SKIP_ADVISORY_LOCKING : tolère une URL "pooled" (Neon) ; avec une
+# connexion directe la variable est sans effet.
+CMD ["sh", "-c", "PRISMA_MIGRATE_SKIP_ADVISORY_LOCKING=1 pnpm --filter @mbolo/api exec prisma migrate deploy && node apps/api/dist/main.js"]

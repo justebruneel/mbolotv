@@ -15,8 +15,10 @@ Fly.io ne propose plus de tier gratuit aux nouveaux comptes (carte obligatoire) 
 
 1. Inscrire un compte sur neon.tech (gratuit, sans carte).
 2. Créer un projet (région proche, ex. `eu-central-1` (Francfort)).
-3. Dans *Connection Details*, copier la chaîne de connexion du pooler **direct**
-   (`postgresql://user:password@ep-xxx.eu-central-1.aws.neon.tech/neondb?sslmode=require`).
+3. Dans *Connection Details*, copier la chaîne de connexion **Direct** (pas
+   *Pooled*) : l'hôte ne doit **pas** contenir `-pooler`. Les migrations Prisma
+   utilisent des verrous advisory, impossibles via le pooler de Neon.
+   (En secours, le conteneur force `PRISMA_MIGRATE_SKIP_ADVISORY_LOCKING=1`.)
 4. Créer une branche `dev` (pour les essais locaux) et une branche `main` (production).
 
 ## 2. Supabase Storage — logos et playlists (optionnel mais recommandé)
