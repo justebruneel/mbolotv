@@ -42,9 +42,11 @@ function installProcessSafetyNet(): void {
   process.on('uncaughtException', (error) => log('uncaughtException', error));
   process.on('unhandledRejection', (reason) => log('unhandledRejection', reason));
 }
-function corsOrigins(config: ConfigService): string[] {
+function corsOrigins(config: ConfigService): string[] | true {
+  // Si CORS_ALLOWED_ORIGINS est défini, seule cette liste est autorisée.
   const fromEnv = (config.get<string>('CORS_ALLOWED_ORIGINS', '') ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
   if (fromEnv.length > 0) return fromEnv;
-  const configured = config.get<string>('APP_URL', 'http://localhost:3000');
-  return Array.from(new Set([configured, 'http://localhost:3000', 'http://127.0.0.1:3000']));
+  // Par défaut : refléter l'origine du navigateur (l'API est publique :
+  // chaînes, catégories et proxy de streaming n'ont pas d'authentification).
+  return true;
 }

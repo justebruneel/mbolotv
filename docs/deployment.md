@@ -45,7 +45,7 @@ La config est dans `render.yaml` à la racine (blueprint) :
    | `ENCRYPTION_KEY` | `openssl rand -base64 32` — **ne jamais changer ensuite** (connexions chiffrées) |
    | `OWNER_EMAIL` | compte owner (provisionné au boot) |
    | `OWNER_CONSOLE_PATH` | chemin privé de la console (ex. `/control/mot-de-passe-long`) |
-   | `CORS_ALLOWED_ORIGINS` | `https://VOTRE-APP.vercel.app` (URL Vercel réelle) |
+   | `CORS_ALLOWED_ORIGINS` | optionnel — si absent, l'API reflète l'origine du navigateur (recommandé pour une API publique) |
    | `APP_URL` | `https://VOTRE-APP.vercel.app` |
    | `PUBLIC_API_URL` | `https://mbolo-tv-api.onrender.com` |
    | `STORAGE_DRIVER` | `s3` (ou `local` si pas de Supabase) |
@@ -89,7 +89,7 @@ La config est dans `render.yaml` à la racine (blueprint) :
 
 ## 5. Ordre de déploiement recommandé
 
-1. Neon (base) → 2. Supabase Storage → 3. Render (API, avec l'URL Vercel dans le CORS) → 4. Vercel.
+1. Neon (base) → 2. Supabase Storage → 3. Render (API) → 4. Vercel.
 
 ## 6. Développement local
 
