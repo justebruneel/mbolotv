@@ -1,12 +1,11 @@
 'use client';
 
 import type { AccessStatus } from '@mbolo/contracts';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { apiGet, apiPost } from '../../../shared/api/client';
 
 const WHATSAPP_URL = 'https://wa.me/qr/CPB7IL3GHAGIK1';
-
-type GateProps = { enabled: boolean; children: React.ReactNode };
+type GateProps = { enabled: boolean; children: ReactNode };
 
 export function AccessGate({ enabled, children }: GateProps) {
   const [status, setStatus] = useState<AccessStatus | null>(enabled ? null : { active: true, expiresAt: null, kind: null, whatsappUrl: WHATSAPP_URL });
@@ -17,31 +16,21 @@ export function AccessGate({ enabled, children }: GateProps) {
   useEffect(() => {
     if (!enabled) return;
     let mounted = true;
-    apiGet<AccessStatus>('/access/status')
-      .then((next) => { if (mounted) setStatus(next); })
-      .catch(() => { if (mounted) setStatus({ active: false, expiresAt: null, kind: null, whatsappUrl: WHATSAPP_URL }); });
+    apiGet<AccessStatus>('/access/status').then((next) => { if (mounted) setStatus(next); }).catch(() => { if (mounted) setStatus({ active: false, expiresAt: null, kind: null, whatsappUrl: WHATSAPP_URL }); });
     return () => { mounted = false; };
   }, [enabled]);
 
-  async function redeem(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  async function redeem(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!code.trim()) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const next = await apiPost<AccessStatus>('/access/redeem', { code: code.trim() });
-      setStatus(next);
-      setCode('');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Code refusé.');
-    } finally {
-      setBusy(false);
-    }
+    setBusy(true); setMessage(null);
+    try { const next = await apiPost<AccessStatus>('/access/redeem', { code: code.trim() }); setStatus(next); setCode(''); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'Code refusé.'); }
+    finally { setBusy(false); }
   }
 
   if (!enabled || status?.active) return <>{children}</>;
   if (!status) return <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted">Vérification de l’accès…</div>;
-
   return (
     <section className="mx-auto flex min-h-[65vh] w-full max-w-lg items-center px-5 py-12">
       <div className="card w-full p-7 text-center">
