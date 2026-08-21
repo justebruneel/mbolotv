@@ -113,7 +113,7 @@ export default function WatchPage() {
       </div>
 
       {/* Player */}
-      <div className="animate-scale-in stagger-1">
+      <div>
         {playQuery.isLoading ? (
           <div className="aspect-video flex items-center justify-center rounded-2xl bg-surface border border-border">
             <Spinner />
