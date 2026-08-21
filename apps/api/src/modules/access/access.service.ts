@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomBytes } from 'node:crypto';
-import type { AccessCode, AccessCodeCreateInput, AccessStatus, OwnerContext } from '@mbolo/contracts';
+import type { AccessCode, AccessCodeCreateInput, AccessStatus } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 
