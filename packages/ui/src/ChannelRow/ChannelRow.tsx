@@ -1,5 +1,6 @@
 import type { Channel, Programme } from '@mbolo/contracts';
 import { Badge } from '../Badge/Badge';
+import { ProgrammeProgress } from '../ProgrammeProgress/ProgrammeProgress';
 import styles from './ChannelRow.module.css';
 
 export interface ChannelRowProps {
@@ -48,6 +49,9 @@ export function ChannelRow({ channel, now, next, onClick }: ChannelRowProps) {
             </span>
           ) : null}
         </span>
+        {now ? (
+          <ProgrammeProgress startsAt={now.startsAt} endsAt={now.endsAt} className="mt-2" />
+        ) : null}
       </span>
     </a>
   );

@@ -31,6 +31,12 @@ function isFolderMarker(title: string): boolean {
   return /^#{2,}.+#{2,}$/.test(title.trim());
 }
 
+function normalizeIcon(icon: string | undefined): string | undefined {
+  if (!icon) return undefined;
+  if (icon.startsWith('//')) return `https:${icon}`;
+  return icon;
+}
+
 // Un serveur Xtream qui refuse les identifiants renvoie {"user_info":{"auth":0}}
 // à la place de la liste. Il ne faut pas traiter ça comme une liste vide.
 function isAuthRejected(payload: unknown): boolean {
@@ -110,7 +116,7 @@ export async function fetchXtreamEntries(connection: XtreamConnection): Promise<
     entries.push({
       title,
       tvgId: stream.epg_channel_id ? String(stream.epg_channel_id) : undefined,
-      tvgLogo: stream.stream_icon || undefined,
+      tvgLogo: normalizeIcon(stream.stream_icon),
       groupTitle,
       url: `${base}/live/${user}/${pass}/${stream.stream_id}.m3u8`,
     });

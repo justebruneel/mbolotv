@@ -11,5 +11,6 @@ export { Icon } from './icons';
 export { Logo } from './Logo/Logo';
 export { MatchCard, type MatchCardProps } from './MatchCard/MatchCard';
 export { Player, type PlayerProps } from './Player/Player';
+export { ProgrammeProgress, type ProgrammeProgressProps } from './ProgrammeProgress/ProgrammeProgress';
 export { Skeleton, type SkeletonProps } from './Skeleton/Skeleton';
 export { Spinner, type SpinnerProps } from './Spinner/Spinner';

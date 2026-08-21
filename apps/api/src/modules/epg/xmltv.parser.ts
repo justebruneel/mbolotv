@@ -15,6 +15,7 @@ export interface XmltvParseResult {
   channels: number;
   programmes: number;
   stored: number;
+  channelNames: Record<string, string>;
 }
 
 const DATE_RE = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\s*([+-])(\d{2})(\d{2}))?/;
@@ -56,9 +57,11 @@ export async function parseXmltvStream(
   let programmes = 0;
   let stored = 0;
   let current: OpenProgramme | null = null;
-  let collecting: 'title' | 'desc' | 'category' | null = null;
+  let currentChannelId: string | null = null;
+  let collecting: 'title' | 'desc' | 'category' | 'display' | null = null;
   let textBuffer = '';
   const records: XmltvProgramme[] = [];
+  const channelNames = new Map<string, string>();
 
   let chain: Promise<void> = Promise.resolve();
 
@@ -75,6 +78,7 @@ export async function parseXmltvStream(
     parser.on('opentag', (node) => {
       if (node.name === 'channel') {
         channels += 1;
+        currentChannelId = String(node.attributes['id'] ?? '');
         return;
       }
       if (node.name === 'programme') {
@@ -86,6 +90,11 @@ export async function parseXmltvStream(
           title: '',
           categories: [],
         };
+        return;
+      }
+      if (node.name === 'display-name' && currentChannelId && !channelNames.has(currentChannelId)) {
+        collecting = 'display';
+        textBuffer = '';
         return;
       }
       if (current && node.name === 'icon' && !current.imageUrl) {
@@ -107,6 +116,13 @@ export async function parseXmltvStream(
     });
 
     parser.on('closetag', (name) => {
+      if (collecting === 'display' && currentChannelId) {
+        const value = textBuffer.trim();
+        if (value && !channelNames.has(currentChannelId)) channelNames.set(currentChannelId, value);
+        collecting = null;
+        textBuffer = '';
+        return;
+      }
       if (current && collecting) {
         const value = textBuffer.trim();
         if (collecting === 'title') current.title = value;
@@ -114,6 +130,10 @@ export async function parseXmltvStream(
         else if (collecting === 'category' && value) current.categories.push(value);
         collecting = null;
         textBuffer = '';
+      }
+      if (name === 'channel') {
+        currentChannelId = null;
+        return;
       }
       if (name === 'programme' && current) {
         const record = current;
@@ -136,7 +156,7 @@ export async function parseXmltvStream(
     parser.on('error', (error) => reject(error));
     parser.on('end', () => {
       flush();
-      void chain.then(() => resolve({ channels, programmes, stored }));
+      void chain.then(() => resolve({ channels, programmes, stored, channelNames: Object.fromEntries(channelNames) }));
     });
 
     try {

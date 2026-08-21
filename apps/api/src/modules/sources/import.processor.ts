@@ -105,7 +105,33 @@ export class ImportProcessor implements OnModuleInit {
 
   private async finalizeIngest(source: ImportSource, importRunId: string, state: ImportState): Promise<ImportMetrics> { await this.assertNotCanceled(importRunId); const active = await this.prisma.streamVariant.findMany({ where: { sourceId: source.id, isActive: true }, select: { id: true, channelId: true } }) as Array<{ id: string; channelId: string }>; const toPrune = active.filter((variant) => !state.seenChannelIds.has(variant.channelId)); for (const part of chunks(toPrune, 500)) { const result = await this.prisma.streamVariant.updateMany({ where: { id: { in: part.map((variant) => variant.id) } }, data: { isActive: false } }); state.metrics.pruned += result.count; } state.metrics.ignored = Math.max(0, state.metrics.read - state.metrics.created - state.metrics.updated - state.metrics.duplicates - state.metrics.errors); await this.prisma.importRun.update({ where: { id: importRunId }, data: { metrics: JSON.parse(JSON.stringify(state.metrics)) } }); return state.metrics; }
   private async storeChannelLogos(logoUrls: Map<string, string>, channels: Map<string, ExistingChannel>): Promise<number> { const unique = Array.from(new Set(logoUrls.values())).slice(0, this.logoMaxDownloads); const urlToKey = new Map<string, string>(); let cursor = 0; const worker = async (): Promise<void> => { for (;;) { const index = cursor++; if (index >= unique.length) return; try { const key = await this.storeOneLogo(unique[index]); if (key) urlToKey.set(unique[index], key); } catch { this.logger.warn('Logo ignoré pendant l’import'); } } }; await Promise.all(Array.from({ length: Math.min(LOGO_CONCURRENCY, Math.max(1, unique.length)) }, () => worker())); const updates: Array<{ id: string; logoKey: string }> = []; for (const [key, url] of logoUrls) { const channel = channels.get(key); const logoKey = urlToKey.get(url); if (channel && logoKey && channel.logoKey !== logoKey) updates.push({ id: channel.id, logoKey }); } for (const part of chunks(updates, 1000)) await this.prisma.$transaction(part.map((update) => this.prisma.channel.update({ where: { id: update.id }, data: { logoKey: update.logoKey } }))); return urlToKey.size; }
-  private async storeOneLogo(url: string): Promise<string | null> { const result = await new SafeFetcher().fetchStream(url, { maxBytes: this.logoMaxBytes, streamTimeoutMs: this.logoTimeout, signal: undefined }); if (!result.ok || !result.stream) return null; const reader = result.stream.getReader(); const chunksOut: Uint8Array[] = []; let bytes = 0; for (;;) { const next = await reader.read(); if (next.done) break; bytes += next.value.byteLength; if (bytes > this.logoMaxBytes) { await reader.cancel(); return null; } chunksOut.push(next.value); } const buffer = Buffer.concat(chunksOut.map((part) => Buffer.from(part))); if (buffer.byteLength === 0) return null; const contentType = this.inferLogoContentType(result.contentType, url, buffer); if (!contentType) return null; const extension = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' } as Record<string, string>)[contentType.split(';')[0]] ?? 'png'; const key = `logos/${createHash('sha256').update(url).digest('hex').slice(0, 16)}.${extension}`; if (!(await this.storage.get(key))) await this.storage.put(key, buffer, contentType); return key; }
+  private async storeOneLogo(url: string): Promise<string | null> {
+    const result = await new SafeFetcher().fetchStream(url, { maxBytes: this.logoMaxBytes, streamTimeoutMs: this.logoTimeout, signal: undefined });
+    if (!result.ok || !result.stream) { this.logger.warn(`Logo non récupéré ${url} : ${result.error ?? 'erreur inconnue'}`); return url; }
+    const reader = result.stream.getReader();
+    const chunksOut: Uint8Array[] = [];
+    let bytes = 0;
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      bytes += next.value.byteLength;
+      if (bytes > this.logoMaxBytes) { await reader.cancel(); this.logger.warn(`Logo trop volumineux ignoré ${url}`); return url; }
+      chunksOut.push(next.value);
+    }
+    const buffer = Buffer.concat(chunksOut.map((part) => Buffer.from(part)));
+    if (buffer.byteLength === 0) return url;
+    const contentType = this.inferLogoContentType(result.contentType, url, buffer);
+    if (!contentType) { this.logger.warn(`Logo type indéterminable ignoré ${url}`); return url; }
+    try {
+      const extension = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' } as Record<string, string>)[contentType.split(';')[0]] ?? 'png';
+      const key = `logos/${createHash('sha256').update(url).digest('hex').slice(0, 16)}.${extension}`;
+      if (!(await this.storage.get(key))) await this.storage.put(key, buffer, contentType);
+      return key;
+    } catch (error) {
+      this.logger.warn(`Stockage logo échoué ${url} : ${String(error)}`);
+      return url;
+    }
+  }
   private inferLogoContentType(declared: string | undefined, url: string, buffer: Buffer): string | null {
     const extensionToType: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
     const declaredType = (declared ?? '').split(';')[0].trim().toLowerCase();

@@ -1,7 +1,7 @@
 'use client';
 
 import type { Channel } from '@mbolo/contracts';
-import { FavoriteButton } from '@mbolo/ui';
+import { FavoriteButton, ProgrammeProgress } from '@mbolo/ui';
 import Link from 'next/link';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -122,6 +122,7 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
               <>
                 <p className="truncate text-xs font-semibold text-white drop-shadow-md">{isLive.title}</p>
                 <p className="text-[10px] text-white/70">{formatTime(isLive.startsAt)} – {formatTime(isLive.endsAt)}</p>
+                <ProgrammeProgress startsAt={isLive.startsAt} endsAt={isLive.endsAt} className="mt-1" />
               </>
             ) : (
               <p className="truncate text-xs font-semibold text-white/60">Pas de programme</p>

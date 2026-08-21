@@ -10,6 +10,11 @@ export interface EpgImportResult { sources: number; channels: number; programmes
 type EpgSource = { id: string; name: string; kind: string; status: string; priority: number; connectionEncrypted: Uint8Array; epgUrl?: string | null };
 type EpgRow = { channelId: string; startsAt: Date; endsAt: Date; title: string; description?: string | null; imageUrl?: string | null; metadata?: Record<string, unknown> };
 type EpgCreateResult = { count: number };
+type BufferedProgramme = { xmltvChannelId: string; startsAt: Date; endsAt: Date; title: string; description?: string | null; imageUrl?: string | null; categories: string[] };
+
+function normalizeName(value: string): string {
+  return value.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
 
 @Injectable()
 export class EpgImportService {
@@ -25,6 +30,7 @@ export class EpgImportService {
     try {
       const sources = await this.prisma.source.findMany({ where: { status: { not: 'DISABLED' }, OR: [{ kind: 'XTREAM' }, { epgUrl: { not: null } }] }, orderBy: [{ priority: 'asc' }] }) as EpgSource[];
       const tvgMap = await this.buildTvgMap();
+      const nameMap = await this.buildNameMap();
       if (tvgMap.size === 0) return { sources: 0, channels: 0, programmes: 0, stored: 0, durationMs: Date.now() - startedAt };
       const channelIds = [...tvgMap.values()];
       for (let i = 0; i < channelIds.length; i += 10_000) await this.prisma.epgProgramme.deleteMany({ where: { channelId: { in: channelIds.slice(i, i + 10_000) } } });
@@ -33,14 +39,10 @@ export class EpgImportService {
         try {
           const connection = JSON.parse(this.crypto.decrypt(source.connectionEncrypted)) as Record<string, string>; const url = source.epgUrl || this.buildXmltvUrl(connection); if (!url) continue;
           const result = await fetcher.fetchStream(url, { maxBytes, streamTimeoutMs: 15 * 60_000, userAgent: 'MboloTV/0.1 (EPG import)' }); if (!result.ok || !result.stream) { this.logger.warn(`EPG indisponible pour ${source.name}: ${result.error}`); continue; }
-          const matched = new Set<string>(); let inserted = 0;
-          const parseResult = await parseXmltvStream(result.stream, async (batch: XmltvProgramme[]) => {
-            const rows: EpgRow[] = [];
-            for (const programme of batch) { const channelId = tvgMap.get(programme.channelId.toLowerCase()); if (!channelId) continue; matched.add(channelId); rows.push({ channelId, startsAt: programme.startsAt, endsAt: programme.endsAt, title: programme.title, description: programme.description, imageUrl: programme.imageUrl, metadata: programme.categories.length > 0 ? { categories: programme.categories } : undefined }); }
-            if (rows.length === 0) return 0;
-            const created = await this.prisma.epgProgramme.createMany({ data: rows as never }) as EpgCreateResult; return created.count;
-          });
-          inserted = parseResult.stored; channels += matched.size; programmes += parseResult.programmes; stored += inserted; sourcesDone += 1; await this.prisma.source.update({ where: { id: source.id }, data: { lastSyncedAt: new Date() } }); this.logger.log(`EPG ${source.name}: ${matched.size} chaînes, ${inserted} programmes sur ${parseResult.programmes}`);
+          const collected = await this.collectXmltv(result.stream);
+          const { rows, matched } = this.resolveProgrammes(collected.programmes, collected.channelNames, tvgMap, nameMap);
+          if (rows.length > 0) await this.prisma.epgProgramme.createMany({ data: rows as never });
+          channels += matched.size; programmes += collected.count; stored += rows.length; sourcesDone += 1; await this.prisma.source.update({ where: { id: source.id }, data: { lastSyncedAt: new Date() } }); this.logger.log(`EPG ${source.name}: ${matched.size} chaînes, ${rows.length} programmes sur ${collected.count}`);
         } catch (error) { this.logger.error(`Échec EPG ${source.name}: ${String(error)}`); }
       }
       return { sources: sourcesDone, channels, programmes, stored, durationMs: Date.now() - startedAt };
@@ -59,22 +61,14 @@ export class EpgImportService {
       const url = source.epgUrl || this.buildXmltvUrl(connection);
       if (!url) return { sources: 0, channels: 0, programmes: 0, stored: 0, durationMs: Date.now() - startedAt };
       const tvgMap = await this.buildTvgMap();
+      const nameMap = await this.buildNameMap();
       if (tvgMap.size === 0) return { sources: 0, channels: 0, programmes: 0, stored: 0, durationMs: Date.now() - startedAt };
       const fetcher = new SafeFetcher();
       const maxBytes = Number(this.config.get('EPG_MAX_BYTES') ?? 512 * 1024 * 1024);
       const result = await fetcher.fetchStream(url, { maxBytes, streamTimeoutMs: 15 * 60_000, userAgent: 'MboloTV/0.1 (EPG import)' });
       if (!result.ok || !result.stream) { this.logger.warn(`EPG indisponible pour ${source.name}: ${result.error}`); return { sources: 0, channels: 0, programmes: 0, stored: 0, durationMs: Date.now() - startedAt }; }
-      const rows: EpgRow[] = [];
-      const matched = new Set<string>();
-      const parseResult = await parseXmltvStream(result.stream, async (batch: XmltvProgramme[]) => {
-        for (const programme of batch) {
-          const channelId = tvgMap.get(programme.channelId.toLowerCase());
-          if (!channelId) continue;
-          matched.add(channelId);
-          rows.push({ channelId, startsAt: programme.startsAt, endsAt: programme.endsAt, title: programme.title, description: programme.description, imageUrl: programme.imageUrl, metadata: programme.categories.length > 0 ? { categories: programme.categories } : undefined });
-        }
-        return 0;
-      });
+      const collected = await this.collectXmltv(result.stream);
+      const { rows, matched } = this.resolveProgrammes(collected.programmes, collected.channelNames, tvgMap, nameMap);
       if (matched.size > 0) {
         const matchedIds = [...matched];
         for (let i = 0; i < matchedIds.length; i += 10_000) await this.prisma.epgProgramme.deleteMany({ where: { channelId: { in: matchedIds.slice(i, i + 10_000) } } });
@@ -84,8 +78,8 @@ export class EpgImportService {
         }
       }
       await this.prisma.source.update({ where: { id: source.id }, data: { lastSyncedAt: new Date() } });
-      this.logger.log(`EPG ${source.name}: ${matched.size} chaînes, ${rows.length} programmes sur ${parseResult.programmes}`);
-      return { sources: 1, channels: matched.size, programmes: parseResult.programmes, stored: rows.length, durationMs: Date.now() - startedAt };
+      this.logger.log(`EPG ${source.name}: ${matched.size} chaînes, ${rows.length} programmes sur ${collected.count}`);
+      return { sources: 1, channels: matched.size, programmes: collected.count, stored: rows.length, durationMs: Date.now() - startedAt };
     } catch (error) {
       this.logger.error(`Échec EPG source ${sourceId}: ${String(error)}`);
       return { sources: 0, channels: 0, programmes: 0, stored: 0, durationMs: Date.now() - startedAt };
@@ -94,5 +88,33 @@ export class EpgImportService {
     }
   }
   private async buildTvgMap(): Promise<Map<string, string>> { const channels = await this.prisma.channel.findMany({ where: { tvgId: { not: null } }, select: { id: true, tvgId: true } }) as Array<{ id: string; tvgId: string | null }>; const map = new Map<string, string>(); for (const channel of channels) if (channel.tvgId) map.set(channel.tvgId.toLowerCase(), channel.id); return map; }
+  private async buildNameMap(): Promise<Map<string, string>> { const channels = await this.prisma.channel.findMany({ select: { id: true, name: true } }) as Array<{ id: string; name: string }>; const map = new Map<string, string>(); for (const channel of channels) map.set(normalizeName(channel.name), channel.id); return map; }
+  private async collectXmltv(stream: ReadableStream<Uint8Array>): Promise<{ programmes: BufferedProgramme[]; channelNames: Record<string, string>; count: number }> {
+    const programmes: BufferedProgramme[] = [];
+    let count = 0;
+    const parseResult = await parseXmltvStream(stream, async (batch: XmltvProgramme[]) => {
+      for (const programme of batch) {
+        count += 1;
+        programmes.push({ xmltvChannelId: programme.channelId, startsAt: programme.startsAt, endsAt: programme.endsAt, title: programme.title, description: programme.description, imageUrl: programme.imageUrl, categories: programme.categories });
+      }
+      return 0;
+    });
+    return { programmes, channelNames: parseResult.channelNames, count };
+  }
+  private resolveProgrammes(programmes: BufferedProgramme[], channelNames: Record<string, string>, tvgMap: Map<string, string>, nameMap: Map<string, string>): { rows: EpgRow[]; matched: Set<string> } {
+    const rows: EpgRow[] = [];
+    const matched = new Set<string>();
+    for (const programme of programmes) {
+      let channelId = tvgMap.get(programme.xmltvChannelId.toLowerCase());
+      if (!channelId) {
+        const displayName = channelNames[programme.xmltvChannelId];
+        if (displayName) channelId = nameMap.get(normalizeName(displayName));
+      }
+      if (!channelId) continue;
+      matched.add(channelId);
+      rows.push({ channelId, startsAt: programme.startsAt, endsAt: programme.endsAt, title: programme.title, description: programme.description, imageUrl: programme.imageUrl, metadata: programme.categories.length > 0 ? { categories: programme.categories } : undefined });
+    }
+    return { rows, matched };
+  }
   private buildXmltvUrl(connection: Record<string, string>): string | null { const host = connection['host'] ?? connection['url']; const username = connection['username']; const password = connection['password']; if (!host || !username || !password) return null; const base = host.replace(/\/+$/, ''); return `${base}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; }
 }
