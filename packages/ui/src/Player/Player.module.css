@@ -9,6 +9,13 @@
   box-shadow: var(--mbolo-shadow-xl);
   isolation: isolate;
   cursor: none;
+  /* Force dark-theme tokens inside player (controls always dark on video) */
+  --mbolo-text: oklch(0.95 0.010 255);
+  --mbolo-text-secondary: oklch(0.80 0.020 258);
+  --mbolo-text-muted: oklch(0.62 0.025 258);
+  --mbolo-border: oklch(0.9 0.02 260 / 0.12);
+  --mbolo-surface-2: oklch(0.18 0.025 260);
+  --mbolo-surface-3: oklch(0.25 0.025 260);
 }
 
 .controlsVisible {
@@ -84,7 +91,7 @@
   left: 0;
   height: 3px;
   overflow: hidden;
-  background: oklch(0.9 0.02 260 / 0.12);
+  background: var(--mbolo-border);
   z-index: 10;
 }
 
@@ -124,7 +131,7 @@
   min-height: 44px;
   padding: 10px 14px;
   overflow-x: auto;
-  border: 1px solid oklch(0.9 0.02 260 / 0.12);
+  border: 1px solid var(--mbolo-border);
   border-radius: 14px;
   background: oklch(0.10 0.018 260 / 0.88);
   backdrop-filter: blur(16px) saturate(1.2);
@@ -179,7 +186,7 @@
   transform: translateX(-50%) translateY(4px);
   padding: 6px 10px;
   border-radius: 8px;
-  background: oklch(0.18 0.025 260);
+  background: var(--mbolo-surface-2);
   color: var(--mbolo-text);
   font-size: 0.68rem;
   font-weight: 500;
@@ -210,9 +217,9 @@
   height: 32px;
   flex: 0 0 auto;
   padding: 0;
-  border: 1px solid oklch(0.9 0.02 260 / 0.12);
+  border: 1px solid var(--mbolo-border);
   border-radius: 8px;
-  background: oklch(0.18 0.025 260);
+  background: var(--mbolo-surface-2);
   color: var(--mbolo-text);
   cursor: pointer;
   transition: background var(--mbolo-duration-fast) var(--mbolo-ease-out),
@@ -220,7 +227,7 @@
 }
 
 .iconBtn:hover {
-  background: oklch(0.25 0.025 260);
+  background: var(--mbolo-surface-3);
   border-color: var(--mbolo-accent);
 }
 
@@ -242,7 +249,7 @@
   height: 4px;
   appearance: none;
   -webkit-appearance: none;
-  background: oklch(0.35 0.02 260);
+  background: var(--mbolo-surface-3);
   border-radius: 999px;
   outline: none;
   cursor: pointer;
@@ -285,9 +292,9 @@
   min-height: 32px;
   margin-left: auto;
   padding: 0 10px;
-  border: 1px solid oklch(0.9 0.02 260 / 0.15);
+  border: 1px solid var(--mbolo-border);
   border-radius: 8px;
-  background: oklch(0.18 0.025 260);
+  background: var(--mbolo-surface-2);
   color: var(--mbolo-text);
   font-size: 0.75rem;
   font-weight: 600;
@@ -305,7 +312,7 @@
 }
 
 .qualitySelect option {
-  background: oklch(0.18 0.025 260);
+  background: var(--mbolo-surface-2);
   color: var(--mbolo-text);
 }
 
@@ -385,7 +392,7 @@
   align-items: center;
   padding: 4px 10px;
   border-radius: 8px;
-  background: oklch(0.18 0.025 260);
+  background: var(--mbolo-surface-2);
   color: var(--mbolo-text-muted);
   font-size: 0.75rem;
   font-weight: 500;
@@ -503,11 +510,12 @@
 }
 
 .mobileIconBtn:active {
-  background: oklch(0.25 0.025 260 / 0.5);
+  background: var(--mbolo-surface-3);
+  opacity: 0.7;
 }
 
 .mobileIconBtnActive {
-  background: oklch(0.25 0.025 260 / 0.6);
+  background: var(--mbolo-surface-3);
   color: var(--mbolo-accent);
 }
 
@@ -539,7 +547,7 @@
   max-height: 60%;
   overflow-y: auto;
   border-radius: 16px 16px 0 0;
-  background: oklch(0.12 0.02 260);
+  background: var(--mbolo-surface-2);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   z-index: 30;
@@ -552,7 +560,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 16px 12px;
-  border-bottom: 1px solid oklch(0.9 0.02 260 / 0.08);
+  border-bottom: 1px solid var(--mbolo-border);
 }
 
 .popupTitle {
@@ -570,13 +578,13 @@
   padding: 0;
   border: none;
   border-radius: 8px;
-  background: oklch(0.20 0.02 260);
+  background: var(--mbolo-surface-3);
   color: var(--mbolo-text-muted);
   cursor: pointer;
 }
 
 .popupClose:active {
-  background: oklch(0.28 0.02 260);
+  opacity: 0.7;
 }
 
 .popupOptions {
@@ -603,7 +611,8 @@
 }
 
 .popupOption:active {
-  background: oklch(0.20 0.02 260 / 0.5);
+  background: var(--mbolo-surface-3);
+  opacity: 0.7;
 }
 
 .popupOptionActive {
@@ -636,7 +645,7 @@
   height: 6px;
   appearance: none;
   -webkit-appearance: none;
-  background: oklch(0.35 0.02 260);
+  background: var(--mbolo-surface-3);
   border-radius: 999px;
   outline: none;
   cursor: pointer;
@@ -715,6 +724,31 @@
   .statTooltip {
     display: none;
   }
+}
+
+/* ---------- Pseudo fullscreen (iOS fallback) ---------- */
+.pseudoFullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  border: none !important;
+  border-width: 0 !important;
+  aspect-ratio: unset !important;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease-out both;
+}
+
+.pseudoFullscreen .video {
+  cursor: default;
+}
+
+.pseudoFullscreen .mobileBottomBar,
+.pseudoFullscreen .controlRail {
+  bottom: max(16px, env(safe-area-inset-bottom));
 }
 
 /* ---------- Reduced motion ---------- */

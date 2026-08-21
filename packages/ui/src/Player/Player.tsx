@@ -92,6 +92,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [activePopup, setActivePopup] = useState<'volume' | 'quality' | null>(null);
   const [pipSupported, setPipSupported] = useState(true);
   const [fsSupported, setFsSupported] = useState(true);
+  const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
 
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
 
@@ -108,8 +109,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   useEffect(() => {
     setPipSupported(document.pictureInPictureEnabled);
     const el = containerRef.current;
-    setFsSupported(Boolean(el && ('requestFullscreen' in el || 'webkitRequestFullscreen' in el)));
-  }, []);
+    const hasNativeFs = Boolean(el && ('requestFullscreen' in el || 'webkitRequestFullscreen' in el));
+    // On mobile: always show button (CSS pseudo-fullscreen fallback for iOS)
+    setFsSupported(true);
+    // If no native FS on desktop, still hide (desktop has no CSS fallback needed)
+    if (!isMobile && !hasNativeFs) setFsSupported(false);
+  }, [isMobile]);
 
   const hideDelay = isMobile ? MOBILE_CONTROLS_HIDE_DELAY_MS : CONTROLS_HIDE_DELAY_MS;
 
@@ -130,6 +135,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  const exitPseudoFullscreen = useCallback(() => {
+    setIsPseudoFullscreen(false);
+    document.body.style.overflow = '';
   }, []);
 
   useEffect(() => {
@@ -188,14 +198,32 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    // Exit current fullscreen (native or pseudo)
     if (document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement) {
       const exitFn = document.exitFullscreen || (document as Document & { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen;
       if (exitFn) void exitFn.call(document);
-    } else {
-      const fsFn = el.requestFullscreen || (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen;
-      if (fsFn) void fsFn.call(el);
+      return;
     }
-  }, []);
+    if (isPseudoFullscreen) {
+      exitPseudoFullscreen();
+      return;
+    }
+
+    // Try native fullscreen first (Android, desktop)
+    const fsFn = el.requestFullscreen || (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen;
+    if (fsFn) {
+      void fsFn.call(el).catch(() => {
+        // Native FS failed (iOS Safari) → fallback to pseudo-fullscreen
+        setIsPseudoFullscreen(true);
+        document.body.style.overflow = 'hidden';
+      });
+    } else {
+      // No native FS API → pseudo-fullscreen (iOS)
+      setIsPseudoFullscreen(true);
+      document.body.style.overflow = 'hidden';
+    }
+  }, [isPseudoFullscreen, exitPseudoFullscreen]);
 
   const togglePip = useCallback(async () => {
     const video = videoRef.current;
@@ -346,13 +374,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         }
         case 'Escape':
           if (activePopup) { setActivePopup(null); showControls(); }
+          else if (isPseudoFullscreen) { exitPseudoFullscreen(); }
           else if (document.fullscreenElement) { document.exitFullscreen(); }
           break;
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [status, togglePlayback, toggleFullscreen, toggleMute, togglePip, showControls, onVolumeChange, activePopup]);
+  }, [status, togglePlayback, toggleFullscreen, toggleMute, togglePip, showControls, onVolumeChange, activePopup, isPseudoFullscreen, exitPseudoFullscreen]);
 
   // HLS setup
   useEffect(() => {
@@ -540,7 +569,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   return (
     <div
       ref={containerRef}
-      className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''}`}
+      className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''} ${isPseudoFullscreen ? styles.pseudoFullscreen : ''}`}
       data-state={status}
       onMouseMove={!isMobile ? showControls : undefined}
       onMouseLeave={() => { if (!isMobile && status === 'ready') setControlsVisible(false); }}
@@ -630,8 +659,8 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           )}
 
           {fsSupported && (
-            <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
-              {isFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}
+            <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
+              {isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}
             </button>
           )}
         </div>
@@ -668,8 +697,8 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           )}
 
           {fsSupported && (
-            <button type="button" className={styles.mobileIconBtn} onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
-              {isFullscreen ? <Icon.Minimize size={20} /> : <Icon.Maximize size={20} />}
+            <button type="button" className={styles.mobileIconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
+              {isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={20} /> : <Icon.Maximize size={20} />}
             </button>
           )}
         </div>
