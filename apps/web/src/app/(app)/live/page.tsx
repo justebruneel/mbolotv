@@ -4,6 +4,7 @@ import { Button, Spinner } from '@mbolo/ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useCategories, useCountries, useInfiniteChannels } from '../../../shared/api/queries';
+import { useSettingsStore } from '../../../shared/stores/settings';
 import { FilterPanel } from '../../../features/live-tv/components/FilterPanel';
 import { BouquetTabs } from '../../../features/live-tv/components/BouquetTabs';
 import { GenreTabs } from '../../../features/live-tv/components/GenreTabs';
@@ -51,6 +52,7 @@ function LiveContent() {
 
   const categoriesQuery = useCategories();
   const countriesQuery = useCountries();
+  const lastWatchedChannelId = useSettingsStore((state) => state.lastWatchedChannelId);
   const categories = categoriesQuery.data ?? [];
   const bouquets = useMemo(
     () => categories.filter((bouquet) => isBouquetCategory(bouquet.name)).sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)).slice(0, MAX_BOUQUETS),
@@ -234,7 +236,7 @@ function LiveContent() {
           </div>
         ) : channels.length > 0 ? (
           <>
-            <ResultsGrid channels={channels} total={total} watchContext={watchContext} />
+            <ResultsGrid channels={channels} total={total} watchContext={watchContext} highlightId={lastWatchedChannelId ?? undefined} />
             {channelsQuery.hasNextPage ? (
               <div className="flex justify-center mt-8">
                 <Button

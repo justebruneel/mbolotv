@@ -15,12 +15,14 @@ interface SettingsState {
   dataSaver: boolean;
   lastWatched: LastWatchedEntry[];
   lastNonWatchPath: string | null;
+  lastWatchedChannelId: string | null;
   setVolume: (volume: number) => void;
   setPreferredLevel: (level: number) => void;
   setDataSaver: (dataSaver: boolean) => void;
   recordWatch: (channelId: string, name: string) => void;
   clearLastWatched: () => void;
   setLastNonWatchPath: (path: string) => void;
+  setLastWatchedChannelId: (id: string | null) => void;
 }
 
 const MAX_LAST_WATCHED = 5;
@@ -33,7 +35,9 @@ export const useSettingsStore = create<SettingsState>()(
       dataSaver: false,
       lastWatched: [],
       lastNonWatchPath: null,
+      lastWatchedChannelId: null,
       setLastNonWatchPath: (path) => set({ lastNonWatchPath: path }),
+      setLastWatchedChannelId: (id) => set({ lastWatchedChannelId: id }),
       setVolume: (volume) => set({ volume }),
       setPreferredLevel: (preferredLevel) => set({ preferredLevel }),
       setDataSaver: (dataSaver) => set({ dataSaver }),
@@ -46,6 +50,6 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       clearLastWatched: () => set({ lastWatched: [] }),
     }),
-    { name: 'mbolo-settings', partialize: (state) => ({ ...state, lastNonWatchPath: undefined }) },
+    { name: 'mbolo-settings', partialize: (state) => ({ ...state, lastNonWatchPath: undefined, lastWatchedChannelId: undefined }) },
   ),
 );

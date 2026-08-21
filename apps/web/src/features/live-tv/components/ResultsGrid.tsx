@@ -7,9 +7,9 @@ import type { WatchContext } from '../utils';
 
 const VIRTUALIZE_THRESHOLD = 500;
 
-export function ResultsGrid({ channels, total, watchContext }: { channels: Channel[]; total?: number; watchContext?: WatchContext }) {
+export function ResultsGrid({ channels, total, watchContext, highlightId }: { channels: Channel[]; total?: number; watchContext?: WatchContext; highlightId?: string }) {
   if (channels.length > VIRTUALIZE_THRESHOLD) {
-    return <VirtualChannelGrid channels={channels} total={total} watchContext={watchContext} />;
+    return <VirtualChannelGrid channels={channels} total={total} watchContext={watchContext} highlightId={highlightId} />;
   }
 
   return (
@@ -22,14 +22,14 @@ export function ResultsGrid({ channels, total, watchContext }: { channels: Chann
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] lg:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] lg:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
         {channels.map((channel, index) => (
           <div
             key={channel.id}
             className="animate-scale-in"
             style={{ animationDelay: `${Math.min(index * 30, 300)}ms` }}
           >
-            <ChannelTile channel={channel} watchContext={watchContext} />
+            <ChannelTile channel={channel} watchContext={watchContext} highlight={channel.id === highlightId} />
           </div>
         ))}
       </div>

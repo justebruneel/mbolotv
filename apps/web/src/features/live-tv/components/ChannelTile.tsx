@@ -13,7 +13,7 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function ChannelTile({ channel, watchContext }: { channel: Channel; watchContext?: WatchContext }) {
+export function ChannelTile({ channel, watchContext, highlight }: { channel: Channel; watchContext?: WatchContext; highlight?: boolean }) {
   const queryClient = useQueryClient();
   const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
   const toggle = useFavoritesStore((state) => state.toggle);
@@ -158,7 +158,7 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
       className={`group relative min-w-0 ${down ? 'opacity-40 grayscale' : ''}`}
       onMouseEnter={prefetch}
     >
-      <div className="relative overflow-hidden rounded-xl border border-border bg-surface transition-all duration-300 group-hover:-translate-y-1 group-hover:border-accent/50 group-hover:shadow-lg aspect-[4/3] sm:aspect-[16/10]">
+      <div className={`relative overflow-hidden rounded-xl border bg-surface transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-lg aspect-[4/3] sm:aspect-[16/10] ${highlight ? 'border-accent shadow-md shadow-accent/20' : 'border-border group-hover:border-accent/50'}`}>
         {down ? (
           <div aria-disabled="true" className="h-full">{content}</div>
         ) : (

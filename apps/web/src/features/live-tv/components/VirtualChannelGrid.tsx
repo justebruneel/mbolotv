@@ -14,10 +14,12 @@ export function VirtualChannelGrid({
   channels,
   total,
   watchContext,
+  highlightId,
 }: {
   channels: Channel[];
   total?: number;
   watchContext?: WatchContext;
+  highlightId?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [cols, setCols] = useState(8);
@@ -68,7 +70,7 @@ export function VirtualChannelGrid({
               }}
             >
               {rowChannels.map((channel) => (
-                <ChannelTile key={channel.id} channel={channel} watchContext={watchContext} />
+                <ChannelTile key={channel.id} channel={channel} watchContext={watchContext} highlight={channel.id === highlightId} />
               ))}
             </div>
           );

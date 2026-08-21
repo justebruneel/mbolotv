@@ -26,6 +26,7 @@ export default function WatchPage() {
   const setDataSaver = useSettingsStore((state) => state.setDataSaver);
   const recordWatch = useSettingsStore((state) => state.recordWatch);
   const lastNonWatchPath = useSettingsStore((state) => state.lastNonWatchPath);
+  const setLastWatchedChannelId = useSettingsStore((state) => state.setLastWatchedChannelId);
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
   const playQuery = usePlayUrl(channelId);
@@ -34,6 +35,11 @@ export default function WatchPage() {
   const viewersQuery = useChannelViewers(channelId);
   useActivityHeartbeat(channelId);
   const playUrls = useMemo(() => (playQuery.data?.url ? [playQuery.data.url] : []), [playQuery.data?.url]);
+
+  useEffect(() => {
+    setLastWatchedChannelId(channelId);
+    return () => setLastWatchedChannelId(null);
+  }, [channelId, setLastWatchedChannelId]);
 
   useEffect(() => {
     if (channelQuery.data) recordWatch(channelId, channelQuery.data.name);
