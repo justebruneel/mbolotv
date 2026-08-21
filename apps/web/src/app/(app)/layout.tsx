@@ -7,6 +7,7 @@ import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
 import { useActiveUsers, useActivityHeartbeat } from '../../shared/api/queries';
+import { AccessGate } from '../../features/auth/components/access-gate';
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
@@ -24,21 +25,22 @@ function ShellContent({ children }: { children: ReactNode }) {
   const active = NAV_ITEMS.find((item) => pathname?.startsWith(item.href))?.href;
   const { data: activeData } = useActiveUsers();
   useActivityHeartbeat();
+  const requiresAccess = pathname?.startsWith('/live') || pathname?.startsWith('/favorites') || pathname?.startsWith('/watch');
 
   return (
     <>
-    <Suspense><RouteTracker /></Suspense>
-    <AppShell
-      brand={<Logo />}
-      navItems={NAV_ITEMS}
-      utilityItems={UTILITY_ITEMS}
-      sidebarActions={<ThemeToggle />}
-      activeHref={active}
-      pathname={pathname}
-      activeUsers={activeData?.global}
-    >
-      {children}
-    </AppShell>
+      <Suspense><RouteTracker /></Suspense>
+      <AppShell
+        brand={<Logo />}
+        navItems={NAV_ITEMS}
+        utilityItems={UTILITY_ITEMS}
+        sidebarActions={<ThemeToggle />}
+        activeHref={active}
+        pathname={pathname}
+        activeUsers={activeData?.global}
+      >
+        <AccessGate enabled={Boolean(requiresAccess)}>{children}</AccessGate>
+      </AppShell>
     </>
   );
 }
