@@ -15,17 +15,8 @@ export class ChannelsService {
   constructor(private readonly prisma: PrismaService, private readonly streaming: StreamingService, private readonly storage: StorageService, config: ConfigService) { this.publicApiUrl = (config.get<string>('PUBLIC_API_URL') ?? config.get<string>('API_URL') ?? 'http://localhost:4000').replace(/\/+$/, ''); const configuredDriver = config.get<string>('STORAGE_DRIVER', 'local').trim().toLowerCase(); this.storageDriver = configuredDriver === 's3' || configuredDriver === 'cloudinary' || Boolean(config.get<string>('S3_ENDPOINT') && config.get<string>('S3_BUCKET')) ? 's3' : 'local'; this.logoUrlTtlSeconds = Math.min(Math.max(config.get<number>('S3_LOGO_URL_TTL_SECONDS', 300), 60), 3600); }
   async list(query: ChannelQuery): Promise<ChannelListResponse> {
     const categoryFilter = query.category ? { category: { slug: query.category, isVisible: true } } : { OR: [{ categoryId: null }, { category: { isVisible: true } }] };
-    const where: Record<string, unknown> = {
-      isVisible: true,
-      ...categoryFilter,
-      ...(query.country ? { country: query.country } : {}),
-      ...(query.q ? { OR: [
-        { canonicalName: { contains: query.q, mode: 'insensitive' } },
-        { name: { contains: query.q, mode: 'insensitive' } },
-        { country: { contains: query.q, mode: 'insensitive' } },
-      ] } : {}),
-      variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } },
-    };
+    const searchFilter = query.q ? { OR: [{ canonicalName: { contains: query.q, mode: 'insensitive' } }, { name: { contains: query.q, mode: 'insensitive' } }, { country: { contains: query.q, mode: 'insensitive' } }] } : {};
+    const where: Record<string, unknown> = { isVisible: true, AND: [categoryFilter, searchFilter], ...(query.country ? { country: query.country } : {}), variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } };
     const [channels, total] = await Promise.all([this.prisma.channel.findMany({ where, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], take: query.limit ?? 48, skip: query.offset ?? 0 }), this.prisma.channel.count({ where })]);
     const nowPlaying = await this.findNowPlaying(channels.map((channel: { id: string }) => channel.id)); const healthByChannel = await this.findHealthStatus(channels.map((channel: { id: string }) => channel.id)); const items = await Promise.all(channels.map((channel: ListedChannel) => this.serialize(channel, nowPlaying.get(channel.id) ?? null, healthByChannel.get(channel.id) ?? null)));
     return { items, total, hasMore: (query.offset ?? 0) + items.length < total };
