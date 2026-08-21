@@ -77,19 +77,21 @@
 
 /* ---------- Progress bar ---------- */
 .progressBar {
-  width: min(360px, 80%);
-  height: 4px;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
   overflow: hidden;
-  border-radius: 999px;
   background: oklch(0.9 0.02 260 / 0.12);
+  z-index: 10;
 }
 
 .progressFill {
-  width: 38%;
   height: 100%;
-  border-radius: inherit;
+  border-radius: 0 999px 999px 0;
   background: var(--mbolo-accent);
-  animation: seek 1.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  transition: width 0.3s linear;
 }
 
 /* ---------- Buffering overlay ---------- */
@@ -331,6 +333,57 @@
   transform: translate(-50%, -50%);
   box-shadow: 0 10px 40px oklch(0.02 0.01 260 / 0.5);
   animation: mbolo-scale-in 300ms var(--mbolo-ease-out) both;
+}
+
+/* ---------- Error meta ---------- */
+.errorMeta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 42ch;
+}
+
+.errorTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: oklch(0.18 0.025 260);
+  color: var(--mbolo-text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ---------- Gesture overlay ---------- */
+.gestureOverlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 28px;
+  border-radius: 16px;
+  background: oklch(0.10 0.018 260 / 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: white;
+  pointer-events: none;
+  animation: mbolo-scale-in 150ms var(--mbolo-ease-out) both;
+  z-index: 20;
+}
+
+.gestureIcon {
+  color: var(--mbolo-accent);
+}
+
+.gestureValue {
+  font-size: 1.1rem;
+  font-weight: 700;
 }
 
 /* ---------- Animations ---------- */

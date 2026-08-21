@@ -20,16 +20,20 @@ export interface PlayerProps {
 
 interface QualityLevel { index: number; height: number; bitrate?: number; }
 interface PlaybackStats { startupMs: number | null; rebufferCount: number; bufferAhead: number; bitrate: number | null; latency: number | null; }
+interface GestureState { startX: number; startY: number; startTime: number; }
 
 const MAX_RETRIES = 2;
 const MAX_NETWORK_RETRIES = 3;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const STARTUP_DEADLINE_MS = 30_000;
 const CONTROLS_HIDE_DELAY_MS = 3_000;
+const GESTURE_THRESHOLD = 40;
+const GESTURE_MAX_OPACITY = 0.85;
 
 function exponentialDelay(attempt: number): number { return Math.min(1000 * 2 ** attempt, 8000); }
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
+function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
 function networkProfile(): { estimate: number; capHeight: number | null; buffer: number } {
   const conn = (navigator as Navigator & { connection?: { effectiveType?: string; downlink?: number; saveData?: boolean } }).connection;
   const type = conn?.effectiveType;
@@ -37,6 +41,18 @@ function networkProfile(): { estimate: number; capHeight: number | null; buffer:
   if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 8 };
   if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 12 };
   return { estimate: 1_200_000, capHeight: null, buffer: 16 };
+}
+function getNetworkInfo(): { effectiveType: string; downlink: number; saveData: boolean } {
+  const conn = (navigator as Navigator & { connection?: { effectiveType?: string; downlink?: number; saveData?: boolean } }).connection;
+  return { effectiveType: conn?.effectiveType ?? 'unknown', downlink: conn?.downlink ?? 0, saveData: conn?.saveData ?? false };
+}
+function getErrorMessage(errorType: string | null, httpCode: number | null): string {
+  if (httpCode === 401 || httpCode === 403) return 'Session expirée ou accès refusé. Veuillez vous reconnecter.';
+  if (httpCode === 404) return 'Flux introuvable. La chaîne n\'est peut-être plus disponible.';
+  if (httpCode && httpCode >= 500) return 'Le serveur rencontre un problème. Réessayez dans quelques instants.';
+  if (errorType === 'networkError') return 'Problème de connexion réseau. Vérifiez votre connexion internet.';
+  if (errorType === 'mediaError') return 'Erreur de lecture média. Le flux semble corrompu.';
+  return 'Le fournisseur ne répond pas ou la session a expiré.';
 }
 
 export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, onVolumeChange, onLevelChange, onDataSaverChange }: PlayerProps) {
@@ -47,6 +63,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const startupAtRef = useRef(0);
   const rebufferCountRef = useRef(0);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gestureRef = useRef<GestureState | null>(null);
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [buffering, setBuffering] = useState(false);
@@ -57,11 +74,19 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [stats, setStats] = useState<PlaybackStats>({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
   const [retrying, setRetrying] = useState(false);
+  const [errorInfo, setErrorInfo] = useState<{ type: string | null; httpCode: number | null }>({ type: null, httpCode: null });
 
   const [volume, setVolume] = useState(initialVolume ?? 1);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [isPip, setIsPip] = useState(false);
+
+  const [liveProgress, setLiveProgress] = useState(0);
+  const [liveEdge, setLiveEdge] = useState(0);
+
+  const [gestureOverlay, setGestureOverlay] = useState<{ type: 'volume' | 'seek'; value: number } | null>(null);
+  const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
 
@@ -83,6 +108,41 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onEnterPiP = () => setIsPip(true);
+    const onLeavePiP = () => setIsPip(false);
+    video.addEventListener('enterpictureinpicture', onEnterPiP);
+    video.addEventListener('leavepictureinpicture', onLeavePiP);
+    return () => {
+      video.removeEventListener('enterpictureinpicture', onEnterPiP);
+      video.removeEventListener('leavepictureinpicture', onLeavePiP);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const video = videoRef.current;
+    if (!video) return;
+    let raf: number;
+    const tick = () => {
+      if (video.buffered.length > 0) {
+        const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+        const current = video.currentTime;
+        const ahead = Math.max(0, bufferedEnd - current);
+        const edge = liveEdge > 0 ? liveEdge : bufferedEnd;
+        const progress = edge > 0 ? clamp((current / edge) * 100, 0, 100) : 0;
+        setLiveProgress(progress);
+        setLiveEdge((prev) => Math.max(prev, bufferedEnd));
+        setStats((c) => ({ ...c, bufferAhead: ahead }));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [status, liveEdge]);
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -112,12 +172,68 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     }
   }, []);
 
+  const togglePip = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (document.pictureInPictureEnabled) {
+        await video.requestPictureInPicture();
+      }
+    } catch {
+      // PiP not supported or denied
+    }
+  }, []);
+
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;
     if (!video || status !== 'ready') return;
     if (video.paused) void video.play().catch(() => setAutoplayBlocked(true));
     else video.pause();
   }, [status]);
+
+  // Gesture handling
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (status !== 'ready') return;
+    const touch = e.touches[0];
+    gestureRef.current = { startX: touch.clientX, startY: touch.clientY, startTime: Date.now() };
+  }, [status]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (status !== 'ready' || !gestureRef.current || !containerRef.current) return;
+    const touch = e.touches[0];
+    const rect = containerRef.current.getBoundingClientRect();
+    const dx = touch.clientX - gestureRef.current.startX;
+    const dy = touch.clientY - gestureRef.current.startY;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+
+    if (absDx < GESTURE_THRESHOLD / 2 && absDy < GESTURE_THRESHOLD / 2) return;
+
+    if (absDx > absDy) {
+      const ratio = clamp(dx / rect.width, -0.5, 0.5);
+      const seekPercent = Math.round(50 + ratio * 100);
+      setGestureOverlay({ type: 'seek', value: seekPercent });
+    } else {
+      const video = videoRef.current;
+      if (!video) return;
+      const ratio = clamp(-dy / rect.height, -0.5, 0.5);
+      const newVol = clamp(video.volume + ratio, 0, 1);
+      video.volume = newVol;
+      video.muted = newVol === 0;
+      setVolume(newVol);
+      setMuted(newVol === 0);
+      onVolumeChange?.(newVol);
+      setGestureOverlay({ type: 'volume', value: Math.round(newVol * 100) });
+    }
+  }, [status, onVolumeChange]);
+
+  const handleTouchEnd = useCallback(() => {
+    gestureRef.current = null;
+    if (gestureTimerRef.current) clearTimeout(gestureTimerRef.current);
+    gestureTimerRef.current = setTimeout(() => setGestureOverlay(null), 600);
+  }, []);
 
   useEffect(() => {
     if (status !== 'ready') return;
@@ -143,6 +259,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           e.preventDefault();
           toggleMute();
           showControls();
+          break;
+        case 'p':
+        case 'P':
+          e.preventDefault();
+          togglePip();
           break;
         case 'ArrowRight':
           e.preventDefault();
@@ -185,7 +306,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [status, togglePlayback, toggleFullscreen, toggleMute, showControls, onVolumeChange]);
+  }, [status, togglePlayback, toggleFullscreen, toggleMute, togglePip, showControls, onVolumeChange]);
 
   // HLS setup
   useEffect(() => {
@@ -208,6 +329,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     setActiveLevel(-1);
     setAutoplayBlocked(false);
     setRetrying(false);
+    setLiveProgress(0);
+    setLiveEdge(0);
+    setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
 
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); deadlineTimer = retryTimer = null; };
@@ -277,16 +401,21 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           hls.recoverMediaError(); return;
         }
         if (data.type === ErrorTypes.NETWORK_ERROR) {
-          const code = data.response?.code;
+          const code = data.response?.code ?? null;
           const master = typeof data.url === 'string' && data.url.includes('master.m3u8');
           if (code === 401 || code === 403 || (code === 404 && master)) {
+            setErrorInfo({ type: 'networkError', httpCode: code });
             if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrent(); } else setStatus('error');
             return;
           }
-          if ([Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT, Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT].includes(data.details)) { advance(); return; }
+          if ([Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT, Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT].includes(data.details)) {
+            setErrorInfo({ type: 'networkError', httpCode: code });
+            advance(); return;
+          }
           networkRetries += 1;
           if (networkRetries <= MAX_NETWORK_RETRIES) { retryTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) hls.startLoad(-1); }, Math.min(1000 * networkRetries, 4000)); return; }
         }
+        setErrorInfo({ type: data.type, httpCode: null });
         advance();
       });
 
@@ -359,6 +488,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
 
   const VolumeIcon = muted || volume === 0 ? Icon.VolumeX : volume < 0.5 ? Icon.Volume1 : Icon.Volume2;
 
+  const errorMsg = status === 'error' ? getErrorMessage(errorInfo.type, errorInfo.httpCode) : '';
+  const net = getNetworkInfo();
+
   return (
     <div
       ref={containerRef}
@@ -366,7 +498,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       data-state={status}
       onMouseMove={showControls}
       onMouseLeave={() => { if (status === 'ready') setControlsVisible(false); }}
-      onTouchStart={showControls}
+      onTouchStart={(e) => { showControls(); handleTouchStart(e); }}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       <video ref={videoRef} className={styles.video} playsInline onClick={togglePlayback} aria-label={`Lecteur ${title}`} />
 
@@ -377,7 +511,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
             <span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span>
           </div>
           {status === 'loading' && <><Spinner /><p className={styles.hint}>Le lecteur démarre en qualité basse puis augmente selon le réseau.</p></>}
-          {status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>Le fournisseur ne répond pas ou la session a expiré.</p><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}
+          {status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}
         </div>
       )}
 
@@ -392,6 +526,25 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         <button type="button" className={styles.playPrompt} onClick={() => { const video = videoRef.current; if (video) void video.play().then(() => setAutoplayBlocked(false)).catch(() => undefined); }}>
           Lancer la lecture
         </button>
+      )}
+
+      {gestureOverlay && (
+        <div className={styles.gestureOverlay} role="status" aria-live="polite">
+          <span className={styles.gestureIcon}>
+            {gestureOverlay.type === 'volume' ? <Icon.Volume2 size={28} /> : <Icon.Maximize size={28} />}
+          </span>
+          <span className={styles.gestureValue}>
+            {gestureOverlay.type === 'volume' ? `${gestureOverlay.value}%` : `${gestureOverlay.value}%`}
+          </span>
+        </div>
+      )}
+
+      {status === 'ready' && (
+        <>
+          <div className={styles.progressBar}>
+            <div className={styles.progressFill} style={{ width: `${liveProgress}%` }} />
+          </div>
+        </>
       )}
 
       {status === 'ready' && (
@@ -433,6 +586,10 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
             <input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} />
             Éco
           </label>
+
+          <button type="button" className={styles.iconBtn} onClick={togglePip} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}>
+            {isPip ? <Icon.Monitor size={16} /> : <Icon.Monitor size={16} />}
+          </button>
 
           <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
             {isFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}
