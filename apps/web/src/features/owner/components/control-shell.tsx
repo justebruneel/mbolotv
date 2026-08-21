@@ -3,10 +3,12 @@
 import { AppShell, Logo } from '@mbolo/ui';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { IconAudit, IconImports, IconOverview, IconSources } from './ui/icons';
+import { IconAudit, IconImports, IconKey, IconLayers, IconOverview, IconSources } from './ui/icons';
 
 const NAV = [
   { href: '/control', label: 'Vue d’ensemble', icon: <IconOverview className="h-[18px] w-[18px]" /> },
+  { href: '/control/catalog', label: 'Catalogue public', icon: <IconLayers className="h-[18px] w-[18px]" /> },
+  { href: '/control/access', label: 'Codes d’accès', icon: <IconKey className="h-[18px] w-[18px]" /> },
   { href: '/control/sources', label: 'Sources', icon: <IconSources className="h-[18px] w-[18px]" /> },
   { href: '/control/imports', label: 'Imports', icon: <IconImports className="h-[18px] w-[18px]" /> },
   { href: '/control/audit', label: 'Audit', icon: <IconAudit className="h-[18px] w-[18px]" /> },
