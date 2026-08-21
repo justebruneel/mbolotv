@@ -38,11 +38,13 @@ export class StreamingService {
     try { providerUrl = (await assertSafeUrl(this.crypto.decrypt(variant.encryptedLocator))).toString(); } catch { throw new NotFoundException('Flux indisponible pour cette chaîne'); }
     const session = await this.store.create({ channelId, variantId: variant.id, sourceId: variant.sourceId, providerHostname: new URL(providerUrl).hostname.toLowerCase() }, this.idleTtlMs, this.absoluteTtlMs);
     await this.store.addAlias(session.id, 'master', providerUrl, this.aliasTtlMs);
-    await this.audit.log(null, 'stream.session_created', 'channel', channelId, { sessionId: session.id, variantId: variant.id });
+    // L’audit ne doit pas retarder l’émission de l’URL HLS. Une panne Neon ne doit
+    // jamais transformer le lancement du player en écran de chargement.
+    void this.audit.log(null, 'stream.session_created', 'channel', channelId, { sessionId: session.id, variantId: variant.id }).catch(() => undefined);
     const publicApiUrl = (this.config.get<string>('PUBLIC_API_URL') ?? this.config.get<string>('API_URL') ?? DEFAULT_PUBLIC_API_URL).replace(/\/+$/, '');
     return { url: `${publicApiUrl}/api/stream/${session.id}/master.m3u8`, expiresAt: new Date(session.expiresAt).toISOString() };
   }
-  async assertSession(sessionId: string): Promise<StreamSession> { const session = await this.store.get(sessionId); if (!session) throw new NotFoundException('Session de lecture invalide ou expirée'); await this.store.touch(sessionId, this.idleTtlMs); return session; }
+  async assertSession(sessionId: string): Promise<StreamSession> { const session = await this.store.get(sessionId); if (!session) throw new NotFoundException('Session de lecture invalide ou expirée'); void this.store.touch(sessionId, this.idleTtlMs).catch(() => undefined); return session; }
   async resolveProviderUrl(session: StreamSession, alias = 'master'): Promise<string> { const url = await this.store.getAlias(session.id, alias); if (!url) throw new NotFoundException('Ressource de lecture indisponible'); return url; }
   async registerAlias(session: StreamSession, absoluteUrl: string): Promise<string> {
     let url: URL; try { url = new URL(absoluteUrl); } catch { throw new BadGatewayException('URL fournisseur invalide'); }
