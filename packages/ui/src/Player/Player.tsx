@@ -31,6 +31,11 @@ const MOBILE_CONTROLS_HIDE_DELAY_MS = 4_000;
 const GESTURE_THRESHOLD = 40;
 
 function exponentialDelay(attempt: number): number { return Math.min(1000 * 2 ** attempt, 8000); }
+function formatBitrate(bps: number | undefined): string {
+  if (!bps) return '';
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
+  return `${Math.round(bps / 1000)} kbps`;
+}
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
@@ -655,8 +660,8 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           </div>
 
           <select className={styles.qualitySelect} value={dataSaver ? -1 : selectedLevel} aria-label="Qualité vidéo" onChange={(e) => { const level = Number(e.target.value); setSelectedLevel(level); onLevelChange?.(level); }}>
-            <option value={-1}>Auto</option>
-            {levels.map((level) => <option key={level.index} value={level.index}>{level.height}p</option>)}
+            <option value={-1}>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</option>
+            {levels.map((level) => <option key={level.index} value={level.index}>{level.height}p — {formatBitrate(level.bitrate)}</option>)}
           </select>
 
           <label className={styles.dataSaverToggle}>
@@ -731,12 +736,15 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           </div>
           <div className={styles.popupOptions}>
             <button type="button" className={`${styles.popupOption} ${selectedLevel === -1 && !dataSaver ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedLevel(-1); onLevelChange?.(-1); closePopup(); }}>
-              <span>Auto</span>
+              <span>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</span>
               {selectedLevel === -1 && !dataSaver && <Icon.Check size={16} />}
             </button>
             {levels.map((level) => (
               <button key={level.index} type="button" className={`${styles.popupOption} ${selectedLevel === level.index ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedLevel(level.index); onLevelChange?.(level.index); closePopup(); }}>
-                <span>{level.height}p</span>
+                <span className={styles.popupOptionLeft}>
+                  <span>{level.height}p</span>
+                  {level.bitrate && <span className={styles.bitrateBadge}>{formatBitrate(level.bitrate)}</span>}
+                </span>
                 {selectedLevel === level.index && <Icon.Check size={16} />}
               </button>
             ))}
