@@ -6,6 +6,7 @@ import { CommonModule } from './common/common.module';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { QueueModule } from './common/queue/queue.module';
 import { StorageModule } from './common/storage/storage.module';
+import { AccessModule } from './modules/access/access.module';
 import { ActivityModule } from './modules/activity/activity.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ChannelHealthModule } from './modules/channel-health/channel-health.module';
@@ -33,6 +34,7 @@ import { StreamingModule } from './modules/streaming/streaming.module';
     PrismaModule,
     StorageModule,
     QueueModule,
+    AccessModule,
     HealthModule,
     ActivityModule,
     CategoriesModule,
