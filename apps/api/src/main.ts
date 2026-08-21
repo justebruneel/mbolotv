@@ -27,7 +27,7 @@ async function bootstrap(): Promise<void> {
     origin: corsOrigins(config),
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', 'authorization', 'range', 'x-requested-with'],
+    allowedHeaders: ['content-type', 'authorization', 'range', 'x-requested-with', 'x-device-id'],
     exposedHeaders: ['content-length', 'content-range', 'accept-ranges'],
     maxAge: 86_400,
   });
