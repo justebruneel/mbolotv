@@ -93,13 +93,19 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [pipSupported, setPipSupported] = useState(true);
   const [fsSupported, setFsSupported] = useState(true);
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
+  const isIosRef = useRef(false);
 
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
 
-  // Detect mobile
+  // Detect mobile + iOS
   useEffect(() => {
     const mq = window.matchMedia('(hover: none) and (pointer: coarse)');
-    const check = () => setIsMobile(mq.matches || navigator.maxTouchPoints > 0);
+    const check = () => {
+      const mobile = mq.matches || navigator.maxTouchPoints > 0;
+      setIsMobile(mobile);
+      isIosRef.current = /iPad|iPhone|iPod/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    };
     check();
     mq.addEventListener('change', check);
     return () => mq.removeEventListener('change', check);
@@ -110,10 +116,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     setPipSupported(document.pictureInPictureEnabled);
     const el = containerRef.current;
     const hasNativeFs = Boolean(el && ('requestFullscreen' in el || 'webkitRequestFullscreen' in el));
-    // On mobile: always show button (CSS pseudo-fullscreen fallback for iOS)
-    setFsSupported(true);
-    // If no native FS on desktop, still hide (desktop has no CSS fallback needed)
-    if (!isMobile && !hasNativeFs) setFsSupported(false);
+    const hasWebkitFs = typeof document !== 'undefined' && 'webkitEnterFullscreen' in HTMLVideoElement.prototype;
+    // Show button if: native FS available, or iOS with webkitEnterFullscreen, or mobile (CSS fallback)
+    setFsSupported(hasNativeFs || hasWebkitFs || isMobile);
   }, [isMobile]);
 
   const hideDelay = isMobile ? MOBILE_CONTROLS_HIDE_DELAY_MS : CONTROLS_HIDE_DELAY_MS;
@@ -196,8 +201,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   }, [onVolumeChange]);
 
   const toggleFullscreen = useCallback(() => {
+    const video = videoRef.current;
     const el = containerRef.current;
-    if (!el) return;
+    if (!video || !el) return;
 
     // Exit current fullscreen (native or pseudo)
     if (document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement) {
@@ -210,16 +216,22 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       return;
     }
 
-    // Try native fullscreen first (Android, desktop)
+    // iOS → native video fullscreen (best experience on iOS)
+    if (isIosRef.current && 'webkitEnterFullscreen' in video) {
+      void (video as HTMLVideoElement & { webkitEnterFullscreen: () => void }).webkitEnterFullscreen();
+      return;
+    }
+
+    // Android/Desktop → API Fullscreen native
     const fsFn = el.requestFullscreen || (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen;
     if (fsFn) {
       void fsFn.call(el).catch(() => {
-        // Native FS failed (iOS Safari) → fallback to pseudo-fullscreen
+        // Native FS failed → CSS pseudo-fullscreen fallback
         setIsPseudoFullscreen(true);
         document.body.style.overflow = 'hidden';
       });
     } else {
-      // No native FS API → pseudo-fullscreen (iOS)
+      // No native FS API → CSS pseudo-fullscreen fallback
       setIsPseudoFullscreen(true);
       document.body.style.overflow = 'hidden';
     }
