@@ -552,8 +552,17 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           <span className={styles.liveBadge}>DIRECT</span>
 
           <span className={styles.stat}>Qualité {qualityLabel}</span>
-          <span className={styles.stat}>Buffer {formatBuffer(stats.bufferAhead)}</span>
-          <span className={styles.stat}>Démarrage {formatDuration(stats.startupMs)}</span>
+
+          <span className={styles.statWrap}>
+            <span className={styles.statHint}>Buffer {formatBuffer(stats.bufferAhead)}</span>
+            <span className={styles.statTooltip}>Secondes de vidéo en mémoire tampon</span>
+          </span>
+
+          <span className={styles.statWrap}>
+            <span className={styles.statHint}>Démarrage {formatDuration(stats.startupMs)}</span>
+            <span className={styles.statTooltip}>Temps de chargement initial</span>
+          </span>
+
           {stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}
 
           <div className={styles.volumeControl}>
