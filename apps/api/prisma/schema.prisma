@@ -19,6 +19,7 @@ model User {
   sources Source[]
   auditLogs AuditLog[]
   ownerSessions OwnerSession[]
+  accessCodes AccessCode[]
 }
 model Profile {
   id String @id @default(cuid())
@@ -62,10 +63,12 @@ model Category {
   slug String @unique
   name String
   sortOrder Int @default(0)
+  isVisible Boolean @default(true)
   parentId String?
   parent Category? @relation("CategoryTree", fields:[parentId], references:[id])
   children Category[] @relation("CategoryTree")
   channels Channel[]
+  @@index([parentId, isVisible])
 }
 model Channel {
   id String @id @default(cuid())
@@ -77,12 +80,13 @@ model Channel {
   logoKey String?
   categoryId String?
   sortOrder Int @default(0)
+  isVisible Boolean @default(true)
   createdAt DateTime @default(now())
   category Category? @relation(fields:[categoryId], references:[id])
   variants StreamVariant[]
   programmes EpgProgramme[]
   favorites Favorite[]
-  @@index([categoryId])
+  @@index([categoryId, isVisible])
   @@index([tvgId])
 }
 model StreamVariant {
@@ -165,4 +169,31 @@ model OwnerSession {
   createdAt DateTime @default(now())
   user User @relation(fields:[userId], references:[id], onDelete:Cascade)
   @@index([userId, expiresAt])
+}
+model AccessCode {
+  id String @id @default(cuid())
+  codeHash String @unique
+  codeLast4 String
+  kind String @default("STANDARD")
+  durationHours Int
+  maxDevices Int @default(1)
+  active Boolean @default(true)
+  createdById String
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+  createdBy User @relation(fields:[createdById], references:[id], onDelete:Cascade)
+  grant DeviceGrant?
+  @@index([createdById, active])
+}
+model DeviceGrant {
+  id String @id @default(cuid())
+  accessCodeId String @unique
+  deviceHash String
+  userAgent String?
+  ipHash String?
+  grantedAt DateTime @default(now())
+  expiresAt DateTime
+  lastSeenAt DateTime @default(now())
+  accessCode AccessCode @relation(fields:[accessCodeId], references:[id], onDelete:Cascade)
+  @@index([deviceHash, expiresAt])
 }
