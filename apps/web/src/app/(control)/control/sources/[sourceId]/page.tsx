@@ -2,6 +2,7 @@ import type { SourceDetail } from '@mbolo/contracts';
 import { notFound } from 'next/navigation';
 import { serverOwnerFetch } from '../../../../../features/auth/server/owner-session';
 import { SourceActions } from '../../../../../features/owner/components/source-actions';
+import { SourceCredentials } from '../../../../../features/owner/components/source-credentials';
 import { SourceForm } from '../../../../../features/owner/components/source-form';
 import { Card, CardBody, CardHeader } from '../../../../../features/owner/components/ui/card';
 import { formatDateTime } from '../../../../../features/owner/components/ui/format';
@@ -11,21 +12,6 @@ import {
   KindBadge,
   SourceStatusBadge,
 } from '../../../../../features/owner/components/ui/status-badge';
-
-function connectionRows(kind: string, masked: Record<string, string>) {
-  if (kind === 'M3U') return [{ key: 'URL playlist', value: masked['url'] ?? '—' }];
-  if (kind === 'XTREAM') {
-    return [
-      { key: 'URL de base', value: masked['url'] ?? '—' },
-      { key: 'Identifiant', value: masked['username'] ?? '—' },
-      { key: 'Mot de passe', value: masked['password'] ?? '••••••••' },
-    ];
-  }
-  return [
-    { key: 'Portail', value: masked['url'] ?? '—' },
-    { key: 'Adresse MAC', value: masked['macAddress'] ?? '—' },
-  ];
-}
 
 export default async function SourceDetailPage({ params }: { params: Promise<{ sourceId: string }> }) {
   const { sourceId } = await params;
@@ -49,16 +35,9 @@ export default async function SourceDetailPage({ params }: { params: Promise<{ s
 
       <div className="mb-6 grid gap-4 md:grid-cols-2">
         <Card>
-          <CardHeader icon={<IconLink className="h-4 w-4" />} title="Connexion" description="Identifiants masqués, jamais affichés en clair" />
+          <CardHeader icon={<IconLink className="h-4 w-4" />} title="Connexion" description="Identifiants du fournisseur" />
           <CardBody className="p-0">
-            <dl className="divide-y divide-border">
-              {connectionRows(source.kind, source.connectionMasked).map((row) => (
-                <div key={row.key} className="flex items-center justify-between gap-4 px-5 py-3">
-                  <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{row.key}</dt>
-                  <dd className="truncate font-mono text-sm">{row.value}</dd>
-                </div>
-              ))}
-            </dl>
+            <SourceCredentials sourceId={source.id} kind={source.kind} />
           </CardBody>
         </Card>
 

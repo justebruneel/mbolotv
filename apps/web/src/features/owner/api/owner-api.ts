@@ -7,6 +7,7 @@ import type {
   OwnerLoginInput,
   OwnerMe,
   SourceCreateInput,
+  SourceCredentials,
   SourceDetail,
   SourceResponse,
   SourceUpdateInput,
@@ -39,6 +40,7 @@ export const ownerApi = {
   sources: {
     list: (): Promise<SourceResponse[]> => fetch(`${BASE_URL}/owner/sources`, { credentials: 'include' }).then(parseResponse<SourceResponse[]>),
     detail: (id: string): Promise<SourceDetail> => fetch(`${BASE_URL}/owner/sources/${id}`, { credentials: 'include' }).then(parseResponse<SourceDetail>),
+    credentials: (id: string): Promise<SourceCredentials> => fetch(`${BASE_URL}/owner/sources/${id}/credentials`, { credentials: 'include' }).then(parseResponse<SourceCredentials>),
     create: (input: SourceCreateInput): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<SourceResponse>),
     update: (id: string, input: SourceUpdateInput): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<SourceResponse>),
     remove: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/sources/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),

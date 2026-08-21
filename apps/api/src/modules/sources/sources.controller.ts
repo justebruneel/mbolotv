@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
-import { sourceCreateSchema, sourceUpdateSchema, type ConnectTestResponse, type ImportRun, type SourceCreateInput, type SourceDetail, type SourceResponse, type SourceUpdateInput } from '@mbolo/contracts';
+import { sourceCreateSchema, sourceUpdateSchema, type ConnectTestResponse, type ImportRun, type SourceCreateInput, type SourceCredentials, type SourceDetail, type SourceResponse, type SourceUpdateInput } from '@mbolo/contracts';
 import { getOwnerContext, OwnerContext } from '../../common/auth/owner-context';
 import { OwnerAuthGuard } from '../../common/auth/owner-auth.guard';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -12,6 +12,7 @@ export class SourcesController {
   constructor(private readonly sourcesService: SourcesService) {}
   @UseGuards(OwnerAuthGuard) @Get() list(@Req() request: FastifyRequest): Promise<SourceResponse[]> { return this.sourcesService.list(this.ownerOf(request).userId); }
   @UseGuards(OwnerAuthGuard) @Get(':id/test') test(@Req() request: FastifyRequest, @Param('id') id: string): Promise<ConnectTestResponse> { return this.sourcesService.test(this.ownerOf(request).userId, id); }
+  @UseGuards(OwnerAuthGuard) @Get(':id/credentials') credentials(@Req() request: FastifyRequest, @Param('id') id: string): Promise<SourceCredentials> { return this.sourcesService.credentials(this.ownerOf(request).userId, id); }
   @UseGuards(OwnerAuthGuard) @Get(':id') detail(@Req() request: FastifyRequest, @Param('id') id: string): Promise<SourceDetail> { return this.sourcesService.detail(this.ownerOf(request).userId, id); }
   @UseGuards(OwnerAuthGuard) @Post() create(@Req() request: FastifyRequest, @Body(new ZodValidationPipe(sourceCreateSchema)) input: SourceCreateInput): Promise<SourceResponse> { return this.sourcesService.create(this.ownerOf(request).userId, input); }
   @UseGuards(OwnerAuthGuard) @Patch(':id') update(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(sourceUpdateSchema)) input: SourceUpdateInput): Promise<SourceResponse> { return this.sourcesService.update(this.ownerOf(request).userId, id, input); }

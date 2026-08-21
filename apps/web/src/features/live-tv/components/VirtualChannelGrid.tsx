@@ -8,7 +8,7 @@ import type { WatchContext } from '../utils';
 
 const TILE_WIDTH = 208;
 const GAP = 16;
-const ROW_HEIGHT = 170;
+const ROW_HEIGHT = 200;
 
 export function VirtualChannelGrid({
   channels,

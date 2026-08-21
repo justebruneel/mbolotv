@@ -143,11 +143,11 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
 
       {/* Channel name below card */}
       <div className="mt-2 px-0.5">
-        <p className="truncate text-xs font-semibold text-foreground transition-colors duration-200 group-hover:text-accent">
+        <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-foreground transition-colors duration-200 group-hover:text-accent">
           {channel.name}
         </p>
         {channel.country && (
-          <p className="truncate text-[10px] text-muted">{channel.country}</p>
+          <p className="mt-0.5 truncate text-[11px] text-muted">{channel.country}</p>
         )}
       </div>
     </>
@@ -158,7 +158,7 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
       className={`group relative min-w-0 ${down ? 'opacity-40 grayscale' : ''}`}
       onMouseEnter={prefetch}
     >
-      <div className="relative overflow-hidden rounded-xl border border-border bg-surface transition-all duration-300 group-hover:-translate-y-1 group-hover:border-accent/50 group-hover:shadow-lg" style={{ aspectRatio: '16 / 10' }}>
+      <div className="relative overflow-hidden rounded-xl border border-border bg-surface transition-all duration-300 group-hover:-translate-y-1 group-hover:border-accent/50 group-hover:shadow-lg aspect-[4/3] sm:aspect-[16/10]">
         {down ? (
           <div aria-disabled="true" className="h-full">{content}</div>
         ) : (
