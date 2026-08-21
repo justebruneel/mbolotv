@@ -30,7 +30,7 @@ export function SourceCredentials({ sourceId, kind }: { sourceId: string; kind: 
     try {
       const data = await ownerApi.sources.credentials(sourceId);
       setCredentials(data);
-    } catch (e) {
+    } catch {
       setError('Erreur lors du chargement des identifiants');
     } finally {
       setLoading(false);
