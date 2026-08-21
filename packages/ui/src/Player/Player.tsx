@@ -36,6 +36,14 @@ function formatBitrate(bps: number | undefined): string {
   if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
   return `${Math.round(bps / 1000)} kbps`;
 }
+function heightFromBitrate(bps: number | undefined): number {
+  if (!bps) return 0;
+  if (bps < 500_000) return 360;
+  if (bps < 1_500_000) return 480;
+  if (bps < 3_500_000) return 720;
+  if (bps < 6_000_000) return 1080;
+  return 1440;
+}
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
@@ -513,7 +521,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (cancelled || hlsRef.current !== hls) return;
-        const discovered = hls.levels.map((level, index) => ({ index, height: level.height, bitrate: level.bitrate }));
+        const discovered = hls.levels.map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate), bitrate: level.bitrate }));
         setLevels(discovered);
         const networkCap = profile.capHeight === null ? -1 : Math.max(0, ...discovered.filter((l) => l.height <= profile.capHeight!).map((l) => l.index));
         hls.autoLevelCapping = initialDataSaver ? Math.max(0, ...discovered.filter((l) => l.height <= DATA_SAVER_MAX_HEIGHT).map((l) => l.index)) : networkCap;

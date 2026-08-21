@@ -76,47 +76,43 @@ export default function WatchPage() {
 
   return (
     <div className="animate-fade-in">
-      {/* Back button */}
-      <button
-        type="button"
-        onClick={goBack}
-        className="mb-6 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-muted transition-all duration-200 hover:bg-surface-2 hover:text-accent"
-      >
-        <Icon.ChevronLeft size={16} aria-hidden /> Retour
-      </button>
+      {/* Back button + channel name */}
+      <div className="mb-4 flex items-center gap-3 animate-slide-up">
+        <button
+          type="button"
+          onClick={goBack}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium text-muted transition-all duration-200 hover:bg-surface-2 hover:text-accent"
+        >
+          <Icon.ChevronLeft size={16} aria-hidden /> Retour
+        </button>
+        <h1 className="min-w-0 truncate text-2xl font-extrabold tracking-tight">{channel.name}</h1>
+        {channel.country && (
+          <Badge tone="accent" className="shrink-0">{channel.country}</Badge>
+        )}
+        {channel.nowPlaying && (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-wide text-white">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+            DIRECT
+          </span>
+        )}
+      </div>
 
-      {/* Channel header */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 animate-slide-up">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-extrabold tracking-tight">{channel.name}</h1>
-          {channel.country && (
-            <Badge tone="accent">{channel.country}</Badge>
-          )}
-          {channel.nowPlaying && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-wide text-white">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-              DIRECT
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          {viewersQuery.data && viewersQuery.data.count > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-muted px-2.5 py-1 text-xs font-bold text-accent">
-              <Icon.Eye size={13} aria-hidden />
-              {viewersQuery.data.count}
-            </span>
-          )}
-          <FavoriteToggle channelId={channel.id} />
-          <div className="hidden sm:flex items-center gap-1 rounded-xl border border-border bg-surface p-1">
-            <Button variant="ghost" size="small" onClick={() => navigate('prev')} className="!rounded-lg">
-              <Icon.ChevronLeft size={16} />
-            </Button>
-            <span className="px-2 text-xs text-muted font-medium">Navigation</span>
-            <Button variant="ghost" size="small" onClick={() => navigate('next')} className="!rounded-lg">
-              <Icon.ChevronRight size={16} />
-            </Button>
-          </div>
+      {/* Actions row: favorites + viewers + navigation */}
+      <div className="mb-6 flex flex-wrap items-center justify-center gap-2">
+        <FavoriteToggle channelId={channel.id} />
+        {viewersQuery.data && viewersQuery.data.count > 0 && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-muted px-2.5 py-1 text-xs font-bold text-accent">
+            <Icon.Eye size={13} aria-hidden />
+            {viewersQuery.data.count}
+          </span>
+        )}
+        <div className="flex items-center gap-1 rounded-xl border border-border bg-surface p-1">
+          <Button variant="ghost" size="small" onClick={() => navigate('prev')} className="!rounded-lg">
+            <Icon.ChevronLeft size={16} />
+          </Button>
+          <Button variant="ghost" size="small" onClick={() => navigate('next')} className="!rounded-lg">
+            <Icon.ChevronRight size={16} />
+          </Button>
         </div>
       </div>
 
@@ -149,16 +145,6 @@ export default function WatchPage() {
         ) : (
           <EmptyState title="Aucune programmation" hint="Pas de programme en cours pour cette chaîne." />
         )}
-      </div>
-
-      {/* Mobile nav */}
-      <div className="mt-6 flex sm:hidden items-center justify-center gap-2">
-        <Button variant="ghost" onClick={() => navigate('prev')}>
-          <Icon.ChevronLeft size={16} /> Précédente
-        </Button>
-        <Button variant="ghost" onClick={() => navigate('next')}>
-          Suivante <Icon.ChevronRight size={16} />
-        </Button>
       </div>
     </div>
   );
