@@ -1,20 +1,27 @@
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import type { AuditEntry, Overview } from '@mbolo/contracts';
+import type { AuditEntry, ChannelTestResponse, OwnerCatalog, OwnerCategoryUpdateInput, OwnerChannelUpdateInput, Overview } from '@mbolo/contracts';
+import { ownerCategoryUpdateSchema, ownerChannelUpdateSchema } from '@mbolo/contracts';
 import { getOwnerContext } from '../../common/auth/owner-context';
 import { OwnerAuthGuard } from '../../common/auth/owner-auth.guard';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { AuditService } from '../../common/audit/audit.service';
+import { HealthCheckService } from '../channel-health/channel-health.service';
 import { z } from 'zod';
 
 const auditQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).optional(), offset: z.coerce.number().int().min(0).optional() });
 type StatusGroup = { status: string; _count: { _all: number } };
 type AuditRow = { id: string; action: string; entity: string; entityId: string | null; actorId: string | null; metadata: unknown; createdAt: Date };
+type OwnerVariant = { healthStatus: string | null };
+type OwnerChannelRow = { id: string; name: string; canonicalName: string; categoryId: string | null; isVisible: boolean; variants: OwnerVariant[]; _count: { variants: number } };
+type OwnerCategoryRow = { id: string; slug: string; name: string; parentId: string | null; isVisible: boolean; channels: OwnerChannelRow[] };
 
 @UseGuards(OwnerAuthGuard)
 @Controller('owner')
 export class OwnerConsoleController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly health: HealthCheckService) {}
+
   @Get('overview')
   async overview(@Req() request: FastifyRequest): Promise<Overview> {
     const ownerId = getOwnerContext(request).userId;
@@ -32,11 +39,59 @@ export class OwnerConsoleController {
     if (failed > 0) alerts.push({ severity: 'critical', message: `${failed} source(s) en erreur` }); if (degraded > 0) alerts.push({ severity: 'warning', message: `${degraded} source(s) dégradée(s)` }); if (activeImports > 0) alerts.push({ severity: 'warning', message: `${activeImports} import(s) en cours` });
     return { sourcesByStatus, channelCount: channels, variantCount: variants, activeImports, liveMatches, alerts, recentAudit: recentAudit.map((entry: AuditRow) => this.serializeAudit(entry)) };
   }
+
+  @Get('catalog')
+  async catalog(@Req() request: FastifyRequest): Promise<OwnerCatalog> {
+    const ownerId = getOwnerContext(request).userId;
+    const channelScope = { variants: { some: { source: { ownerId } } } };
+    const categories = await this.prisma.category.findMany({
+      where: { channels: { some: channelScope } },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      include: { channels: { where: channelScope, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } } } },
+    }) as unknown as OwnerCategoryRow[];
+    const uncategorized = await this.prisma.channel.findMany({ where: { categoryId: null, ...channelScope }, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } } }) as unknown as OwnerChannelRow[];
+    return { categories: categories.map((category) => this.serializeCategory(category)), uncategorized: uncategorized.map((channel) => this.serializeChannel(channel)) };
+  }
+
+  @Patch('categories/:id')
+  async updateCategory(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerCategoryUpdateSchema)) input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> {
+    const ownerId = getOwnerContext(request).userId;
+    const category = await this.prisma.category.findFirst({ where: { id, channels: { some: { variants: { some: { source: { ownerId } } } } } } });
+    if (!category) throw new Error('Catégorie introuvable');
+    await this.prisma.category.update({ where: { id }, data: { ...(input.name === undefined ? {} : { name: input.name.trim() }), ...(input.isVisible === undefined ? {} : { isVisible: input.isVisible }), ...(input.parentId === undefined ? {} : { parentId: input.parentId }) } });
+    await this.audit.log(ownerId, 'catalog.category_update', 'category', id, input);
+    return this.catalog(request);
+  }
+
+  @Patch('channels/:id')
+  async updateChannel(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerChannelUpdateSchema)) input: OwnerChannelUpdateInput): Promise<OwnerCatalog> {
+    const ownerId = getOwnerContext(request).userId;
+    const channel = await this.prisma.channel.findFirst({ where: { id, variants: { some: { source: { ownerId } } } } });
+    if (!channel) throw new Error('Chaîne introuvable');
+    await this.prisma.channel.update({ where: { id }, data: { ...(input.name === undefined ? {} : { name: input.name.trim(), canonicalName: input.name.trim() }), ...(input.isVisible === undefined ? {} : { isVisible: input.isVisible }) } });
+    await this.audit.log(ownerId, 'catalog.channel_update', 'channel', id, input);
+    return this.catalog(request);
+  }
+
+  @Post('channels/:id/test')
+  async testChannel(@Req() request: FastifyRequest, @Param('id') id: string): Promise<ChannelTestResponse> {
+    const ownerId = getOwnerContext(request).userId;
+    const channel = await this.prisma.channel.findFirst({ where: { id, variants: { some: { source: { ownerId } } } }, include: { variants: { where: { source: { ownerId }, isActive: true }, select: { id: true, encryptedLocator: true } } } });
+    if (!channel) throw new Error('Chaîne introuvable');
+    let ok = false;
+    for (const variant of channel.variants) if (await this.health.checkVariant(variant)) { ok = true; break; }
+    await this.audit.log(ownerId, 'catalog.channel_test', 'channel', id, { checked: channel.variants.length, ok });
+    return { ok, status: ok ? 'OK' : 'DOWN', checked: channel.variants.length };
+  }
+
   @Get('audit')
-  async audit(@Req() request: FastifyRequest, @Query(new ZodValidationPipe(auditQuerySchema)) query: { limit?: number; offset?: number }): Promise<{ items: AuditEntry[]; total: number }> {
+  async auditEntries(@Req() request: FastifyRequest, @Query(new ZodValidationPipe(auditQuerySchema)) query: { limit?: number; offset?: number }): Promise<{ items: AuditEntry[]; total: number }> {
     const ownerId = getOwnerContext(request).userId; const where = { actorId: ownerId };
     const [items, total] = await Promise.all([this.prisma.auditLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: query.limit ?? 50, skip: query.offset ?? 0 }) as unknown as Promise<AuditRow[]>, this.prisma.auditLog.count({ where }) as unknown as Promise<number>]);
     return { items: items.map((entry: AuditRow) => this.serializeAudit(entry)), total };
   }
+
+  private serializeCategory(category: OwnerCategoryRow) { return { id: category.id, slug: category.slug, name: category.name, parentId: category.parentId, isVisible: category.isVisible, channelCount: category.channels.length, channels: category.channels.map((channel) => this.serializeChannel(channel)) }; }
+  private serializeChannel(channel: OwnerChannelRow) { const healthStatus = channel.variants.some((variant) => variant.healthStatus === 'OK') ? 'OK' : channel.variants.some((variant) => variant.healthStatus === 'DOWN') ? 'DOWN' : null; return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, categoryId: channel.categoryId, isVisible: channel.isVisible, healthStatus: healthStatus as 'OK' | 'DOWN' | null, variantsCount: channel._count.variants }; }
   private serializeAudit(entry: AuditRow): AuditEntry { return { id: entry.id, action: entry.action, entity: entry.entity, entityId: entry.entityId, actorId: entry.actorId, metadata: (entry.metadata ?? null) as Record<string, unknown> | null, createdAt: entry.createdAt.toISOString() }; }
 }
