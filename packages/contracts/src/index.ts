@@ -53,6 +53,7 @@ export const programmeSearchQuerySchema = z.object({ q: z.string().min(1).max(80
 export type ProgrammeSearchQuery = z.infer<typeof programmeSearchQuerySchema>;
 export const programmeSearchResponseSchema = z.object({ items: z.array(programmeSearchItemSchema), total: z.number() });
 export type ProgrammeSearchResponse = z.infer<typeof programmeSearchResponseSchema>;
+
 export const matchQuerySchema = z.object({ state: matchStateSchema.optional(), sport: z.string().optional(), from: z.string().datetime().optional(), to: z.string().datetime().optional() });
 export type MatchQuery = z.infer<typeof matchQuerySchema>;
 export const matchListResponseSchema = z.object({ items: z.array(matchSchema), total: z.number() });
@@ -95,3 +96,24 @@ export type ActiveCountsResponse = z.infer<typeof activeCountsResponseSchema>;
 export const channelViewersResponseSchema = z.object({ count: z.number() });
 export type ChannelViewersResponse = z.infer<typeof channelViewersResponseSchema>;
 
+export const ownerCategoryUpdateSchema = z.object({ name: z.string().min(1).max(120).optional(), isVisible: z.boolean().optional(), parentId: z.string().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export type OwnerCategoryUpdateInput = z.infer<typeof ownerCategoryUpdateSchema>;
+export const ownerChannelUpdateSchema = z.object({ name: z.string().min(1).max(160).optional(), isVisible: z.boolean().optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export type OwnerChannelUpdateInput = z.infer<typeof ownerChannelUpdateSchema>;
+export const ownerChannelSchema = z.object({ id: z.string(), name: z.string(), canonicalName: z.string(), categoryId: z.string().nullable(), isVisible: z.boolean(), healthStatus: z.enum(['OK', 'DOWN']).nullable(), variantsCount: z.number() });
+export type OwnerChannel = z.infer<typeof ownerChannelSchema>;
+export const ownerCategorySchema = z.object({ id: z.string(), slug: z.string(), name: z.string(), parentId: z.string().nullable(), isVisible: z.boolean(), channelCount: z.number(), channels: z.array(ownerChannelSchema) });
+export type OwnerCategory = z.infer<typeof ownerCategorySchema>;
+export const ownerCatalogSchema = z.object({ categories: z.array(ownerCategorySchema), uncategorized: z.array(ownerChannelSchema) });
+export type OwnerCatalog = z.infer<typeof ownerCatalogSchema>;
+export const channelTestResponseSchema = z.object({ ok: z.boolean(), status: z.enum(['OK', 'DOWN']), checked: z.number() });
+export type ChannelTestResponse = z.infer<typeof channelTestResponseSchema>;
+
+export const accessCodeCreateSchema = z.object({ kind: z.enum(['STANDARD', 'PROMO']).default('STANDARD'), durationDays: z.union([z.literal(7), z.literal(14), z.literal(30)]).optional() });
+export type AccessCodeCreateInput = z.infer<typeof accessCodeCreateSchema>;
+export const accessCodeSchema = z.object({ id: z.string(), code: z.string().nullable(), codeLast4: z.string(), kind: z.enum(['STANDARD', 'PROMO']), durationHours: z.number(), active: z.boolean(), createdAt: z.string(), expiresAt: z.string().nullable(), deviceBound: z.boolean() });
+export type AccessCode = z.infer<typeof accessCodeSchema>;
+export const accessStatusSchema = z.object({ active: z.boolean(), expiresAt: z.string().nullable(), kind: z.enum(['STANDARD', 'PROMO']).nullable(), whatsappUrl: z.string() });
+export type AccessStatus = z.infer<typeof accessStatusSchema>;
+export const accessRedeemSchema = z.object({ code: z.string().min(4).max(64) });
+export type AccessRedeemInput = z.infer<typeof accessRedeemSchema>;
