@@ -8,6 +8,11 @@
   background: #000;
   box-shadow: var(--mbolo-shadow-xl);
   isolation: isolate;
+  cursor: none;
+}
+
+.controlsVisible {
+  cursor: default;
 }
 
 .video {
@@ -129,9 +134,7 @@
               transform var(--mbolo-duration-base) var(--mbolo-ease-out);
 }
 
-.player:hover .controlRail,
-.player:focus-within .controlRail,
-.player[data-state='ready'] .controlRail {
+.controlsVisible .controlRail {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
@@ -160,6 +163,86 @@
   white-space: nowrap;
 }
 
+/* ---------- Icon button ---------- */
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid oklch(0.9 0.02 260 / 0.12);
+  border-radius: 8px;
+  background: oklch(0.18 0.025 260);
+  color: var(--mbolo-text);
+  cursor: pointer;
+  transition: background var(--mbolo-duration-fast) var(--mbolo-ease-out),
+              border-color var(--mbolo-duration-fast) var(--mbolo-ease-out);
+}
+
+.iconBtn:hover {
+  background: oklch(0.25 0.025 260);
+  border-color: var(--mbolo-accent);
+}
+
+.iconBtn:focus-visible {
+  outline: 2px solid var(--mbolo-accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Volume control ---------- */
+.volumeControl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.volumeSlider {
+  width: 72px;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: oklch(0.35 0.02 260);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+  transition: background var(--mbolo-duration-fast) var(--mbolo-ease-out);
+}
+
+.volumeSlider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--mbolo-accent);
+  border: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px oklch(0.10 0.018 260 / 0.6);
+  transition: transform var(--mbolo-duration-fast) var(--mbolo-ease-out);
+}
+
+.volumeSlider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.volumeSlider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--mbolo-accent);
+  border: 0;
+  cursor: pointer;
+}
+
+.volumeSlider:focus-visible {
+  outline: 2px solid var(--mbolo-accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Quality select ---------- */
 .qualitySelect {
   min-height: 32px;
   margin-left: auto;
@@ -178,9 +261,7 @@
   border-color: var(--mbolo-accent);
 }
 
-.qualitySelect:focus-visible,
-.retryButton:focus-visible,
-.playPrompt:focus-visible {
+.qualitySelect:focus-visible {
   outline: 2px solid var(--mbolo-accent);
   outline-offset: 2px;
 }
@@ -190,6 +271,7 @@
   color: var(--mbolo-text);
 }
 
+/* ---------- Data saver toggle ---------- */
 .dataSaverToggle {
   display: inline-flex;
   align-items: center;
@@ -236,6 +318,12 @@
   transform: scale(0.97);
 }
 
+.retryButton:focus-visible,
+.playPrompt:focus-visible {
+  outline: 2px solid var(--mbolo-accent);
+  outline-offset: 2px;
+}
+
 .playPrompt {
   position: absolute;
   top: 50%;
@@ -253,6 +341,9 @@
 
 /* ---------- Touch devices ---------- */
 @media (hover: none) {
+  .player {
+    cursor: default;
+  }
   .controlRail {
     opacity: 1;
     transform: none;
@@ -280,6 +371,9 @@
   }
   .qualitySelect {
     margin-left: 0;
+  }
+  .volumeSlider {
+    width: 56px;
   }
 }
 
