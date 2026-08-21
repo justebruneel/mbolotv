@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { apiGet, apiPost } from '../../../shared/api/client';
 
 const WHATSAPP_URL = 'https://wa.me/qr/CPB7IL3GHAGIK1';
+const WHATSAPP_NUMBER = '+241 60 10 89 84';
 type GateProps = { enabled: boolean; children: ReactNode };
 
 export function AccessGate({ enabled, children }: GateProps) {
@@ -43,6 +44,7 @@ export function AccessGate({ enabled, children }: GateProps) {
         </form>
         {message && <p className="mt-3 text-sm text-danger">{message}</p>}
         <a href={status.whatsappUrl || WHATSAPP_URL} target="_blank" rel="noreferrer" className="mt-5 inline-flex text-sm font-semibold text-accent hover:underline">Demander un code sur WhatsApp</a>
+        <p className="mt-2 text-xs text-muted">{WHATSAPP_NUMBER}</p>
         <p className="mt-3 text-xs text-muted">Codes disponibles : 7, 14 ou 30 jours. Les promos de test durent 24 heures.</p>
       </div>
     </section>
