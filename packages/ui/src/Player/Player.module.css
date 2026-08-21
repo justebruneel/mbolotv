@@ -112,7 +112,7 @@
   animation: fadeIn 0.2s ease-out both;
 }
 
-/* ---------- Control rail ---------- */
+/* ---------- Control rail (desktop) ---------- */
 .controlRail {
   position: absolute;
   right: 16px;
@@ -422,6 +422,255 @@
   font-weight: 700;
 }
 
+/* ================================================================
+   MOBILE LAYOUT
+   ================================================================ */
+
+/* Mobile top bar */
+.mobileTopBar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(oklch(0.10 0.018 260 / 0.85), transparent);
+  z-index: 15;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity var(--mbolo-duration-base) var(--mbolo-ease-out),
+              transform var(--mbolo-duration-base) var(--mbolo-ease-out);
+}
+
+.controlsVisible .mobileTopBar {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.mobileQualityLabel {
+  color: var(--mbolo-text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* Mobile bottom bar */
+.mobileBottomBar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 4px;
+  padding: 10px 8px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, oklch(0.10 0.018 260 / 0.90));
+  z-index: 15;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity var(--mbolo-duration-base) var(--mbolo-ease-out),
+              transform var(--mbolo-duration-base) var(--mbolo-ease-out);
+}
+
+.controlsVisible .mobileBottomBar {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.mobileIconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mbolo-text);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--mbolo-duration-fast) var(--mbolo-ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobileIconBtn:active {
+  background: oklch(0.25 0.025 260 / 0.5);
+}
+
+.mobileIconBtnActive {
+  background: oklch(0.25 0.025 260 / 0.6);
+  color: var(--mbolo-accent);
+}
+
+.mobileCheckbox {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.mobileEcoActive {
+  color: var(--mbolo-accent);
+}
+
+/* ---------- Mobile popups ---------- */
+.popupBackdrop {
+  position: absolute;
+  inset: 0;
+  background: oklch(0.0 0 0 / 0.5);
+  z-index: 25;
+  animation: fadeIn 0.15s ease-out both;
+}
+
+.mobilePopup {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  max-height: 60%;
+  overflow-y: auto;
+  border-radius: 16px 16px 0 0;
+  background: oklch(0.12 0.02 260);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 30;
+  animation: popupSlideUp 0.25s var(--mbolo-ease-out) both;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.popupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid oklch(0.9 0.02 260 / 0.08);
+}
+
+.popupTitle {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--mbolo-text);
+}
+
+.popupClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: oklch(0.20 0.02 260);
+  color: var(--mbolo-text-muted);
+  cursor: pointer;
+}
+
+.popupClose:active {
+  background: oklch(0.28 0.02 260);
+}
+
+.popupOptions {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+
+.popupOption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--mbolo-text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--mbolo-duration-fast) var(--mbolo-ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.popupOption:active {
+  background: oklch(0.20 0.02 260 / 0.5);
+}
+
+.popupOptionActive {
+  background: oklch(0.78 0.145 178 / 0.12);
+  color: var(--mbolo-accent);
+  font-weight: 700;
+}
+
+/* ---------- Mobile volume popup ---------- */
+.popupVolumeContent {
+  padding: 16px;
+}
+
+.popupVolumeHint {
+  color: var(--mbolo-text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.popupVolumeSlider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.volumeSliderLarge {
+  flex: 1;
+  height: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: oklch(0.35 0.02 260);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volumeSliderLarge::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--mbolo-accent);
+  border: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px oklch(0.10 0.018 260 / 0.6);
+}
+
+.volumeSliderLarge::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--mbolo-accent);
+  border: 0;
+  cursor: pointer;
+}
+
+.volumePercent {
+  min-width: 36px;
+  text-align: right;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--mbolo-text-muted);
+}
+
 /* ---------- Animations ---------- */
 @keyframes seek {
   0% { transform: translateX(-115%); }
@@ -444,41 +693,24 @@
   to { opacity: 1; }
 }
 
-/* ---------- Touch devices ---------- */
-@media (hover: none) {
-  .player {
-    cursor: default;
+@keyframes popupSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
   }
-  .controlRail {
+  to {
     opacity: 1;
-    transform: none;
-    pointer-events: auto;
+    transform: translateY(0);
   }
 }
 
-/* ---------- Mobile ---------- */
+/* ---------- Mobile (force layout) ---------- */
 @media (max-width: 640px) {
   .player {
     border-radius: var(--mbolo-radius);
   }
   .controlRail {
-    right: 8px;
-    bottom: 8px;
-    left: 8px;
-    gap: 8px;
-    padding: 8px 10px;
-    font-size: 0.67rem;
-    border-radius: 12px;
-  }
-  .statWrap:nth-of-type(2),
-  .statWrap:nth-of-type(3) {
     display: none;
-  }
-  .qualitySelect {
-    margin-left: 0;
-  }
-  .volumeSlider {
-    width: 56px;
   }
   .statTooltip {
     display: none;
@@ -493,7 +725,14 @@
   .controlRail {
     transition: none;
   }
+  .mobileTopBar,
+  .mobileBottomBar {
+    transition: none;
+  }
   .signalDot {
+    animation: none;
+  }
+  .mobilePopup {
     animation: none;
   }
 }

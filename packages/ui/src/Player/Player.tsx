@@ -27,8 +27,8 @@ const MAX_NETWORK_RETRIES = 3;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const STARTUP_DEADLINE_MS = 30_000;
 const CONTROLS_HIDE_DELAY_MS = 3_000;
+const MOBILE_CONTROLS_HIDE_DELAY_MS = 4_000;
 const GESTURE_THRESHOLD = 40;
-const GESTURE_MAX_OPACITY = 0.85;
 
 function exponentialDelay(attempt: number): number { return Math.min(1000 * 2 ** attempt, 8000); }
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
@@ -88,13 +88,36 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [gestureOverlay, setGestureOverlay] = useState<{ type: 'volume' | 'seek'; value: number } | null>(null);
   const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [isMobile, setIsMobile] = useState(false);
+  const [activePopup, setActivePopup] = useState<'volume' | 'quality' | null>(null);
+  const [pipSupported, setPipSupported] = useState(true);
+  const [fsSupported, setFsSupported] = useState(true);
+
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
+
+  // Detect mobile
+  useEffect(() => {
+    const mq = window.matchMedia('(hover: none) and (pointer: coarse)');
+    const check = () => setIsMobile(mq.matches || navigator.maxTouchPoints > 0);
+    check();
+    mq.addEventListener('change', check);
+    return () => mq.removeEventListener('change', check);
+  }, []);
+
+  // Detect PiP & Fullscreen support
+  useEffect(() => {
+    setPipSupported(document.pictureInPictureEnabled);
+    const el = containerRef.current;
+    setFsSupported(Boolean(el && ('requestFullscreen' in el || 'webkitRequestFullscreen' in el)));
+  }, []);
+
+  const hideDelay = isMobile ? MOBILE_CONTROLS_HIDE_DELAY_MS : CONTROLS_HIDE_DELAY_MS;
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(() => setControlsVisible(false), CONTROLS_HIDE_DELAY_MS);
-  }, []);
+    hideTimerRef.current = setTimeout(() => setControlsVisible(false), hideDelay);
+  }, [hideDelay]);
 
   useEffect(() => {
     if (status !== 'ready') {
@@ -165,10 +188,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
+    if (document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement) {
+      const exitFn = document.exitFullscreen || (document as Document & { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen;
+      if (exitFn) void exitFn.call(document);
     } else {
-      el.requestFullscreen();
+      const fsFn = el.requestFullscreen || (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen;
+      if (fsFn) void fsFn.call(el);
     }
   }, []);
 
@@ -192,6 +217,28 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     if (video.paused) void video.play().catch(() => setAutoplayBlocked(true));
     else video.pause();
   }, [status]);
+
+  const handleVideoClick = useCallback(() => {
+    if (isMobile) {
+      if (controlsVisible) {
+        setControlsVisible(false);
+        setActivePopup(null);
+      } else {
+        showControls();
+      }
+    } else {
+      togglePlayback();
+    }
+  }, [isMobile, controlsVisible, showControls, togglePlayback]);
+
+  const closePopup = useCallback(() => {
+    setActivePopup(null);
+    showControls();
+  }, [showControls]);
+
+  const handlePopupBackdropClick = useCallback(() => {
+    closePopup();
+  }, [closePopup]);
 
   // Gesture handling
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -298,15 +345,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           break;
         }
         case 'Escape':
-          if (document.fullscreenElement) {
-            document.exitFullscreen();
-          }
+          if (activePopup) { setActivePopup(null); showControls(); }
+          else if (document.fullscreenElement) { document.exitFullscreen(); }
           break;
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [status, togglePlayback, toggleFullscreen, toggleMute, togglePip, showControls, onVolumeChange]);
+  }, [status, togglePlayback, toggleFullscreen, toggleMute, togglePip, showControls, onVolumeChange, activePopup]);
 
   // HLS setup
   useEffect(() => {
@@ -487,22 +533,22 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   }, [initialVolume, onVolumeChange]);
 
   const VolumeIcon = muted || volume === 0 ? Icon.VolumeX : volume < 0.5 ? Icon.Volume1 : Icon.Volume2;
-
   const errorMsg = status === 'error' ? getErrorMessage(errorInfo.type, errorInfo.httpCode) : '';
   const net = getNetworkInfo();
+  const isIos = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
 
   return (
     <div
       ref={containerRef}
-      className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''}`}
+      className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''}`}
       data-state={status}
-      onMouseMove={showControls}
-      onMouseLeave={() => { if (status === 'ready') setControlsVisible(false); }}
+      onMouseMove={!isMobile ? showControls : undefined}
+      onMouseLeave={() => { if (!isMobile && status === 'ready') setControlsVisible(false); }}
       onTouchStart={(e) => { showControls(); handleTouchStart(e); }}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      <video ref={videoRef} className={styles.video} playsInline onClick={togglePlayback} aria-label={`Lecteur ${title}`} />
+      <video ref={videoRef} className={styles.video} playsInline onClick={handleVideoClick} aria-label={`Lecteur ${title}`} />
 
       {status !== 'ready' && (
         <div className={styles.overlay} role="status" aria-live="polite">
@@ -540,53 +586,34 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       )}
 
       {status === 'ready' && (
-        <>
-          <div className={styles.progressBar}>
-            <div className={styles.progressFill} style={{ width: `${liveProgress}%` }} />
-          </div>
-        </>
+        <div className={styles.progressBar}>
+          <div className={styles.progressFill} style={{ width: `${liveProgress}%` }} />
+        </div>
       )}
 
-      {status === 'ready' && (
+      {/* ===== DESKTOP CONTROL RAIL ===== */}
+      {status === 'ready' && !isMobile && (
         <div className={styles.controlRail} aria-label="Contrôles du lecteur">
           <span className={styles.liveBadge}>DIRECT</span>
-
           <span className={styles.stat}>Qualité {qualityLabel}</span>
-
           <span className={styles.statWrap}>
             <span className={styles.statHint}>Buffer {formatBuffer(stats.bufferAhead)}</span>
             <span className={styles.statTooltip}>Secondes de vidéo en mémoire tampon</span>
           </span>
-
           <span className={styles.statWrap}>
             <span className={styles.statHint}>Démarrage {formatDuration(stats.startupMs)}</span>
             <span className={styles.statTooltip}>Temps de chargement initial</span>
           </span>
-
           {stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}
 
           <div className={styles.volumeControl}>
             <button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}>
               <VolumeIcon size={16} />
             </button>
-            <input
-              type="range"
-              className={styles.volumeSlider}
-              min={0}
-              max={1}
-              step={0.05}
-              value={muted ? 0 : volume}
-              onChange={handleVolumeChange}
-              aria-label="Volume"
-            />
+            <input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" />
           </div>
 
-          <select
-            className={styles.qualitySelect}
-            value={dataSaver ? -1 : selectedLevel}
-            aria-label="Qualité vidéo"
-            onChange={(e) => { const level = Number(e.target.value); setSelectedLevel(level); onLevelChange?.(level); }}
-          >
+          <select className={styles.qualitySelect} value={dataSaver ? -1 : selectedLevel} aria-label="Qualité vidéo" onChange={(e) => { const level = Number(e.target.value); setSelectedLevel(level); onLevelChange?.(level); }}>
             <option value={-1}>Auto</option>
             {levels.map((level) => <option key={level.index} value={level.index}>{level.height}p</option>)}
           </select>
@@ -596,13 +623,107 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
             Éco
           </label>
 
-          <button type="button" className={styles.iconBtn} onClick={togglePip} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}>
-            {isPip ? <Icon.Monitor size={16} /> : <Icon.Monitor size={16} />}
+          {pipSupported && (
+            <button type="button" className={styles.iconBtn} onClick={togglePip} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}>
+              <Icon.Monitor size={16} />
+            </button>
+          )}
+
+          {fsSupported && (
+            <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
+              {isFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ===== MOBILE TOP BAR ===== */}
+      {status === 'ready' && isMobile && (
+        <div className={styles.mobileTopBar}>
+          <span className={styles.liveBadge}>DIRECT</span>
+          <span className={styles.mobileQualityLabel}>{qualityLabel}</span>
+        </div>
+      )}
+
+      {/* ===== MOBILE BOTTOM BAR ===== */}
+      {status === 'ready' && isMobile && (
+        <div className={styles.mobileBottomBar} aria-label="Contrôles du lecteur">
+          <button type="button" className={styles.mobileIconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}>
+            <VolumeIcon size={20} />
           </button>
 
-          <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
-            {isFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}
+          <button type="button" className={`${styles.mobileIconBtn} ${activePopup === 'quality' ? styles.mobileIconBtnActive : ''}`} onClick={() => setActivePopup(activePopup === 'quality' ? null : 'quality')} aria-label="Qualité vidéo">
+            <Icon.Settings2 size={20} />
           </button>
+
+          <label className={styles.mobileIconBtn}>
+            <input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} className={styles.mobileCheckbox} />
+            <span className={dataSaver ? styles.mobileEcoActive : ''}>Éco</span>
+          </label>
+
+          {pipSupported && (
+            <button type="button" className={styles.mobileIconBtn} onClick={togglePip} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}>
+              <Icon.Monitor size={20} />
+            </button>
+          )}
+
+          {fsSupported && (
+            <button type="button" className={styles.mobileIconBtn} onClick={toggleFullscreen} aria-label={isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>
+              {isFullscreen ? <Icon.Minimize size={20} /> : <Icon.Maximize size={20} />}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ===== MOBILE POPUPS ===== */}
+      {isMobile && activePopup && (
+        <div className={styles.popupBackdrop} onClick={handlePopupBackdropClick} />
+      )}
+
+      {isMobile && activePopup === 'quality' && (
+        <div className={styles.mobilePopup} role="dialog" aria-label="Choisir la qualité">
+          <div className={styles.popupHeader}>
+            <span className={styles.popupTitle}>Qualité vidéo</span>
+            <button type="button" className={styles.popupClose} onClick={closePopup} aria-label="Fermer">
+              <Icon.X size={18} />
+            </button>
+          </div>
+          <div className={styles.popupOptions}>
+            <button type="button" className={`${styles.popupOption} ${selectedLevel === -1 && !dataSaver ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedLevel(-1); onLevelChange?.(-1); closePopup(); }}>
+              <span>Auto</span>
+              {selectedLevel === -1 && !dataSaver && <Icon.Check size={16} />}
+            </button>
+            {levels.map((level) => (
+              <button key={level.index} type="button" className={`${styles.popupOption} ${selectedLevel === level.index ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedLevel(level.index); onLevelChange?.(level.index); closePopup(); }}>
+                <span>{level.height}p</span>
+                {selectedLevel === level.index && <Icon.Check size={16} />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isMobile && activePopup === 'volume' && (
+        <div className={styles.mobilePopup} role="dialog" aria-label="Volume">
+          <div className={styles.popupHeader}>
+            <span className={styles.popupTitle}>Volume</span>
+            <button type="button" className={styles.popupClose} onClick={closePopup} aria-label="Fermer">
+              <Icon.X size={18} />
+            </button>
+          </div>
+          <div className={styles.popupVolumeContent}>
+            {isIos ? (
+              <p className={styles.popupVolumeHint}>Sur iOS, le volume se contrôle via les boutons physiques de l'appareil.</p>
+            ) : (
+              <div className={styles.popupVolumeSlider}>
+                <button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}>
+                  <VolumeIcon size={20} />
+                </button>
+                <input type="range" className={styles.volumeSliderLarge} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" />
+                <span className={styles.volumePercent}>{muted ? 0 : Math.round(volume * 100)}%</span>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
