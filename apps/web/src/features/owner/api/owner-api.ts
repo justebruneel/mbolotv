@@ -1,9 +1,15 @@
 import type {
+  AccessCode,
+  AccessCodeCreateInput,
   AuditEntry,
+  ChannelTestResponse,
   ConnectTestResponse,
   ImportRun,
   ImportRunListResponse,
   Overview,
+  OwnerCatalog,
+  OwnerCategoryUpdateInput,
+  OwnerChannelUpdateInput,
   OwnerLoginInput,
   OwnerMe,
   SourceCreateInput,
@@ -37,6 +43,19 @@ export const ownerApi = {
   },
   overview: (): Promise<Overview> => fetch(`${BASE_URL}/owner/overview`, { credentials: 'include' }).then(parseResponse<Overview>),
   audit: (limit = 50, offset = 0): Promise<{ items: AuditEntry[]; total: number }> => fetch(`${BASE_URL}/owner/audit?limit=${limit}&offset=${offset}`, { credentials: 'include' }).then(parseResponse<{ items: AuditEntry[]; total: number }>),
+  catalog: (): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/catalog`, { credentials: 'include' }).then(parseResponse<OwnerCatalog>),
+  categories: {
+    update: (id: string, input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),
+  },
+  channels: {
+    update: (id: string, input: OwnerChannelUpdateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/channels/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),
+    test: (id: string): Promise<ChannelTestResponse> => fetch(`${BASE_URL}/owner/channels/${id}/test`, { method: 'POST', credentials: 'include' }).then(parseResponse<ChannelTestResponse>),
+  },
+  accessCodes: {
+    list: (): Promise<AccessCode[]> => fetch(`${BASE_URL}/owner/access-codes`, { credentials: 'include' }).then(parseResponse<AccessCode[]>),
+    create: (input: AccessCodeCreateInput): Promise<AccessCode> => fetch(`${BASE_URL}/owner/access-codes`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<AccessCode>),
+    revoke: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/access-codes/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
+  },
   sources: {
     list: (): Promise<SourceResponse[]> => fetch(`${BASE_URL}/owner/sources`, { credentials: 'include' }).then(parseResponse<SourceResponse[]>),
     detail: (id: string): Promise<SourceDetail> => fetch(`${BASE_URL}/owner/sources/${id}`, { credentials: 'include' }).then(parseResponse<SourceDetail>),
