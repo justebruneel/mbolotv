@@ -14,3 +14,4 @@ export { Player, type PlayerProps } from './Player/Player';
 export { ProgrammeProgress, type ProgrammeProgressProps } from './ProgrammeProgress/ProgrammeProgress';
 export { Skeleton, type SkeletonProps } from './Skeleton/Skeleton';
 export { Spinner, type SpinnerProps } from './Spinner/Spinner';
+export { warmStream, cancelWarm } from './StreamPreloader/StreamPreloader';

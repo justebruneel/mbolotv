@@ -1,7 +1,7 @@
 'use client';
 
-import type { Channel } from '@mbolo/contracts';
-import { FavoriteButton, ProgrammeProgress } from '@mbolo/ui';
+import type { Channel, PlayResponse } from '@mbolo/contracts';
+import { FavoriteButton, ProgrammeProgress, warmStream } from '@mbolo/ui';
 import Link from 'next/link';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -31,6 +31,15 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
         queryFn: () => apiGet<Channel>(`/channels/${channel.id}`),
         staleTime: 30 * 60_000,
       });
+      void queryClient
+        .fetchQuery({
+          queryKey: ['play', channel.id],
+          queryFn: () => apiGet<PlayResponse>(`/channels/${channel.id}/play`),
+          staleTime: 30 * 60_000,
+        })
+        .then((data) => {
+          if (data?.url) warmStream(data.url);
+        });
     }
   };
 
