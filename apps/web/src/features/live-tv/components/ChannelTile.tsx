@@ -141,16 +141,6 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
           </div>
         )}
       </div>
-
-      {/* Channel name below card */}
-      <div className="mt-2 px-0.5">
-        <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-foreground transition-colors duration-200 group-hover:text-accent">
-          {channel.name}
-        </p>
-        {channel.country && (
-          <p className="mt-0.5 truncate text-[11px] text-muted">{channel.country}</p>
-        )}
-      </div>
     </>
   );
 
@@ -170,6 +160,16 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
           >
             {content}
           </Link>
+        )}
+      </div>
+
+      {/* Channel name below card */}
+      <div className="mt-2 px-0.5">
+        <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-foreground transition-colors duration-200 group-hover:text-accent">
+          {channel.name}
+        </p>
+        {channel.country && (
+          <p className="mt-0.5 truncate text-[11px] text-muted">{channel.country}</p>
         )}
       </div>
     </article>
