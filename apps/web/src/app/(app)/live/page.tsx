@@ -56,10 +56,7 @@ function LiveContent() {
     () => categories.filter((bouquet) => isBouquetCategory(bouquet.name)).sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)).slice(0, MAX_BOUQUETS),
     [categories],
   );
-  const tabCategories = useMemo(
-    () => [...categories].sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)),
-    [categories],
-  );
+  const tabCategories = categories;
   const isFiltering = category !== undefined || country !== undefined || deferredQuery.trim() !== '';
   const channelsQuery = useInfiniteChannels({ category, country, q: deferredQuery.trim() || undefined }, PAGE_SIZE);
   const channels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
