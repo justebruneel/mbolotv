@@ -1,7 +1,9 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import type { Category } from '@mbolo/contracts';
+import { AccessGuard } from '../access/access.guard';
 import { CategoriesService } from './categories.service';
 
+@UseGuards(AccessGuard)
 @Controller('categories')
 export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
