@@ -2,7 +2,7 @@
 
 import { AppShell, Icon, Logo } from '@mbolo/ui';
 import { usePathname } from 'next/navigation';
-import { ReactNode } from 'react';
+import { ReactNode, Suspense } from 'react';
 import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
@@ -27,7 +27,7 @@ function ShellContent({ children }: { children: ReactNode }) {
 
   return (
     <>
-    <RouteTracker />
+    <Suspense><RouteTracker /></Suspense>
     <AppShell
       brand={<Logo />}
       navItems={NAV_ITEMS}
