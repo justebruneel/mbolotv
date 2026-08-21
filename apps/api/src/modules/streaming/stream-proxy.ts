@@ -3,9 +3,9 @@ import { Readable } from 'node:stream';
 import { HostValidationCache } from './host-validation.cache';
 
 const MAX_REDIRECTS = 5;
-const HEADERS_TIMEOUT_MS = 15_000;
-const MAX_FETCH_RETRIES = 2;
-const FETCH_RETRY_DELAY_MS = 400;
+const HEADERS_TIMEOUT_MS = 10_000;
+const MAX_FETCH_RETRIES = 1;
+const FETCH_RETRY_DELAY_MS = 350;
 const STREAM_HIGH_WATER_MARK = 64 * 1024;
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
@@ -17,7 +17,7 @@ export class StreamProxy {
 
   async fetch(rawUrl: string, options: { headers?: Record<string, string>; allowedHostnames: Set<string> }): Promise<StreamProxyResponse> {
     for (let attempt = 0; attempt <= MAX_FETCH_RETRIES; attempt += 1) {
-      try { return await this.fetchOnce(rawUrl, options); } catch (error) { const retriable = isTransientError(error) && attempt < MAX_FETCH_RETRIES; if (!retriable) throw error; await sleep(FETCH_RETRY_DELAY_MS * (attempt + 1)); }
+      try { return await this.fetchOnce(rawUrl, options); } catch (error) { const retriable = isTransientError(error) && attempt < MAX_FETCH_RETRIES; if (!retriable) throw error; await sleep(FETCH_RETRY_DELAY_MS); }
     }
     throw new BadGatewayException('Connexion fournisseur impossible');
   }
@@ -49,8 +49,7 @@ export class StreamProxy {
   private async assertAllowed(rawUrl: string, allowedHostnames: Set<string>): Promise<URL> {
     let url: URL; try { url = new URL(rawUrl); } catch { throw new BadGatewayException('URL fournisseur invalide'); }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new BadGatewayException('Protocole fournisseur non autorisé');
-    const hostname = url.hostname.toLowerCase();
-    const allowed = [...allowedHostnames].some((allowedHost) => { const allowedLower = allowedHost.toLowerCase(); return hostname === allowedLower || hostname.endsWith(`.${allowedLower}`); });
+    const hostname = url.hostname.toLowerCase(); const allowed = [...allowedHostnames].some((allowedHost) => { const allowedLower = allowedHost.toLowerCase(); return hostname === allowedLower || hostname.endsWith(`.${allowedLower}`); });
     if (!allowed) throw new BadGatewayException('Hôte fournisseur non autorisé');
     await this.hostValidation.assertSafeHost(url); return url;
   }
