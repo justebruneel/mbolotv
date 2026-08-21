@@ -37,6 +37,7 @@ model Source {
   status String @default("PENDING")
   priority Int @default(100)
   connectionEncrypted Bytes
+  epgUrl String?
   lastSyncedAt DateTime?
   createdAt DateTime @default(now())
   owner User @relation(fields:[ownerId], references:[id], onDelete:Cascade)

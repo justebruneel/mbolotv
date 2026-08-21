@@ -7,5 +7,6 @@ import { ProgrammesController } from './programmes.controller';
 @Module({
   controllers: [EpgController, ProgrammesController],
   providers: [EpgService, EpgImportService],
+  exports: [EpgImportService],
 })
 export class EpgModule {}

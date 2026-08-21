@@ -44,9 +44,9 @@ services:
       - key: CLOUDINARY_FOLDER
         value: mbolo-tv
       - key: IMPORT_LOGO_MAX_DOWNLOADS
-        value: "250"
+        value: "5000"
       - key: IMPORT_LOGO_TIMEOUT_MS
-        value: "2500"
+        value: "8000"
       - key: S3_ENDPOINT
         sync: false
       - key: S3_ACCESS_KEY

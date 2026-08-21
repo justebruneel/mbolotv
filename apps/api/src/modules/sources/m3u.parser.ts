@@ -11,6 +11,7 @@ function hasVideoExtension(url: string): boolean { try { return VIDEO_EXTENSIONS
 function isSuspiciousTitle(title: string): boolean { return /(^|\s)(playlist|folder|dossier)(\s|$)/i.test(title) || isFolderMarker(title); }
 function isDirectoryEntry(pending: { attributes: Record<string, string>; displayName: string }, url: string): boolean { return isFolderMarker(pending.displayName) || isContainerUrl(url) || (isSuspiciousTitle(pending.attributes['tvg-name'] || pending.displayName) && !hasVideoExtension(url)); }
 function parseAttributes(line: string): Record<string, string> { const attributes: Record<string, string> = {}; for (const match of line.matchAll(EXTINF_ATTRIBUTE_PATTERN)) attributes[match[1]] = match[2]; return attributes; }
+function normalizeLogoUrl(logo: string | undefined): string | undefined { if (!logo) return undefined; if (logo.startsWith('//')) return `https:${logo}`; return logo; }
 
 export function parseM3u(content: string): ParsedChannel[] { const channels: ParsedChannel[] = []; const parser = createParser(channels); for (const line of content.split(/\r?\n/)) parser.handleLine(line); return channels; }
 
@@ -61,7 +62,7 @@ function createParser(channels: ParsedChannel[], onEntry?: (entry: ParsedChannel
       if (line.startsWith('#')) return;
       if (pending && /^[a-z][a-z0-9+.-]*:\/\//i.test(line)) {
         const title = pending.attributes['tvg-name'] || pending.displayName.split(';')[0]?.trim() || pending.attributes['tvg-id'] || 'Sans titre';
-        if (!isDirectoryEntry(pending, line)) push({ title, tvgId: pending.attributes['tvg-id'] || undefined, tvgLogo: pending.attributes['tvg-logo'] || undefined, groupTitle: pending.attributes['group-title'] || inGroup || undefined, url: line });
+        if (!isDirectoryEntry(pending, line)) push({ title, tvgId: pending.attributes['tvg-id'] || undefined, tvgLogo: normalizeLogoUrl(pending.attributes['tvg-logo']) || undefined, groupTitle: pending.attributes['group-title'] || inGroup || undefined, url: line });
       }
       pending = null;
     },
