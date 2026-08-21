@@ -4,6 +4,7 @@ import { AppShell, Icon, Logo } from '@mbolo/ui';
 import { usePathname } from 'next/navigation';
 import { ReactNode } from 'react';
 import { QueryProvider } from '../../shared/components/QueryProvider';
+import { RouteTracker } from '../../shared/components/RouteTracker';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
 import { useActiveUsers, useActivityHeartbeat } from '../../shared/api/queries';
 
@@ -25,6 +26,8 @@ function ShellContent({ children }: { children: ReactNode }) {
   useActivityHeartbeat();
 
   return (
+    <>
+    <RouteTracker />
     <AppShell
       brand={<Logo />}
       navItems={NAV_ITEMS}
@@ -36,6 +39,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     >
       {children}
     </AppShell>
+    </>
   );
 }
 

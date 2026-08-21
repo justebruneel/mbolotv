@@ -108,6 +108,7 @@ model EpgProgramme {
   endsAt DateTime
   title String
   description String?
+  imageUrl String?
   metadata Json?
   channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
   @@index([channelId, startsAt])

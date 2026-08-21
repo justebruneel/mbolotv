@@ -21,11 +21,11 @@ export type StreamAccess = { playbackUrl: string; expiresAt: string; selectedSer
 
 export const categorySchema = z.object({ id: z.string(), slug: z.string(), name: z.string(), channelCount: z.number().optional(), sortOrder: z.number().optional() });
 export type Category = z.infer<typeof categorySchema>;
-export const nowPlayingSchema = z.object({ startsAt: z.string(), endsAt: z.string(), title: z.string() });
+export const nowPlayingSchema = z.object({ startsAt: z.string(), endsAt: z.string(), title: z.string(), imageUrl: z.string().nullable().optional() });
 export type NowPlaying = z.infer<typeof nowPlayingSchema>;
 export const channelSchema = z.object({ id: z.string(), name: z.string(), canonicalName: z.string(), country: z.string().nullable(), categoryId: z.string().nullable(), logoUrl: z.string().nullable(), healthStatus: z.enum(['OK', 'DOWN']).nullable().optional(), nowPlaying: nowPlayingSchema.nullable().optional() });
 export type Channel = z.infer<typeof channelSchema>;
-export const programmeSchema = z.object({ id: z.string(), channelId: z.string(), startsAt: z.string(), endsAt: z.string(), title: z.string(), description: z.string().nullable() });
+export const programmeSchema = z.object({ id: z.string(), channelId: z.string(), startsAt: z.string(), endsAt: z.string(), title: z.string(), description: z.string().nullable(), imageUrl: z.string().nullable().optional() });
 export type Programme = z.infer<typeof programmeSchema>;
 export const matchChannelSchema = z.object({ id: z.string(), name: z.string(), logoUrl: z.string().nullable(), streamCount: z.number(), bestHealth: z.number().nullable() });
 export type MatchChannel = z.infer<typeof matchChannelSchema>;

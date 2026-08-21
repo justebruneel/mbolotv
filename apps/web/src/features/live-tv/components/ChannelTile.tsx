@@ -9,14 +9,20 @@ import { apiGet } from '../../../shared/api/client';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { channelBadge, channelInitials, buildWatchHref, type WatchContext } from '../utils';
 
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
 export function ChannelTile({ channel, watchContext }: { channel: Channel; watchContext?: WatchContext }) {
   const queryClient = useQueryClient();
   const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
   const toggle = useFavoritesStore((state) => state.toggle);
   const [logoError, setLogoError] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
   const href = buildWatchHref(channel.id, watchContext);
   const down = channel.healthStatus === 'DOWN';
   const isLive = channel.nowPlaying;
+  const thumbUrl = isLive?.imageUrl;
 
   const prefetch = (): void => {
     if (!down) {
@@ -28,36 +34,123 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
     }
   };
 
-  const logo = (
-    <span className="flex h-22 w-22 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-2xl font-bold text-muted transition-transform duration-300 group-hover:scale-105">
-      {channel.logoUrl && !logoError ? (
-        <img
-          src={channel.logoUrl}
-          alt=""
-          width={96}
-          height={96}
-          loading="lazy"
-          decoding="async"
-          onError={() => setLogoError(true)}
-          className="h-full w-full object-contain p-3"
+  const badge = channelBadge(channel.name);
+
+  const content = (
+    <>
+      {/* Background image */}
+      <div className="absolute inset-0 z-0">
+        {thumbUrl && !thumbError ? (
+          <img
+            src={thumbUrl}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onError={() => setThumbError(true)}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+          />
+        ) : channel.logoUrl && !logoError ? (
+          <img
+            src={channel.logoUrl}
+            alt=""
+            width={96}
+            height={96}
+            loading="lazy"
+            decoding="async"
+            onError={() => setLogoError(true)}
+            className="absolute inset-0 m-auto h-16 w-16 object-contain opacity-30"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-4xl font-bold text-muted/30">
+            {channelInitials(channel.name)}
+          </div>
+        )}
+        {/* Gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+      </div>
+
+      {/* Top badges */}
+      <div className="absolute left-2.5 top-2.5 z-10 flex items-center gap-1.5">
+        {isLive && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-danger/90 px-2 py-0.5 text-[9px] font-bold tracking-wide text-white backdrop-blur-sm">
+            <span className="h-1 w-1 animate-pulse rounded-full bg-white" />
+            DIRECT
+          </span>
+        )}
+        {badge && (
+          <span className="rounded-md bg-accent/90 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-on-accent backdrop-blur-sm">
+            {badge}
+          </span>
+        )}
+      </div>
+
+      {/* Favorite button */}
+      <span
+        className="absolute right-2 top-2 z-20"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <FavoriteButton
+          label={isFavorite ? `Retirer ${channel.name} des favoris` : `Ajouter ${channel.name} aux favoris`}
+          isActive={isFavorite}
+          onToggle={() => toggle(channel.id)}
         />
-      ) : (
-        channelInitials(channel.name)
-      )}
-    </span>
-  );
+      </span>
 
-  const liveIndicator = isLive && (
-    <span className="absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-wide text-white backdrop-blur-sm">
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-      DIRECT
-    </span>
-  );
+      {/* Bottom info */}
+      <div className="absolute bottom-0 left-0 right-0 z-10 p-2.5">
+        <div className="flex items-end gap-2">
+          {/* Channel logo */}
+          <div className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface/80 backdrop-blur-sm">
+            {channel.logoUrl && !logoError ? (
+              <img
+                src={channel.logoUrl}
+                alt=""
+                width={32}
+                height={32}
+                loading="lazy"
+                decoding="async"
+                onError={() => setLogoError(true)}
+                className="h-full w-full object-contain p-1"
+              />
+            ) : (
+              <span className="text-xs font-bold text-muted">{channelInitials(channel.name)}</span>
+            )}
+          </div>
+          {/* Programme info */}
+          <div className="min-w-0 flex-1">
+            {isLive ? (
+              <>
+                <p className="truncate text-xs font-semibold text-white drop-shadow-md">{isLive.title}</p>
+                <p className="text-[10px] text-white/70">{formatTime(isLive.startsAt)} – {formatTime(isLive.endsAt)}</p>
+              </>
+            ) : (
+              <p className="truncate text-xs font-semibold text-white/60">Pas de programme</p>
+            )}
+          </div>
+        </div>
+      </div>
 
-  const badge = channelBadge(channel.name) && (
-    <span className="absolute left-3 top-3 rounded-lg bg-accent/90 px-2 py-1 text-[10px] font-bold tracking-wide text-on-accent backdrop-blur-sm">
-      {channelBadge(channel.name)}
-    </span>
+      {/* Hover play button */}
+      <div className="absolute inset-0 z-10 flex items-center justify-center opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+        {!down && (
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-accent text-on-accent shadow-lg transition-transform duration-200 group-hover:scale-110">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+        )}
+      </div>
+
+      {/* Channel name below card */}
+      <div className="mt-2 px-0.5">
+        <p className="truncate text-xs font-semibold text-foreground transition-colors duration-200 group-hover:text-accent">
+          {channel.name}
+        </p>
+        {channel.country && (
+          <p className="truncate text-[10px] text-muted">{channel.country}</p>
+        )}
+      </div>
+    </>
   );
 
   return (
@@ -65,52 +158,19 @@ export function ChannelTile({ channel, watchContext }: { channel: Channel; watch
       className={`group relative min-w-0 ${down ? 'opacity-40 grayscale' : ''}`}
       onMouseEnter={prefetch}
     >
-      <div className="relative aspect-square overflow-hidden rounded-2xl border border-border bg-surface-3 transition-all duration-300 group-hover:-translate-y-1 group-hover:border-accent/50 group-hover:shadow-lg">
+      <div className="relative overflow-hidden rounded-xl border border-border bg-surface transition-all duration-300 group-hover:-translate-y-1 group-hover:border-accent/50 group-hover:shadow-lg" style={{ aspectRatio: '16 / 10' }}>
         {down ? (
-          <div aria-disabled="true">{logo}{liveIndicator}{badge}</div>
+          <div aria-disabled="true" className="h-full">{content}</div>
         ) : (
           <Link
             href={href}
             aria-label={`Regarder ${channel.name}`}
             className="block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
           >
-            {logo}{liveIndicator}{badge}
+            {content}
           </Link>
         )}
-
-        {/* Hover overlay */}
-        <div className="absolute inset-0 z-0 flex items-center justify-center bg-gradient-to-t from-black/60 via-black/20 to-transparent opacity-0 pointer-events-none transition-opacity duration-300 group-hover:opacity-100 group-hover:pointer-events-auto">
-          {!down && (
-            <Link
-              href={href}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-accent text-on-accent shadow-lg transition-transform duration-200 hover:scale-110"
-              aria-label={`Lancer ${channel.name}`}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </Link>
-          )}
-        </div>
-
-        <span
-          className="absolute right-2 top-2 z-20"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <FavoriteButton
-            label={isFavorite ? `Retirer ${channel.name} des favoris` : `Ajouter ${channel.name} aux favoris`}
-            isActive={isFavorite}
-            onToggle={() => toggle(channel.id)}
-          />
-        </span>
       </div>
-
-      <Link href={href} className="mt-2.5 block truncate text-sm font-semibold text-foreground transition-colors duration-200 hover:text-accent">
-        {channel.name}
-      </Link>
-      {channel.country && (
-        <p className="mt-0.5 truncate text-xs text-muted">{channel.country}</p>
-      )}
     </article>
   );
 }

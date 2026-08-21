@@ -8,7 +8,7 @@ import { parseXmltvStream, type XmltvProgramme } from './xmltv.parser';
 
 export interface EpgImportResult { sources: number; channels: number; programmes: number; stored: number; durationMs: number; }
 type EpgSource = { id: string; name: string; kind: string; status: string; priority: number; connectionEncrypted: Uint8Array };
-type EpgRow = { channelId: string; startsAt: Date; endsAt: Date; title: string; description?: string | null; metadata?: Record<string, unknown> };
+type EpgRow = { channelId: string; startsAt: Date; endsAt: Date; title: string; description?: string | null; imageUrl?: string | null; metadata?: Record<string, unknown> };
 type EpgCreateResult = { count: number };
 
 @Injectable()
@@ -31,7 +31,7 @@ export class EpgImportService {
         const matched = new Set<string>(); let inserted = 0;
         const parseResult = await parseXmltvStream(result.stream, async (batch: XmltvProgramme[]) => {
           const rows: EpgRow[] = [];
-          for (const programme of batch) { const channelId = tvgMap.get(programme.channelId.toLowerCase()); if (!channelId) continue; matched.add(channelId); rows.push({ channelId, startsAt: programme.startsAt, endsAt: programme.endsAt, title: programme.title, description: programme.description, metadata: programme.categories.length > 0 ? { categories: programme.categories } : undefined }); }
+          for (const programme of batch) { const channelId = tvgMap.get(programme.channelId.toLowerCase()); if (!channelId) continue; matched.add(channelId); rows.push({ channelId, startsAt: programme.startsAt, endsAt: programme.endsAt, title: programme.title, description: programme.description, imageUrl: programme.imageUrl, metadata: programme.categories.length > 0 ? { categories: programme.categories } : undefined }); }
           if (rows.length === 0) return 0;
           const created = await this.prisma.epgProgramme.createMany({ data: rows as never }) as EpgCreateResult; return created.count;
         });

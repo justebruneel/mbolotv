@@ -6,9 +6,9 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { ChannelTile } from './ChannelTile';
 import type { WatchContext } from '../utils';
 
-const TILE_WIDTH = 128;
+const TILE_WIDTH = 208;
 const GAP = 16;
-const ROW_HEIGHT = 184;
+const ROW_HEIGHT = 170;
 
 export function VirtualChannelGrid({
   channels,

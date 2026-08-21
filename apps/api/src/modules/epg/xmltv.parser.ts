@@ -7,6 +7,7 @@ export interface XmltvProgramme {
   endsAt: Date;
   title: string;
   description?: string;
+  imageUrl?: string;
   categories: string[];
 }
 
@@ -47,6 +48,7 @@ export async function parseXmltvStream(
     endsAt: Date | null;
     title: string;
     description?: string;
+    imageUrl?: string;
     categories: string[];
   }
 
@@ -86,6 +88,11 @@ export async function parseXmltvStream(
         };
         return;
       }
+      if (current && node.name === 'icon' && !current.imageUrl) {
+        const src = String(node.attributes['src'] ?? '').trim();
+        if (src) current.imageUrl = src;
+        return;
+      }
       if (
         current &&
         (node.name === 'title' || node.name === 'desc' || node.name === 'category')
@@ -118,6 +125,7 @@ export async function parseXmltvStream(
             endsAt: record.endsAt,
             title: record.title,
             description: record.description,
+            imageUrl: record.imageUrl,
             categories: record.categories,
           });
           if (records.length >= BATCH_SIZE) flush();

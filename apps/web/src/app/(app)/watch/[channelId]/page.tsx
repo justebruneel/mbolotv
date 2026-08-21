@@ -25,6 +25,7 @@ export default function WatchPage() {
   const setPreferredLevel = useSettingsStore((state) => state.setPreferredLevel);
   const setDataSaver = useSettingsStore((state) => state.setDataSaver);
   const recordWatch = useSettingsStore((state) => state.recordWatch);
+  const lastNonWatchPath = useSettingsStore((state) => state.lastNonWatchPath);
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
   const playQuery = usePlayUrl(channelId);
@@ -60,8 +61,7 @@ export default function WatchPage() {
   };
 
   const goBack = (): void => {
-    if (window.history.length > 1) router.back();
-    else router.replace('/live');
+    router.push(lastNonWatchPath || '/live');
   };
 
   if (channelQuery.isLoading || !channelQuery.data) {
