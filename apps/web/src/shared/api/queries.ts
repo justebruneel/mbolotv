@@ -1,15 +1,18 @@
 import type {
+  ActiveCountsResponse,
   Category,
   Channel,
   ChannelListResponse,
   ChannelQuery,
+  ChannelViewersResponse,
   CountryOption,
   PlayResponse,
   Programme,
   ProgrammeSearchResponse,
 } from '@mbolo/contracts';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { apiGet } from './client';
+import { useEffect } from 'react';
+import { apiGet, apiPost } from './client';
 
 export function useCategories() {
   return useQuery({
@@ -90,4 +93,34 @@ export function useProgrammeSearch(q: string, limit = 20) {
     enabled: trimmed.length >= 2,
     staleTime: 30_000,
   });
+}
+
+export function useActiveUsers() {
+  return useQuery({
+    queryKey: ['active-users'],
+    queryFn: () => apiGet<ActiveCountsResponse>('/activity/counts'),
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+  });
+}
+
+export function useChannelViewers(channelId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['channel-viewers', channelId],
+    queryFn: () => apiGet<ChannelViewersResponse>(`/activity/viewers/${channelId}`),
+    refetchInterval: 15_000,
+    staleTime: 10_000,
+    enabled,
+  });
+}
+
+export function useActivityHeartbeat(channelId?: string) {
+  useEffect(() => {
+    const send = () => {
+      void apiPost('/activity/heartbeat', { channelId }).catch(() => {});
+    };
+    send();
+    const interval = setInterval(send, 30_000);
+    return () => clearInterval(interval);
+  }, [channelId]);
 }

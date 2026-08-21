@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { ReactNode } from 'react';
 import { QueryProvider } from '../../shared/components/QueryProvider';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
+import { useActiveUsers, useActivityHeartbeat } from '../../shared/api/queries';
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
@@ -17,21 +18,31 @@ const UTILITY_ITEMS = [
   { href: '/contact', label: 'Contact', icon: <Icon.Mail size={17} /> },
 ];
 
-export default function AppLayout({ children }: { children: ReactNode }) {
+function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const active = NAV_ITEMS.find((item) => pathname?.startsWith(item.href))?.href;
+  const { data: activeData } = useActiveUsers();
+  useActivityHeartbeat();
+
+  return (
+    <AppShell
+      brand={<Logo />}
+      navItems={NAV_ITEMS}
+      utilityItems={UTILITY_ITEMS}
+      sidebarActions={<ThemeToggle />}
+      activeHref={active}
+      pathname={pathname}
+      activeUsers={activeData?.global}
+    >
+      {children}
+    </AppShell>
+  );
+}
+
+export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <QueryProvider>
-      <AppShell
-        brand={<Logo />}
-        navItems={NAV_ITEMS}
-        utilityItems={UTILITY_ITEMS}
-        sidebarActions={<ThemeToggle />}
-        activeHref={active}
-        pathname={pathname}
-      >
-        {children}
-      </AppShell>
+      <ShellContent>{children}</ShellContent>
     </QueryProvider>
   );
 }

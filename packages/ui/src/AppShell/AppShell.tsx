@@ -6,9 +6,9 @@ import { ExternalLink, Menu, Download } from 'lucide-react';
 import styles from './AppShell.module.css';
 
 export interface NavItem { href: string; label: string; icon?: ReactNode; }
-export interface AppShellProps { brand: ReactNode; navItems: NavItem[]; utilityItems?: NavItem[]; sidebarActions?: ReactNode; activeHref?: string; pathname?: string; children: ReactNode; }
+export interface AppShellProps { brand: ReactNode; navItems: NavItem[]; utilityItems?: NavItem[]; sidebarActions?: ReactNode; activeHref?: string; pathname?: string; activeUsers?: number; children: ReactNode; }
 
-export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, activeHref, pathname, children }: AppShellProps) {
+export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, activeHref, pathname, activeUsers, children }: AppShellProps) {
   const [open, setOpen] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
   useEffect(() => setOpen(false), [pathname]);
@@ -40,6 +40,12 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
           <Menu size={20} aria-hidden />
         </button>
         <span className={styles.topbarBrand}>{brand}</span>
+        {activeUsers != null && activeUsers > 0 && (
+          <span className={styles.activeBadge}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>{activeUsers}</span>
+          </span>
+        )}
       </header>
 
       <div
@@ -54,7 +60,15 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
         role={open ? 'dialog' : undefined}
         aria-modal={open ? true : undefined}
       >
-        <div className={styles.brand}>{brand}</div>
+        <div className={styles.brand}>
+          {brand}
+          {activeUsers != null && activeUsers > 0 && (
+            <span className={styles.activeBadge}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <span>{activeUsers}</span>
+            </span>
+          )}
+        </div>
 
         <nav className={styles.nav}>
           {navItems.map((item) => {

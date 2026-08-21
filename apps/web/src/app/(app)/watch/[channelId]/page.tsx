@@ -3,7 +3,7 @@
 import { Badge, Button, ChannelRow, EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo } from 'react';
-import { useChannel, useChannelEpg, useInfiniteChannels, usePlayUrl } from '../../../../shared/api/queries';
+import { useChannel, useChannelEpg, useChannelViewers, useInfiniteChannels, usePlayUrl, useActivityHeartbeat } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
 import { useSettingsStore } from '../../../../shared/stores/settings';
 import { buildWatchHref } from '../../../../features/live-tv/utils';
@@ -30,6 +30,8 @@ export default function WatchPage() {
   const playQuery = usePlayUrl(channelId);
   const channelsQuery = useInfiniteChannels({ category, country, q }, PAGE_SIZE);
   const navChannels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const viewersQuery = useChannelViewers(channelId);
+  useActivityHeartbeat(channelId);
   const playUrls = useMemo(() => (playQuery.data?.url ? [playQuery.data.url] : []), [playQuery.data?.url]);
 
   useEffect(() => {
@@ -99,6 +101,12 @@ export default function WatchPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {viewersQuery.data && viewersQuery.data.count > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-muted px-2.5 py-1 text-xs font-bold text-accent">
+              <Icon.Eye size={13} aria-hidden />
+              {viewersQuery.data.count}
+            </span>
+          )}
           <FavoriteToggle channelId={channel.id} />
           <div className="hidden sm:flex items-center gap-1 rounded-xl border border-border bg-surface p-1">
             <Button variant="ghost" size="small" onClick={() => navigate('prev')} className="!rounded-lg">

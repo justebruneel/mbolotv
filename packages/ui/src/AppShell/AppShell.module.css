@@ -46,6 +46,7 @@
 .topbarBrand {
   display: inline-flex;
   align-items: center;
+  gap: 10px;
 }
 
 /* ---------- Overlay (mobile) ---------- */
@@ -85,10 +86,26 @@
 .brand {
   display: flex;
   align-items: center;
+  gap: 10px;
   flex-shrink: 0;
   padding-bottom: 24px;
   margin-bottom: 4px;
   border-bottom: 1px solid var(--mbolo-border);
+}
+
+/* ---------- Active users badge ---------- */
+.activeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: oklch(0.25 0.08 145 / 0.4);
+  color: oklch(0.75 0.15 145);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  line-height: 1;
 }
 .nav {
   display: flex;

@@ -85,3 +85,11 @@ export const alertSchema = z.object({ severity: z.enum(['warning', 'critical']),
 export type Alert = z.infer<typeof alertSchema>;
 export const overviewSchema = z.object({ sourcesByStatus: z.record(z.number()), channelCount: z.number(), variantCount: z.number(), activeImports: z.number(), liveMatches: z.number(), alerts: z.array(alertSchema), recentAudit: z.array(auditEntrySchema) });
 export type Overview = z.infer<typeof overviewSchema>;
+
+export const activityHeartbeatSchema = z.object({ channelId: z.string().optional() });
+export type ActivityHeartbeatInput = z.infer<typeof activityHeartbeatSchema>;
+export const activeCountsResponseSchema = z.object({ global: z.number() });
+export type ActiveCountsResponse = z.infer<typeof activeCountsResponseSchema>;
+export const channelViewersResponseSchema = z.object({ count: z.number() });
+export type ChannelViewersResponse = z.infer<typeof channelViewersResponseSchema>;
+
