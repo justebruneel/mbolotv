@@ -2,7 +2,7 @@
 
 import type { Overview } from '@mbolo/contracts';
 import { useEffect, useState } from 'react';
-import { ownerApi } from '../../../features/owner/api/owner-api';
+import { ownerApi } from '../../../../features/owner/api/owner-api';
 
 export default function ControlOverviewPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
