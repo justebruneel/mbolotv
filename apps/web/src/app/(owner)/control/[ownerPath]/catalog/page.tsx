@@ -1,10 +1,40 @@
 'use client';
 
 import type { OwnerCatalog, OwnerCategory, OwnerChannel } from '@mbolo/contracts';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ownerApi } from '../../../../../features/owner/api/owner-api';
 
 type Tests = Record<string, string>;
+
+type OrderInfo = { siblings: OwnerCategory[]; index: number };
+
+function flattenCategories(nodes: OwnerCategory[], acc: OwnerCategory[] = []): OwnerCategory[] {
+  for (const node of nodes) { acc.push(node); flattenCategories(node.children ?? [], acc); }
+  return acc;
+}
+
+function buildOrderMap(nodes: OwnerCategory[]): Map<string, OrderInfo> {
+  const map = new Map<string, OrderInfo>();
+  const walk = (list: OwnerCategory[]): void => {
+    list.forEach((node, index) => { map.set(node.id, { siblings: list, index }); walk(node.children ?? []); });
+  };
+  walk(nodes);
+  return map;
+}
+
+function buildChildrenByParent(nodes: OwnerCategory[]): Map<string | null, OwnerCategory[]> {
+  const map = new Map<string | null, OwnerCategory[]>();
+  const walk = (list: OwnerCategory[]): void => {
+    for (const node of list) {
+      const bucket = map.get(node.parentId) ?? [];
+      bucket.push(node);
+      map.set(node.parentId, bucket);
+      walk(node.children ?? []);
+    }
+  };
+  walk(nodes);
+  return map;
+}
 
 function ChannelRow({ channel, onToggle, onTest, tests, busy }: { channel: OwnerChannel; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null }) {
   const test = tests[channel.id];
@@ -23,15 +53,54 @@ function ChannelRow({ channel, onToggle, onTest, tests, busy }: { channel: Owner
   );
 }
 
-function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onTest, tests, busy }: {
+function ParentPicker({ allFlat, childrenByParent, nodeId, currentParentId, onMove }: { allFlat: OwnerCategory[]; childrenByParent: Map<string | null, OwnerCategory[]>; nodeId: string; currentParentId: string | null; onMove: (parentId: string | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const exclude = useMemo(() => {
+    const set = new Set<string>([nodeId]);
+    const stack = [nodeId];
+    while (stack.length) { const current = stack.pop() as string; for (const child of childrenByParent.get(current) ?? []) { set.add(child.id); stack.push(child.id); } }
+    return set;
+  }, [nodeId, childrenByParent]);
+  const options = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return allFlat.filter((category) => !exclude.has(category.id) && (!q || category.name.toLowerCase().includes(q))).slice(0, 20);
+  }, [query, allFlat, exclude]);
+  if (!open) return <button type="button" className="btn" onClick={() => setOpen(true)}>Déplacer…</button>;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        value={query}
+        autoFocus
+        placeholder="Dossier parent…"
+        onChange={(event) => setQuery(event.target.value)}
+        className="min-w-[180px] flex-1 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm"
+      />
+      <div className="flex max-h-40 w-full flex-wrap gap-1 overflow-y-auto">
+        <button type="button" className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium hover:bg-surface-3" onClick={() => { onMove(null); setOpen(false); setQuery(''); }}>Racine</button>
+        {options.map((option) => (
+          <button key={option.id} type="button" className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium hover:bg-surface-3" onClick={() => { onMove(option.id); setOpen(false); setQuery(''); }}>{option.name}{option.id === currentParentId ? ' (actuel)' : ''}</button>
+        ))}
+      </div>
+      <button type="button" className="btn" onClick={() => { setOpen(false); setQuery(''); }}>Annuler</button>
+    </div>
+  );
+}
+
+function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onTest, onReorder, onMoveParent, tests, busy, orderMap, allFlat, childrenByParent }: {
   node: OwnerCategory;
   depth: number;
   onUpdate: (id: string, patch: { name?: string; isVisible?: boolean }) => void;
   onCreateSub: (parentId: string, name: string) => void;
   onToggleChannel: (id: string, visible: boolean) => void;
   onTest: (id: string) => void;
+  onReorder: (id: string, sortOrder: number) => void;
+  onMoveParent: (id: string, parentId: string | null) => void;
   tests: Tests;
   busy: string | null;
+  orderMap: Map<string, OrderInfo>;
+  allFlat: OwnerCategory[];
+  childrenByParent: Map<string | null, OwnerCategory[]>;
 }) {
   const [open, setOpen] = useState(depth === 0);
   const [editing, setEditing] = useState(false);
@@ -39,6 +108,9 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
   const [subName, setSubName] = useState('');
   const childCount = (node.children ?? []).length;
   const dimmed = !node.effectiveVisible;
+  const order = orderMap.get(node.id);
+  const canUp = order ? order.index > 0 : false;
+  const canDown = order ? order.index < order.siblings.length - 1 : false;
 
   return (
     <section className="card overflow-hidden">
@@ -56,10 +128,13 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
           <button type="button" onClick={() => setEditing(true)} className={`flex-1 truncate text-left text-sm font-semibold ${dimmed ? 'text-muted line-through' : ''}`}>{node.name}</button>
         )}
         <span className="text-xs text-muted">{node.channelCount} chaîne{node.channelCount > 1 ? 's' : ''}{childCount > 0 ? ` · ${childCount} sous-dossier${childCount > 1 ? 's' : ''}` : ''}</span>
+        <button type="button" className="btn" disabled={!canUp || busy === node.id} onClick={() => order && onReorder(node.id, order.index - 1)} aria-label="Monter">↑</button>
+        <button type="button" className="btn" disabled={!canDown || busy === node.id} onClick={() => order && onReorder(node.id, order.index + 1)} aria-label="Descendre">↓</button>
         <label className="flex items-center gap-2 text-sm" title={dimmed ? 'Masqué (un dossier parent est masqué)' : 'Visible'}>
           <input type="checkbox" checked={node.isVisible} onChange={(event) => onUpdate(node.id, { isVisible: event.target.checked })} /> Publié
         </label>
         <button type="button" className="btn btn-danger" onClick={() => setEditing(true)}>Renommer</button>
+        <ParentPicker allFlat={allFlat} childrenByParent={childrenByParent} nodeId={node.id} currentParentId={node.parentId} onMove={(parentId) => onMoveParent(node.id, parentId)} />
       </div>
 
       {open && (
@@ -86,8 +161,7 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
           </div>
 
           {(node.children ?? []).map((child) => (
-            <CategoryNode key={child.id} node={child} depth={depth + 1} onUpdate={onUpdate} onCreateSub={onCreateSub} /* sub-subfolders reuse root create via node id */
-              onToggleChannel={onToggleChannel} onTest={onTest} tests={tests} busy={busy} />
+            <CategoryNode key={child.id} node={child} depth={depth + 1} onUpdate={onUpdate} onCreateSub={onCreateSub} onToggleChannel={onToggleChannel} onTest={onTest} onReorder={onReorder} onMoveParent={onMoveParent} tests={tests} busy={busy} orderMap={orderMap} allFlat={allFlat} childrenByParent={childrenByParent} />
           ))}
         </div>
       )}
@@ -102,12 +176,16 @@ export default function CatalogControlPage() {
   const [rootName, setRootName] = useState('');
   const [tests, setTests] = useState<Tests>({});
 
+  const orderMap = useMemo(() => (catalog ? buildOrderMap(catalog.categories) : new Map<string, OrderInfo>()), [catalog]);
+  const allFlat = useMemo(() => (catalog ? flattenCategories(catalog.categories) : []), [catalog]);
+  const childrenByParent = useMemo(() => (catalog ? buildChildrenByParent(catalog.categories) : new Map<string | null, OwnerCategory[]>()), [catalog]);
+
   useEffect(() => { void reload(); }, []);
 
   async function reload(): Promise<void> {
     try { setCatalog(await ownerApi.catalog()); setError(null); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Connexion propriétaire requise.'); }
   }
-  async function updateCategory(id: string, patch: { name?: string; isVisible?: boolean }): Promise<void> {
+  async function updateCategory(id: string, patch: { name?: string; isVisible?: boolean; sortOrder?: number; parentId?: string | null }): Promise<void> {
     setBusy(id); try { setCatalog(await ownerApi.categories.update(id, patch)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Modification impossible.'); } finally { setBusy(null); }
   }
   async function createFolder(parentId: string | null, name: string): Promise<void> {
@@ -132,7 +210,7 @@ export default function CatalogControlPage() {
       <header>
         <p className="text-xs font-semibold uppercase tracking-widest text-accent">Publication</p>
         <h1 className="mt-2 text-2xl font-bold">Catalogue public</h1>
-        <p className="mt-1 text-sm text-muted">Renommez les dossiers, masquez ce qui ne doit pas sortir et testez les chaînes avant publication. Un dossier masqué masque aussi ses sous-dossiers et ses chaînes.</p>
+        <p className="mt-1 text-sm text-muted">Renommez les dossiers, réorganisez-les (↑/↓), déplacez-les dans un autre dossier, masquez ce qui ne doit pas sortir et testez les chaînes avant publication. Un dossier masqué masque aussi ses sous-dossiers et ses chaînes.</p>
       </header>
 
       {error && <p className="card border-danger/30 bg-danger-muted p-3 text-sm text-danger">{error}</p>}
@@ -157,8 +235,13 @@ export default function CatalogControlPage() {
             onCreateSub={(parentId, name) => void createFolder(parentId, name)}
             onToggleChannel={updateChannel}
             onTest={testChannel}
+            onReorder={(id, sortOrder) => void updateCategory(id, { sortOrder })}
+            onMoveParent={(id, parentId) => void updateCategory(id, { parentId })}
             tests={tests}
             busy={busy}
+            orderMap={orderMap}
+            allFlat={allFlat}
+            childrenByParent={childrenByParent}
           />
         ))}
         {catalog.uncategorized.length > 0 && (

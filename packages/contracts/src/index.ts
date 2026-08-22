@@ -118,7 +118,7 @@ export type ActiveCountsResponse = z.infer<typeof activeCountsResponseSchema>;
 export const channelViewersResponseSchema = z.object({ count: z.number() });
 export type ChannelViewersResponse = z.infer<typeof channelViewersResponseSchema>;
 
-export const ownerCategoryUpdateSchema = z.object({ name: z.string().min(1).max(120).optional(), isVisible: z.boolean().optional(), parentId: z.string().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export const ownerCategoryUpdateSchema = z.object({ name: z.string().min(1).max(120).optional(), isVisible: z.boolean().optional(), parentId: z.string().nullable().optional(), sortOrder: z.number().int().min(0).optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
 export type OwnerCategoryUpdateInput = z.infer<typeof ownerCategoryUpdateSchema>;
 export const ownerCategoryCreateSchema = z.object({ name: z.string().min(1).max(120), parentId: z.string().nullable().optional() });
 export type OwnerCategoryCreateInput = z.infer<typeof ownerCategoryCreateSchema>;
@@ -134,6 +134,7 @@ export interface OwnerCategory {
   isVisible: boolean;
   effectiveVisible: boolean;
   channelCount: number;
+  sortOrder: number;
   channels: OwnerChannel[];
   children: OwnerCategory[];
 }
@@ -145,6 +146,7 @@ export const ownerCategorySchema: z.ZodType<OwnerCategory> = z.object({
   isVisible: z.boolean(),
   effectiveVisible: z.boolean(),
   channelCount: z.number(),
+  sortOrder: z.number(),
   channels: z.array(ownerChannelSchema),
   children: z.array(z.lazy(() => ownerCategorySchema)),
 });

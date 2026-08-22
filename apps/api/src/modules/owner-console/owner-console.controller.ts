@@ -86,7 +86,7 @@ export class OwnerConsoleController {
 
     const visitingNodes = new Set<string>();
     const serializeNode = (node: OwnerCategoryRow): OwnerCategory => {
-      if (visitingNodes.has(node.id)) return { id: node.id, slug: node.slug, name: node.name, parentId: node.parentId, isVisible: node.isVisible, effectiveVisible: effective.get(node.id) ?? node.isVisible, channelCount: 0, channels: [], children: [] };
+      if (visitingNodes.has(node.id)) return { id: node.id, slug: node.slug, name: node.name, parentId: node.parentId, isVisible: node.isVisible, effectiveVisible: effective.get(node.id) ?? node.isVisible, channelCount: 0, sortOrder: node.sortOrder, channels: [], children: [] };
       visitingNodes.add(node.id);
       const children = (childrenByParent.get(node.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((child) => serializeNode(child));
       visitingNodes.delete(node.id);
@@ -99,6 +99,7 @@ export class OwnerConsoleController {
         isVisible: node.isVisible,
         effectiveVisible: effective.get(node.id) ?? node.isVisible,
         channelCount: nodeChannels.length,
+        sortOrder: node.sortOrder,
         channels: nodeChannels.map((channel) => this.serializeChannel(channel, variantsByChannel.get(channel.id) ?? [])),
         children,
       };
@@ -130,7 +131,35 @@ export class OwnerConsoleController {
     const category = await this.prisma.category.findFirst({ where: { id, OR: [ { channels: { some: { variants: { some: { source: { ownerId } } } } } }, { NOT: { channels: { some: {} } } } ] } });
     if (!category) throw new Error('Catégorie introuvable');
     if (input.parentId && input.parentId === id) throw new Error('Un dossier ne peut pas être son propre parent');
-    await this.prisma.category.update({ where: { id }, data: { ...(input.name === undefined ? {} : { name: input.name.trim() }), ...(input.isVisible === undefined ? {} : { isVisible: input.isVisible }), ...(input.parentId === undefined ? {} : { parentId: input.parentId }) } });
+    if (input.parentId) {
+      let cursor: string | null = input.parentId;
+      while (cursor) {
+        if (cursor === id) throw new Error('Un dossier ne peut pas être déplacé dans l’un de ses propres sous-dossiers');
+        const parent = await this.prisma.category.findUnique({ where: { id: cursor }, select: { parentId: true } });
+        cursor = parent?.parentId ?? null;
+      }
+    }
+
+    const targetParent = input.parentId !== undefined ? input.parentId : category.parentId;
+    const ownData: Record<string, unknown> = {};
+    if (input.name !== undefined) ownData.name = input.name.trim();
+    if (input.isVisible !== undefined) ownData.isVisible = input.isVisible;
+    if (input.parentId !== undefined) ownData.parentId = input.parentId;
+
+    if (input.sortOrder !== undefined) {
+      const siblings = await this.prisma.category.findMany({ where: { parentId: targetParent ?? null, NOT: { id } }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] });
+      const ordered = siblings.map((sibling) => sibling.id);
+      const clamped = Math.max(0, Math.min(input.sortOrder, ordered.length));
+      ordered.splice(clamped, 0, id);
+      await this.prisma.$transaction(ordered.map((categoryId, index) => this.prisma.category.update({ where: { id: categoryId }, data: { sortOrder: index + 1, ...(categoryId === id ? ownData : {}) } })));
+    } else {
+      if (Object.keys(ownData).length > 0) await this.prisma.category.update({ where: { id }, data: ownData });
+      if (input.parentId !== undefined && input.parentId !== category.parentId) {
+        const max = await this.prisma.category.aggregate({ where: { parentId: input.parentId }, _max: { sortOrder: true } });
+        await this.prisma.category.update({ where: { id }, data: { sortOrder: (max._max.sortOrder ?? 0) + 1 } });
+      }
+    }
+
     await this.audit.log(ownerId, 'catalog.category_update', 'category', id, input);
     return this.catalog(_request);
   }
