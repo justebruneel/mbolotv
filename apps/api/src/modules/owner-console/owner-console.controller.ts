@@ -77,10 +77,16 @@ export class OwnerConsoleController {
       return result;
     };
     categories.forEach((category) => computeEffective(category.id));
+    const childrenByParent = new Map<string | null, OwnerCategoryRow[]>();
+    for (const category of categories) { const bucket = childrenByParent.get(category.parentId) ?? []; bucket.push(category); childrenByParent.set(category.parentId, bucket); }
     const roots = categories.filter((category) => category.parentId == null || !byId.has(category.parentId));
 
+    const visitingNodes = new Set<string>();
     const serializeNode = (node: OwnerCategoryRow): OwnerCategory => {
-      const children = categories.filter((candidate) => candidate.parentId === node.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((child) => serializeNode(child));
+      if (visitingNodes.has(node.id)) return { id: node.id, slug: node.slug, name: node.name, parentId: node.parentId, isVisible: node.isVisible, effectiveVisible: effective.get(node.id) ?? node.isVisible, channelCount: 0, channels: [], children: [] };
+      visitingNodes.add(node.id);
+      const children = (childrenByParent.get(node.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((child) => serializeNode(child));
+      visitingNodes.delete(node.id);
       const nodeChannels = channelsByCategory.get(node.id) ?? [];
       return {
         id: node.id,

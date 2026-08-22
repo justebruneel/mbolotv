@@ -36,8 +36,14 @@ export class CategoriesService {
     const counts = await this.prisma.channel.groupBy({ by: ['categoryId'], where: { isVisible: true, variants: { some: { isActive: true } }, categoryId: { not: null } }, _count: { _all: true } });
     for (const row of counts as unknown as Array<{ categoryId: string; _count: { _all: number } }>) leaf.set(row.categoryId, row._count._all);
 
+    const childrenByParent = new Map<string | null, CategoryRow[]>();
+    for (const category of categories) { const bucket = childrenByParent.get(category.parentId) ?? []; bucket.push(category); childrenByParent.set(category.parentId, bucket); }
+    const buildVisiting = new Set<string>();
     const build = (category: CategoryRow): Category => {
-      const rawChildren = categories.filter((child) => child.parentId === category.id && effective.get(child.id)).map((child) => build(child));
+      if (buildVisiting.has(category.id)) return { id: category.id, slug: category.slug, name: category.name, parentId: category.parentId, isVisible: category.isVisible, channelCount: 0, children: [] };
+      buildVisiting.add(category.id);
+      const rawChildren = (childrenByParent.get(category.id) ?? []).filter((child) => effective.get(child.id)).map((child) => build(child));
+      buildVisiting.delete(category.id);
       const children = rawChildren.filter((child) => (child.channelCount ?? 0) > 0);
       const channelCount = (leaf.get(category.id) ?? 0) + children.reduce((sum, child) => sum + (child.channelCount ?? 0), 0);
       return { id: category.id, slug: category.slug, name: category.name, parentId: category.parentId, isVisible: category.isVisible, channelCount, children };
