@@ -18,7 +18,7 @@ export function OwnerLoginForm() {
     try {
       await ownerApi.auth.login({ email, password });
       const next = new URLSearchParams(window.location.search).get('next') ?? '';
-      router.replace(next.startsWith('/control') ? next : '/control');
+      router.replace(next.startsWith('/control') ? next : '/control/me');
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Échec de connexion.');

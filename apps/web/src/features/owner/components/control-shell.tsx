@@ -8,8 +8,9 @@ import { IconAudit, IconImports, IconKey, IconLayers, IconOverview, IconSources,
 export function ControlShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
   const pathSegments = pathname.split('/');
-  const isOwnerConsole = !pathname.startsWith('/control');
-  const base = isOwnerConsole ? `/${pathSegments[1] ?? ''}` : '/control';
+  const ADMIN_SECTIONS = ['sources', 'imports', 'audit'];
+  const isOwnerConsole = pathSegments[1] === 'control' && pathSegments[2] !== undefined && !ADMIN_SECTIONS.includes(pathSegments[2]);
+  const base = isOwnerConsole ? `/control/${pathSegments[2]}` : '/control';
 
   const NAV = [
     { href: base, label: 'Vue d’ensemble', icon: <IconOverview className="h-[18px] w-[18px]" /> },
