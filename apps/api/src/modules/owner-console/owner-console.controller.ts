@@ -45,12 +45,20 @@ export class OwnerConsoleController {
   async catalog(@Req() request: FastifyRequest): Promise<OwnerCatalog> {
     const ownerId = getOwnerContext(request).userId;
     const channelScope = { variants: { some: { source: { ownerId } } } } as const;
-    const categories = await this.prisma.category.findMany({
-      where: { channels: { some: channelScope } },
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      include: { channels: { where: channelScope, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } } } },
-    }) as unknown as OwnerCategoryRow[];
-    const uncategorized = await this.prisma.channel.findMany({ where: { categoryId: null, ...channelScope }, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } } }) as unknown as OwnerChannelRow[];
+    const [categories, channels] = await Promise.all([
+      this.prisma.category.findMany({
+        where: { channels: { some: channelScope } },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        select: { id: true, slug: true, name: true, parentId: true, isVisible: true, sortOrder: true },
+      }) as unknown as OwnerCategoryRow[],
+      this.prisma.channel.findMany({
+        where: channelScope,
+        orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }],
+        include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } },
+      }) as unknown as OwnerChannelRow[],
+    ]);
+    const channelsByCategory = new Map<string | null, OwnerChannelRow[]>();
+    for (const channel of channels) { const bucket = channelsByCategory.get(channel.categoryId) ?? []; bucket.push(channel); channelsByCategory.set(channel.categoryId, bucket); }
 
     const byId = new Map(categories.map((category) => [category.id, category] as const));
     const effective = new Map<string, boolean>();
@@ -73,6 +81,7 @@ export class OwnerConsoleController {
 
     const serializeNode = (node: OwnerCategoryRow): OwnerCategory => {
       const children = categories.filter((candidate) => candidate.parentId === node.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((child) => serializeNode(child));
+      const nodeChannels = channelsByCategory.get(node.id) ?? [];
       return {
         id: node.id,
         slug: node.slug,
@@ -80,15 +89,15 @@ export class OwnerConsoleController {
         parentId: node.parentId,
         isVisible: node.isVisible,
         effectiveVisible: effective.get(node.id) ?? node.isVisible,
-        channelCount: node.channels.length,
-        channels: node.channels.map((channel) => this.serializeChannel(channel)),
+        channelCount: nodeChannels.length,
+        channels: nodeChannels.map((channel) => this.serializeChannel(channel)),
         children,
       };
     };
 
     return {
       categories: roots.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((node) => serializeNode(node)),
-      uncategorized: uncategorized.map((channel) => this.serializeChannel(channel)),
+      uncategorized: (channelsByCategory.get(null) ?? []).map((channel) => this.serializeChannel(channel)),
     };
   }
 

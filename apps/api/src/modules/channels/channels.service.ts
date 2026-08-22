@@ -14,9 +14,10 @@ export class ChannelsService {
   private readonly publicApiUrl: string; private readonly storageDriver: string; private readonly logoUrlTtlSeconds: number;
   constructor(private readonly prisma: PrismaService, private readonly streaming: StreamingService, private readonly storage: StorageService, config: ConfigService) { this.publicApiUrl = (config.get<string>('PUBLIC_API_URL') ?? config.get<string>('API_URL') ?? 'http://localhost:4000').replace(/\/+$/, ''); const configuredDriver = config.get<string>('STORAGE_DRIVER', 'local').trim().toLowerCase(); this.storageDriver = configuredDriver === 's3' || configuredDriver === 'cloudinary' || Boolean(config.get<string>('S3_ENDPOINT') && config.get<string>('S3_BUCKET')) ? 's3' : 'local'; this.logoUrlTtlSeconds = Math.min(Math.max(config.get<number>('S3_LOGO_URL_TTL_SECONDS', 300), 60), 3600); }
   async list(query: ChannelQuery): Promise<ChannelListResponse> {
-    const visibleIds = await this.effectiveVisibleCategoryIds();
-    const visibleArray = [...visibleIds];
-    const categoryFilter = query.category ? { category: { slug: query.category, id: { in: visibleArray } } } : { OR: [{ categoryId: null }, { categoryId: { in: visibleArray } }] };
+    const hiddenIds = await this.hiddenCategoryIds();
+    const categoryFilter = query.category
+      ? { category: { slug: query.category, ...(hiddenIds.size ? { id: { notIn: [...hiddenIds] } } : {}) } }
+      : hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
     const searchFilter = query.q ? { OR: [{ canonicalName: { contains: query.q, mode: 'insensitive' } }, { name: { contains: query.q, mode: 'insensitive' } }, { country: { contains: query.q, mode: 'insensitive' } }] } : {};
     const where: Record<string, unknown> = { isVisible: true, AND: [categoryFilter, searchFilter], ...(query.country ? { country: query.country } : {}), variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } };
     const [channels, total] = await Promise.all([this.prisma.channel.findMany({ where, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], take: query.limit ?? 48, skip: query.offset ?? 0 }), this.prisma.channel.count({ where })]);
@@ -24,30 +25,34 @@ export class ChannelsService {
     return { items, total, hasMore: (query.offset ?? 0) + items.length < total };
   }
   async countries(): Promise<CountryOption[]> {
-    const visibleIds = await this.effectiveVisibleCategoryIds();
-    const rows = await this.prisma.channel.groupBy({ by: ['country'], where: { isVisible: true, OR: [{ categoryId: null }, { categoryId: { in: [...visibleIds] } }], country: { not: null }, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } }, _count: { country: true } });
+    const hiddenIds = await this.hiddenCategoryIds();
+    const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
+    const rows = await this.prisma.channel.groupBy({ by: ['country'], where: { isVisible: true, ...categoryClause, country: { not: null }, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } }, _count: { country: true } });
     return rows.filter((row: CountryRow) => row.country !== null).map((row: CountryRow) => ({ slug: row.country as string, name: row.country as string, count: row._count.country })).sort((a: CountryOption, b: CountryOption) => b.count - a.count);
   }
   async findOne(id: string): Promise<Channel> {
-    const visibleIds = await this.effectiveVisibleCategoryIds();
-    const channel = await this.prisma.channel.findFirst({ where: { id, isVisible: true, OR: [{ categoryId: null }, { categoryId: { in: [...visibleIds] } }], variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } } });
+    const hiddenIds = await this.hiddenCategoryIds();
+    const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
+    const channel = await this.prisma.channel.findFirst({ where: { id, isVisible: true, ...categoryClause, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } } });
     if (!channel) throw new NotFoundException('Channel not found');
     return this.serialize(channel, (await this.findNowPlaying([id])).get(id) ?? null, (await this.findHealthStatus([id])).get(id) ?? null);
   }
   async epg(id: string): Promise<Programme[]> {
-    const visibleIds = await this.effectiveVisibleCategoryIds();
-    const channel = await this.prisma.channel.findFirst({ where: { id, isVisible: true, OR: [{ categoryId: null }, { categoryId: { in: [...visibleIds] } }] } });
+    const hiddenIds = await this.hiddenCategoryIds();
+    const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
+    const channel = await this.prisma.channel.findFirst({ where: { id, isVisible: true, ...categoryClause } });
     if (!channel) throw new NotFoundException('Channel not found');
     const from = new Date(Date.now() - 3 * 3_600_000); const to = new Date(Date.now() + 12 * 3_600_000);
     const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: id, startsAt: { lte: to }, endsAt: { gte: from } }, orderBy: { startsAt: 'asc' } });
     return programmes.map((programme: ChannelProgramme) => ({ id: programme.id, channelId: programme.channelId, startsAt: programme.startsAt.toISOString(), endsAt: programme.endsAt.toISOString(), title: programme.title, description: programme.description, imageUrl: programme.imageUrl }));
   }
   async play(id: string, deviceId: string | undefined): Promise<PlayResponse> {
-    const visibleIds = await this.effectiveVisibleCategoryIds();
-    if (!(await this.prisma.channel.findFirst({ where: { id, isVisible: true, OR: [{ categoryId: null }, { categoryId: { in: [...visibleIds] } }] } }))) throw new NotFoundException('Channel not found');
+    const hiddenIds = await this.hiddenCategoryIds();
+    const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
+    if (!(await this.prisma.channel.findFirst({ where: { id, isVisible: true, ...categoryClause } }))) throw new NotFoundException('Channel not found');
     return this.streaming.createPlay(id, deviceId);
   }
-  private async effectiveVisibleCategoryIds(): Promise<Set<string>> {
+  private async hiddenCategoryIds(): Promise<Set<string>> {
     const cats = await this.prisma.category.findMany({ select: { id: true, parentId: true, isVisible: true } });
     const byId = new Map(cats.map((category) => [category.id, category] as const));
     const effective = new Map<string, boolean>();
@@ -66,7 +71,7 @@ export class ChannelsService {
       return result;
     };
     cats.forEach((category) => compute(category.id));
-    return new Set(cats.filter((category) => effective.get(category.id)).map((category) => category.id));
+    return new Set(cats.filter((category) => !effective.get(category.id)).map((category) => category.id));
   }
   private async findNowPlaying(channelIds: string[]): Promise<Map<string, NowPlaying>> { if (channelIds.length === 0) return new Map(); const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: { in: channelIds }, startsAt: { lte: new Date() }, endsAt: { gt: new Date() } } }); const map = new Map<string, NowPlaying>(); for (const programme of programmes) if (!map.has(programme.channelId)) map.set(programme.channelId, { startsAt: programme.startsAt.toISOString(), endsAt: programme.endsAt.toISOString(), title: programme.title, imageUrl: programme.imageUrl ?? null }); return map; }
   private async findHealthStatus(channelIds: string[]): Promise<Map<string, 'OK' | 'DOWN'>> { if (channelIds.length === 0) return new Map(); const variants = await this.prisma.streamVariant.findMany({ where: { channelId: { in: channelIds }, isActive: true }, select: { channelId: true, healthStatus: true } }); const map = new Map<string, 'OK' | 'DOWN'>(); for (const variant of variants) if (variant.healthStatus !== null && (map.get(variant.channelId) === undefined || variant.healthStatus === 'OK')) map.set(variant.channelId, variant.healthStatus as 'OK' | 'DOWN'); return map; }
