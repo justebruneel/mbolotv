@@ -25,18 +25,18 @@ export class StreamingService {
     this.aliasTtlMs = Number(this.config.get('STREAM_ALIAS_TTL_HOURS', 6)) * 3_600_000;
     this.extraHostnames = (this.config.get<string>('STREAM_ALLOWED_HOSTS', '') ?? '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
   }
-  async createPlay(channelId: string): Promise<PlayResponse> {
+  async createPlay(channelId: string, deviceId: string | undefined): Promise<PlayResponse> {
     const variants = await this.prisma.streamVariant.findMany({ where: { channelId, isActive: true, source: { status: { not: 'DISABLED' } } }, orderBy: [{ healthScore: 'desc' }, { source: { priority: 'asc' } }], include: { source: true } });
     if (variants.length === 0) throw new NotFoundException('Aucun flux disponible pour cette chaîne');
     const variant = variants.find((item) => item.healthStatus !== 'DOWN') ?? variants[0];
     void this.health.checkVariantIfNeeded(variant).catch(() => undefined);
     void this.prisma.streamVariant.update({ where: { id: variant.id }, data: { lastPlayedAt: new Date() } }).catch(() => undefined);
-    return this.openSession(channelId, variant);
+    return this.openSession(channelId, variant, deviceId);
   }
-  async openSession(channelId: string, variant: { id: string; sourceId: string; encryptedLocator: Uint8Array }): Promise<PlayResponse> {
+  async openSession(channelId: string, variant: { id: string; sourceId: string; encryptedLocator: Uint8Array }, deviceId: string | undefined): Promise<PlayResponse> {
     let providerUrl: string;
     try { providerUrl = (await assertSafeUrl(this.crypto.decrypt(variant.encryptedLocator))).toString(); } catch { throw new NotFoundException('Flux indisponible pour cette chaîne'); }
-    const session = await this.store.create({ channelId, variantId: variant.id, sourceId: variant.sourceId, providerHostname: new URL(providerUrl).hostname.toLowerCase() }, this.idleTtlMs, this.absoluteTtlMs);
+    const session = await this.store.create({ channelId, variantId: variant.id, sourceId: variant.sourceId, providerHostname: new URL(providerUrl).hostname.toLowerCase(), deviceId: deviceId ?? '' }, this.idleTtlMs, this.absoluteTtlMs);
     await this.store.addAlias(session.id, 'master', providerUrl, this.aliasTtlMs);
     // L’audit ne doit pas retarder l’émission de l’URL HLS. Une panne Neon ne doit
     // jamais transformer le lancement du player en écran de chargement.

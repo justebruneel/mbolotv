@@ -1,6 +1,7 @@
-import { CanActivate, ExecutionContext, HttpException, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, HttpException, Injectable } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { RateLimiterService } from '../../common/rate-limit/rate-limiter.service';
+import { AccessService } from '../access/access.service';
 import { StreamContext, StreamingService } from './streaming.service';
 
 const SESSION_LIMIT = 900;
@@ -10,11 +11,12 @@ const IP_WINDOW_MS = 60_000;
 
 @Injectable()
 export class StreamSessionGuard implements CanActivate {
-  constructor(private readonly streamingService: StreamingService, private readonly rateLimiter: RateLimiterService) {}
+  constructor(private readonly streamingService: StreamingService, private readonly rateLimiter: RateLimiterService, private readonly access: AccessService) {}
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<FastifyRequest & { streamContext?: StreamContext }>();
     const sessionId = (request.params as { sessionId: string }).sessionId;
     const session = await this.streamingService.assertSession(sessionId);
+    if (!(await this.access.isGrantActive(session.deviceId || undefined))) throw new ForbiddenException('Un code d’accès actif est requis');
     this.assertRateLimited(context, `stream:session:${sessionId}`, SESSION_LIMIT, SESSION_WINDOW_MS);
     this.assertRateLimited(context, `stream:ip:${request.ip}`, IP_LIMIT, IP_WINDOW_MS);
     request.streamContext = { session, sessionId };

@@ -32,3 +32,4 @@ export const IconSearch = wrap(Icon.Search);
 export const IconLogout = wrap(Icon.LogOut);
 export const IconKey = wrap(Icon.Key);
 export const IconPlug = wrap(Icon.Plug);
+export const IconUsers = wrap(Icon.Users);

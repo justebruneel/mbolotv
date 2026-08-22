@@ -15,13 +15,33 @@ export class AccessService {
     this.whatsappUrl = config.get<string>('PUBLIC_ACCESS_WHATSAPP_URL', 'https://wa.me/qr/CPB7IL3GHAGIK1');
   }
 
-  status(deviceId: string | undefined): Promise<AccessStatus> {
-    return this.findGrant(deviceId).then((grant) => ({
+  async status(deviceId: string | undefined): Promise<AccessStatus> {
+    const grant = await this.findGrant(deviceId);
+    return {
       active: Boolean(grant),
       expiresAt: grant?.expiresAt.toISOString() ?? null,
       kind: grant?.accessCode.kind === 'PROMO' ? 'PROMO' : grant ? 'STANDARD' : null,
-      whatsappUrl: this.whatsappUrl,
-    }));
+      whatsappUrl: await this.resolveWhatsappUrl(),
+    };
+  }
+
+  async isGrantActive(deviceId: string | undefined): Promise<boolean> {
+    if (!deviceId) return false;
+    const grant = await this.prisma.deviceGrant.findFirst({
+      where: { deviceHash: this.hash(deviceId), expiresAt: { gt: new Date() }, accessCode: { active: true, revokedAt: null } },
+      select: { id: true },
+    });
+    return Boolean(grant);
+  }
+
+  private async resolveWhatsappUrl(): Promise<string> {
+    const owner = await this.prisma.user.findFirst({ where: { role: 'OWNER', whatsappContact: { not: null } }, select: { whatsappContact: true } });
+    if (!owner?.whatsappContact) return this.whatsappUrl;
+    const contact = owner.whatsappContact.trim();
+    if (/^https?:\/\//i.test(contact)) return contact;
+    const digits = contact.replace(/[^\d]/g, '');
+    if (digits.length >= 8) return `https://wa.me/${digits}`;
+    return this.whatsappUrl;
   }
 
   async redeem(code: string, deviceId: string, userAgent: string | undefined, ip: string): Promise<AccessStatus> {

@@ -9,6 +9,7 @@ export interface StreamSession {
   variantId: string;
   sourceId: string;
   providerHostname: string;
+  deviceId: string;
   discoveredHosts: string[];
   createdAt: number;
   idleExpiresAt: number;

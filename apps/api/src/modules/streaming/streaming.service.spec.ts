@@ -27,7 +27,7 @@ describe('StreamingService', () => {
   it('crée une session gateway sans URL fournisseur', async () => {
     prisma.streamVariant.findMany.mockResolvedValue([variant]);
     crypto.decrypt.mockReturnValue('https://provider.example.com/live/playlist.m3u8');
-    const play = await service.createPlay('ch-1');
+    const play = await service.createPlay('ch-1', undefined);
     expect(play.url).toMatch(/^http:\/\/api\.example\.com\/api\/stream\/[^/]+\/master\.m3u8$/);
     expect(play.url).not.toContain('provider.example.com');
     const id = play.url.split('/stream/')[1].split('/')[0];
@@ -37,14 +37,14 @@ describe('StreamingService', () => {
 
   it('refuse une chaîne sans variante ou avec locator invalide', async () => {
     prisma.streamVariant.findMany.mockResolvedValue([]);
-    await expect(service.createPlay('ch-1')).rejects.toThrow(NotFoundException);
+    await expect(service.createPlay('ch-1', undefined)).rejects.toThrow(NotFoundException);
     prisma.streamVariant.findMany.mockResolvedValue([variant]);
     crypto.decrypt.mockReturnValue('not a url');
-    await expect(service.createPlay('ch-1')).rejects.toThrow(NotFoundException);
+    await expect(service.createPlay('ch-1', undefined)).rejects.toThrow(NotFoundException);
   });
 
   it('crée des alias distincts pour des URLs distinctes', async () => {
-    const session = await store.create({ channelId: 'ch-1', variantId: 'v', sourceId: 's', providerHostname: 'provider.example.com' }, 60_000, 3_600_000);
+    const session = await store.create({ channelId: 'ch-1', variantId: 'v', sourceId: 's', deviceId: '', providerHostname: 'provider.example.com' }, 60_000, 3_600_000);
     const first = await service.registerAlias(session, 'https://cdn.example.com/a.ts?token=1');
     const second = await service.registerAlias(session, 'https://cdn.example.com/a.ts?token=2');
     expect(first).not.toBe(second);
@@ -52,7 +52,7 @@ describe('StreamingService', () => {
   });
 
   it('rejette les alias non HTTP', async () => {
-    const session = await store.create({ channelId: 'ch-1', variantId: 'v', sourceId: 's', providerHostname: 'provider.example.com' }, 60_000, 3_600_000);
+    const session = await store.create({ channelId: 'ch-1', variantId: 'v', sourceId: 's', deviceId: '', providerHostname: 'provider.example.com' }, 60_000, 3_600_000);
     await expect(service.registerAlias(session, 'ftp://example.com/a.ts')).rejects.toThrow();
   });
 });

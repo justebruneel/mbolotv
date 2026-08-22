@@ -1,13 +1,14 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import type { AuditEntry, ChannelTestResponse, OwnerCatalog, OwnerCategoryUpdateInput, OwnerChannelUpdateInput, Overview } from '@mbolo/contracts';
-import { ownerCategoryUpdateSchema, ownerChannelUpdateSchema } from '@mbolo/contracts';
+import type { AuditEntry, ChannelTestResponse, OwnerCatalog, OwnerCategory, OwnerCategoryCreateInput, OwnerCategoryUpdateInput, OwnerChannel, OwnerChannelUpdateInput, OwnerProfile, OwnerProfileUpdateInput, Overview } from '@mbolo/contracts';
+import { ownerCategoryCreateSchema, ownerCategoryUpdateSchema, ownerChannelUpdateSchema, ownerProfileUpdateSchema } from '@mbolo/contracts';
 import { getOwnerContext } from '../../common/auth/owner-context';
 import { OwnerAuthGuard } from '../../common/auth/owner-auth.guard';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AuditService } from '../../common/audit/audit.service';
 import { HealthCheckService } from '../channel-health/channel-health.service';
+import { slugify } from '../../common/normalize/slugify';
 import { z } from 'zod';
 
 const auditQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).optional(), offset: z.coerce.number().int().min(0).optional() });
@@ -15,7 +16,7 @@ type StatusGroup = { status: string; _count: { _all: number } };
 type AuditRow = { id: string; action: string; entity: string; entityId: string | null; actorId: string | null; metadata: unknown; createdAt: Date };
 type OwnerVariant = { healthStatus: string | null };
 type OwnerChannelRow = { id: string; name: string; canonicalName: string; categoryId: string | null; isVisible: boolean; variants: OwnerVariant[]; _count: { variants: number } };
-type OwnerCategoryRow = { id: string; slug: string; name: string; parentId: string | null; isVisible: boolean; channels: OwnerChannelRow[] };
+type OwnerCategoryRow = { id: string; slug: string; name: string; parentId: string | null; isVisible: boolean; sortOrder: number; channels: OwnerChannelRow[] };
 
 @UseGuards(OwnerAuthGuard)
 @Controller('owner')
@@ -43,24 +44,77 @@ export class OwnerConsoleController {
   @Get('catalog')
   async catalog(@Req() request: FastifyRequest): Promise<OwnerCatalog> {
     const ownerId = getOwnerContext(request).userId;
-    const channelScope = { variants: { some: { source: { ownerId } } } };
+    const channelScope = { variants: { some: { source: { ownerId } } } } as const;
     const categories = await this.prisma.category.findMany({
       where: { channels: { some: channelScope } },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       include: { channels: { where: channelScope, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } } } },
     }) as unknown as OwnerCategoryRow[];
     const uncategorized = await this.prisma.channel.findMany({ where: { categoryId: null, ...channelScope }, orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }], include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } } }) as unknown as OwnerChannelRow[];
-    return { categories: categories.map((category) => this.serializeCategory(category)), uncategorized: uncategorized.map((channel) => this.serializeChannel(channel)) };
+
+    const byId = new Map(categories.map((category) => [category.id, category] as const));
+    const effective = new Map<string, boolean>();
+    const visiting = new Set<string>();
+    const computeEffective = (id: string): boolean => {
+      const cached = effective.get(id);
+      if (cached !== undefined) return cached;
+      if (visiting.has(id)) { effective.set(id, false); return false; }
+      visiting.add(id);
+      const node = byId.get(id);
+      if (!node) { visiting.delete(id); return false; }
+      const parentOk = node.parentId == null || !byId.has(node.parentId) ? true : computeEffective(node.parentId);
+      const result = node.isVisible && parentOk;
+      visiting.delete(id);
+      effective.set(id, result);
+      return result;
+    };
+    categories.forEach((category) => computeEffective(category.id));
+    const roots = categories.filter((category) => category.parentId == null || !byId.has(category.parentId));
+
+    const serializeNode = (node: OwnerCategoryRow): OwnerCategory => {
+      const children = categories.filter((candidate) => candidate.parentId === node.id).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((child) => serializeNode(child));
+      return {
+        id: node.id,
+        slug: node.slug,
+        name: node.name,
+        parentId: node.parentId,
+        isVisible: node.isVisible,
+        effectiveVisible: effective.get(node.id) ?? node.isVisible,
+        channelCount: node.channels.length,
+        channels: node.channels.map((channel) => this.serializeChannel(channel)),
+        children,
+      };
+    };
+
+    return {
+      categories: roots.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((node) => serializeNode(node)),
+      uncategorized: uncategorized.map((channel) => this.serializeChannel(channel)),
+    };
+  }
+
+  @Post('categories')
+  async createCategory(@Req() request: FastifyRequest, @Body(new ZodValidationPipe(ownerCategoryCreateSchema)) input: OwnerCategoryCreateInput): Promise<OwnerCatalog> {
+    const ownerId = getOwnerContext(request).userId;
+    if (input.parentId) {
+      const parent = await this.prisma.category.findFirst({ where: { id: input.parentId, channels: { some: { variants: { some: { source: { ownerId } } } } } } });
+      if (!parent) throw new Error('Dossier parent introuvable');
+    }
+    const slug = await this.uniqueSlug(input.name);
+    const maxSort = await this.prisma.category.aggregate({ _max: { sortOrder: true } });
+    const created = await this.prisma.category.create({ data: { name: input.name.trim(), slug, parentId: input.parentId ?? null, sortOrder: (maxSort._max.sortOrder ?? 0) + 1 } });
+    await this.audit.log(ownerId, 'catalog.category_create', 'category', created.id, { name: created.name, parentId: created.parentId });
+    return this.catalog(request);
   }
 
   @Patch('categories/:id')
-  async updateCategory(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerCategoryUpdateSchema)) input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> {
-    const ownerId = getOwnerContext(request).userId;
+  async updateCategory(@Req() _request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerCategoryUpdateSchema)) input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> {
+    const ownerId = getOwnerContext(_request).userId;
     const category = await this.prisma.category.findFirst({ where: { id, channels: { some: { variants: { some: { source: { ownerId } } } } } } });
     if (!category) throw new Error('Catégorie introuvable');
+    if (input.parentId && input.parentId === id) throw new Error('Un dossier ne peut pas être son propre parent');
     await this.prisma.category.update({ where: { id }, data: { ...(input.name === undefined ? {} : { name: input.name.trim() }), ...(input.isVisible === undefined ? {} : { isVisible: input.isVisible }), ...(input.parentId === undefined ? {} : { parentId: input.parentId }) } });
     await this.audit.log(ownerId, 'catalog.category_update', 'category', id, input);
-    return this.catalog(request);
+    return this.catalog(_request);
   }
 
   @Patch('channels/:id')
@@ -79,9 +133,26 @@ export class OwnerConsoleController {
     const channel = await this.prisma.channel.findFirst({ where: { id, variants: { some: { source: { ownerId } } } }, include: { variants: { where: { source: { ownerId }, isActive: true }, select: { id: true, encryptedLocator: true } } } });
     if (!channel) throw new Error('Chaîne introuvable');
     let ok = false;
-    for (const variant of channel.variants) if (await this.health.checkVariant(variant)) { ok = true; break; }
+    for (const variant of channel.variants) if ((await this.health.checkVariant(variant)) === 'OK') { ok = true; break; }
     await this.audit.log(ownerId, 'catalog.channel_test', 'channel', id, { checked: channel.variants.length, ok });
     return { ok, status: ok ? 'OK' : 'DOWN', checked: channel.variants.length };
+  }
+
+  @Get('profile')
+  async profile(@Req() request: FastifyRequest): Promise<OwnerProfile> {
+    const ownerId = getOwnerContext(request).userId;
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: ownerId } });
+    return { id: user.id, email: user.email, role: user.role, whatsappContact: user.whatsappContact ?? null };
+  }
+
+  @Patch('profile')
+  async updateProfile(@Req() request: FastifyRequest, @Body(new ZodValidationPipe(ownerProfileUpdateSchema)) input: OwnerProfileUpdateInput): Promise<OwnerProfile> {
+    const ownerId = getOwnerContext(request).userId;
+    if (input.whatsappContact !== undefined) {
+      const value = input.whatsappContact?.trim() || null;
+      await this.prisma.user.update({ where: { id: ownerId }, data: { whatsappContact: value } });
+    }
+    return this.profile(request);
   }
 
   @Get('audit')
@@ -91,7 +162,20 @@ export class OwnerConsoleController {
     return { items: items.map((entry: AuditRow) => this.serializeAudit(entry)), total };
   }
 
-  private serializeCategory(category: OwnerCategoryRow) { return { id: category.id, slug: category.slug, name: category.name, parentId: category.parentId, isVisible: category.isVisible, channelCount: category.channels.length, channels: category.channels.map((channel) => this.serializeChannel(channel)) }; }
-  private serializeChannel(channel: OwnerChannelRow) { const healthStatus = channel.variants.some((variant) => variant.healthStatus === 'OK') ? 'OK' : channel.variants.some((variant) => variant.healthStatus === 'DOWN') ? 'DOWN' : null; return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, categoryId: channel.categoryId, isVisible: channel.isVisible, healthStatus: healthStatus as 'OK' | 'DOWN' | null, variantsCount: channel._count.variants }; }
+  private async uniqueSlug(base: string): Promise<string> {
+    const slug = slugify(base) || 'dossier';
+    let candidate = slug;
+    let suffix = 1;
+    while (await this.prisma.category.findUnique({ where: { slug: candidate } })) {
+      candidate = `${slug}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  private serializeChannel(channel: OwnerChannelRow): OwnerChannel {
+    const healthStatus = channel.variants.some((variant) => variant.healthStatus === 'OK') ? 'OK' : channel.variants.some((variant) => variant.healthStatus === 'DOWN') ? 'DOWN' : null;
+    return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, categoryId: channel.categoryId, isVisible: channel.isVisible, healthStatus: healthStatus as 'OK' | 'DOWN' | null, variantsCount: channel._count.variants };
+  }
   private serializeAudit(entry: AuditRow): AuditEntry { return { id: entry.id, action: entry.action, entity: entry.entity, entityId: entry.entityId, actorId: entry.actorId, metadata: (entry.metadata ?? null) as Record<string, unknown> | null, createdAt: entry.createdAt.toISOString() }; }
 }

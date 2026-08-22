@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Headers, Param, Query, UseGuards } from '@nestjs/common';
 import type { Channel, ChannelListResponse, ChannelQuery, CountryOption, PlayResponse, Programme } from '@mbolo/contracts';
 import { channelQuerySchema } from '@mbolo/contracts';
 import { AccessGuard } from '../access/access.guard';
@@ -19,5 +19,5 @@ export class ChannelsController {
   @Get(':id/epg')
   epg(@Param('id') id: string): Promise<Programme[]> { return this.channelsService.epg(id); }
   @Get(':id/play')
-  play(@Param('id') id: string): Promise<PlayResponse> { return this.channelsService.play(id); }
+  play(@Param('id') id: string, @Headers('x-device-id') deviceId: string | undefined): Promise<PlayResponse> { return this.channelsService.play(id, deviceId); }
 }

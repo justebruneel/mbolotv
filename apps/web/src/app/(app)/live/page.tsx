@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../../shared/stores/settings';
 import { FilterPanel } from '../../../features/live-tv/components/FilterPanel';
 import { BouquetTabs } from '../../../features/live-tv/components/BouquetTabs';
 import { GenreTabs } from '../../../features/live-tv/components/GenreTabs';
+import { CategoryTree } from '../../../features/live-tv/components/CategoryTree';
 import { SearchIcon, SlidersIcon, XIcon } from '../../../features/live-tv/components/Icons';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
 import { categoryLabel, formatCategoryName, isBouquetCategory } from '../../../features/live-tv/utils';
@@ -121,7 +122,13 @@ function LiveContent() {
   const watchContext = { category, country, q: deferredQuery.trim() || undefined };
 
   return (
-    <div className="min-h-screen animate-fade-in">
+    <div className="min-h-screen animate-fade-in lg:flex">
+      <aside className="hidden lg:block w-64 shrink-0 border-r border-border/60 p-3 overflow-y-auto lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)]">
+        <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-widest text-muted">Catégories</p>
+        <CategoryTree categories={categories} active={category} onSelect={selectCategory} />
+      </aside>
+
+      <div className="flex-1 min-w-0">
       {/* Search */}
       <div className="px-4 pt-4 animate-slide-up">
         <div className="relative max-w-lg">
@@ -271,6 +278,7 @@ function LiveContent() {
           </div>
         )}
       </main>
+      </div>
     </div>
   );
 }

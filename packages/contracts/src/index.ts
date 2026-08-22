@@ -19,8 +19,26 @@ export const sourceCreateSchema = z.object({ name: z.string().min(2).max(80), ki
 export type SourceCreateInput = z.infer<typeof sourceCreateSchema>;
 export type StreamAccess = { playbackUrl: string; expiresAt: string; selectedServer?: string };
 
-export const categorySchema = z.object({ id: z.string(), slug: z.string(), name: z.string(), channelCount: z.number().optional(), sortOrder: z.number().optional() });
-export type Category = z.infer<typeof categorySchema>;
+export interface Category {
+  id: string;
+  slug: string;
+  name: string;
+  parentId?: string | null;
+  isVisible?: boolean;
+  channelCount?: number;
+  sortOrder?: number;
+  children?: Category[];
+}
+export const categorySchema: z.ZodType<Category> = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  parentId: z.string().nullable().optional(),
+  isVisible: z.boolean().optional(),
+  channelCount: z.number().optional(),
+  sortOrder: z.number().optional(),
+  children: z.array(z.lazy(() => categorySchema)).optional(),
+});
 export const nowPlayingSchema = z.object({ startsAt: z.string(), endsAt: z.string(), title: z.string(), imageUrl: z.string().nullable().optional() });
 export type NowPlaying = z.infer<typeof nowPlayingSchema>;
 export const channelSchema = z.object({ id: z.string(), name: z.string(), canonicalName: z.string(), country: z.string().nullable(), categoryId: z.string().nullable(), logoUrl: z.string().nullable(), healthStatus: z.enum(['OK', 'DOWN']).nullable().optional(), nowPlaying: nowPlayingSchema.nullable().optional() });
@@ -65,6 +83,10 @@ export const ownerLoginSchema = z.object({ email: z.string().email(), password: 
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;
 export const ownerMeSchema = z.object({ id: z.string(), email: z.string(), role: z.string() });
 export type OwnerMe = z.infer<typeof ownerMeSchema>;
+export const ownerProfileSchema = z.object({ id: z.string(), email: z.string(), role: z.string(), whatsappContact: z.string().nullable() });
+export type OwnerProfile = z.infer<typeof ownerProfileSchema>;
+export const ownerProfileUpdateSchema = z.object({ whatsappContact: z.string().max(120).nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export type OwnerProfileUpdateInput = z.infer<typeof ownerProfileUpdateSchema>;
 export const ownerSessionSchema = z.object({ id: z.string(), userAgent: z.string().nullable(), ipHash: z.string().nullable(), createdAt: z.string(), expiresAt: z.string(), current: z.boolean() });
 export type OwnerSession = z.infer<typeof ownerSessionSchema>;
 
@@ -98,12 +120,34 @@ export type ChannelViewersResponse = z.infer<typeof channelViewersResponseSchema
 
 export const ownerCategoryUpdateSchema = z.object({ name: z.string().min(1).max(120).optional(), isVisible: z.boolean().optional(), parentId: z.string().nullable().optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
 export type OwnerCategoryUpdateInput = z.infer<typeof ownerCategoryUpdateSchema>;
+export const ownerCategoryCreateSchema = z.object({ name: z.string().min(1).max(120), parentId: z.string().nullable().optional() });
+export type OwnerCategoryCreateInput = z.infer<typeof ownerCategoryCreateSchema>;
 export const ownerChannelUpdateSchema = z.object({ name: z.string().min(1).max(160).optional(), isVisible: z.boolean().optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
 export type OwnerChannelUpdateInput = z.infer<typeof ownerChannelUpdateSchema>;
 export const ownerChannelSchema = z.object({ id: z.string(), name: z.string(), canonicalName: z.string(), categoryId: z.string().nullable(), isVisible: z.boolean(), healthStatus: z.enum(['OK', 'DOWN']).nullable(), variantsCount: z.number() });
 export type OwnerChannel = z.infer<typeof ownerChannelSchema>;
-export const ownerCategorySchema = z.object({ id: z.string(), slug: z.string(), name: z.string(), parentId: z.string().nullable(), isVisible: z.boolean(), channelCount: z.number(), channels: z.array(ownerChannelSchema) });
-export type OwnerCategory = z.infer<typeof ownerCategorySchema>;
+export interface OwnerCategory {
+  id: string;
+  slug: string;
+  name: string;
+  parentId: string | null;
+  isVisible: boolean;
+  effectiveVisible: boolean;
+  channelCount: number;
+  channels: OwnerChannel[];
+  children: OwnerCategory[];
+}
+export const ownerCategorySchema: z.ZodType<OwnerCategory> = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  parentId: z.string().nullable(),
+  isVisible: z.boolean(),
+  effectiveVisible: z.boolean(),
+  channelCount: z.number(),
+  channels: z.array(ownerChannelSchema),
+  children: z.array(z.lazy(() => ownerCategorySchema)),
+});
 export const ownerCatalogSchema = z.object({ categories: z.array(ownerCategorySchema), uncategorized: z.array(ownerChannelSchema) });
 export type OwnerCatalog = z.infer<typeof ownerCatalogSchema>;
 export const channelTestResponseSchema = z.object({ ok: z.boolean(), status: z.enum(['OK', 'DOWN']), checked: z.number() });

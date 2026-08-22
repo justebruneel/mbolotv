@@ -19,12 +19,12 @@ export class MatchesService {
     return { items: rows.map((row: MatchRow) => this.serialize(this.toMatchWithVariants(row, sources))), total: rows.length };
   }
   async findOne(id: string): Promise<Match> { const match = await this.findMatchOrThrow(id); return this.serialize(match); }
-  async play(id: string, input: MatchPlayInput): Promise<PlayResponse> {
+  async play(id: string, input: MatchPlayInput, deviceId: string | undefined): Promise<PlayResponse> {
     const match = await this.findMatchOrThrow(id);
     const variants = match.variants.filter((variant: VariantWithSource) => variant.isActive && variant.source?.status !== 'DISABLED' && (!input.channelId || variant.channel.id === input.channelId)).sort((a: VariantWithSource, b: VariantWithSource) => b.healthScore - a.healthScore || (a.source?.priority ?? 100) - (b.source?.priority ?? 100));
     if (variants.length === 0) throw new NotFoundException('Aucun flux disponible pour ce match');
     const variant = variants.find((item: VariantWithSource) => item.healthStatus !== 'DOWN') ?? variants[0];
-    return this.streaming.openSession(match.id, variant);
+    return this.streaming.openSession(match.id, variant, deviceId);
   }
   private async findMatchOrThrow(id: string): Promise<MatchWithVariants> { const row = await this.prisma.match.findUnique({ where: { id }, include: { matchStreams: { include: { streamVariant: { select: VARIANT_SELECT } } } } }) as unknown as MatchRow | null; if (!row) throw new NotFoundException('Match not found'); const sources = await this.loadSources([row]); return this.toMatchWithVariants(row, sources); }
   private async loadSources(rows: MatchRow[]): Promise<Map<string, SourceRow>> { const sourceIds = [...new Set(rows.flatMap((row: MatchRow) => row.matchStreams.map((stream) => stream.streamVariant.sourceId)))]; if (sourceIds.length === 0) return new Map(); const sources = await this.prisma.source.findMany({ where: { id: { in: sourceIds } }, select: { id: true, status: true, priority: true } }) as SourceRow[]; return new Map(sources.map((source: SourceRow) => [source.id, source])); }

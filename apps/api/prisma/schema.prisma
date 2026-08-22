@@ -14,6 +14,7 @@ model User {
   email String @unique
   role String @default("USER")
   passwordHash String?
+  whatsappContact String?
   createdAt DateTime @default(now())
   profiles Profile[]
   sources Source[]
