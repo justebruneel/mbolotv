@@ -114,7 +114,7 @@ export class OwnerConsoleController {
   async createCategory(@Req() request: FastifyRequest, @Body(new ZodValidationPipe(ownerCategoryCreateSchema)) input: OwnerCategoryCreateInput): Promise<OwnerCatalog> {
     const ownerId = getOwnerContext(request).userId;
     if (input.parentId) {
-      const parent = await this.prisma.category.findFirst({ where: { id: input.parentId, channels: { some: { variants: { some: { source: { ownerId } } } } } } });
+      const parent = await this.prisma.category.findFirst({ where: { id: input.parentId, OR: [ { channels: { some: { variants: { some: { source: { ownerId } } } } } }, { NOT: { channels: { some: {} } } } ] } });
       if (!parent) throw new Error('Dossier parent introuvable');
     }
     const slug = await this.uniqueSlug(input.name);
@@ -127,7 +127,7 @@ export class OwnerConsoleController {
   @Patch('categories/:id')
   async updateCategory(@Req() _request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerCategoryUpdateSchema)) input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> {
     const ownerId = getOwnerContext(_request).userId;
-    const category = await this.prisma.category.findFirst({ where: { id, channels: { some: { variants: { some: { source: { ownerId } } } } } } });
+    const category = await this.prisma.category.findFirst({ where: { id, OR: [ { channels: { some: { variants: { some: { source: { ownerId } } } } } }, { NOT: { channels: { some: {} } } } ] } });
     if (!category) throw new Error('Catégorie introuvable');
     if (input.parentId && input.parentId === id) throw new Error('Un dossier ne peut pas être son propre parent');
     await this.prisma.category.update({ where: { id }, data: { ...(input.name === undefined ? {} : { name: input.name.trim() }), ...(input.isVisible === undefined ? {} : { isVisible: input.isVisible }), ...(input.parentId === undefined ? {} : { parentId: input.parentId }) } });
