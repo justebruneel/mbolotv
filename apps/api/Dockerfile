@@ -13,6 +13,7 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @mbolo/contracts build
 RUN pnpm --filter @mbolo/api exec prisma generate
 RUN pnpm --filter @mbolo/api build
+RUN pnpm --filter @mbolo/worker build
 
 FROM node:22-slim AS runtime
 

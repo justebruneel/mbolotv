@@ -47,7 +47,7 @@ export class StreamingController {
       if (aliasId === 'master' && context.session.variantId) void this.health.recordFailure(context.session.variantId).catch(() => undefined);
       const stalePlaylist = await this.playlistCache.get(context.session.id, aliasId); if (stalePlaylist) return this.sendPlaylistContent(reply, stalePlaylist);
       if (cacheKey) { const staleSegment = this.segmentCache.get(cacheKey); if (staleSegment) return this.sendBuffered(reply, staleSegment.buffer, staleSegment.contentType, 200, 'STALE'); }
-      throw error;
+      return this.sendError(reply, request, error);
     }
     void this.streamingService.registerDiscoveredHost(context.session, response.finalUrl).catch(() => undefined);
     if (looksLikePlaylist(response.contentType, response.finalUrl)) return this.sendPlaylist(reply, context, response.stream, response.finalUrl, aliasId);
@@ -74,6 +74,15 @@ export class StreamingController {
   }
 
   private sendBuffered(reply: FastifyReply, buffer: Buffer, contentType: string | null, status: number, cacheStatus = 'HIT'): FastifyReply { if (contentType) reply.header('content-type', contentType); reply.header('content-length', String(buffer.byteLength)); reply.header('cache-control', SEGMENT_CACHE_CONTROL); reply.header('cdn-cache-control', SEGMENT_CACHE_CONTROL); reply.header('x-mbolo-stream-cache', cacheStatus); reply.status(status); return reply.send(buffer); }
+  private sendError(reply: FastifyReply, request: FastifyRequest, error: unknown): FastifyReply {
+    console.error('[streaming] échec proxy fournisseur :', error instanceof Error ? error.stack ?? error.message : error);
+    const origin = request.headers.origin;
+    if (origin) { reply.header('access-control-allow-origin', origin); reply.header('access-control-allow-credentials', 'true'); reply.header('vary', 'Origin'); }
+    const message = error instanceof Error ? error.message : 'Erreur de flux distante';
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('x-accel-buffering', 'no');
+    return reply.code(502).send({ statusCode: 502, message, error: 'Bad Gateway' });
+  }
   private async sendPlaylist(reply: FastifyReply, context: StreamContext, stream: Readable, providerUrl: string, aliasId: string): Promise<FastifyReply> { const content = await readLimited(stream, this.maxPlaylistBytes, 'Playlist'); const rewritten = await rewriteM3u8(content.toString('utf8'), providerUrl, (url) => this.streamingService.registerAlias(context.session, url)); await this.playlistCache.set(context.session.id, aliasId, rewritten); return this.sendPlaylistContent(reply, rewritten); }
   private sendPlaylistContent(reply: FastifyReply, content: string): FastifyReply { reply.header('content-type', 'application/vnd.apple.mpegurl'); reply.header('cache-control', PLAYLIST_CACHE_CONTROL); reply.header('cdn-cache-control', PLAYLIST_CACHE_CONTROL); reply.header('x-mbolo-stream-cache', 'PLAYLIST'); reply.header('x-accel-buffering', 'no'); reply.status(200); return reply.send(content); }
 }
