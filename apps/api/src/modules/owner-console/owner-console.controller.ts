@@ -45,7 +45,7 @@ export class OwnerConsoleController {
   async catalog(@Req() request: FastifyRequest): Promise<OwnerCatalog> {
     const ownerId = getOwnerContext(request).userId;
     const channelScope = { variants: { some: { source: { ownerId } } } } as const;
-    const [categories, channels] = await Promise.all([
+    const [categories, channels, variantRows] = await Promise.all([
       this.prisma.category.findMany({
         where: { channels: { some: channelScope } },
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
@@ -54,11 +54,14 @@ export class OwnerConsoleController {
       this.prisma.channel.findMany({
         where: channelScope,
         orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }],
-        include: { variants: { where: { source: { ownerId } }, select: { healthStatus: true } }, _count: { select: { variants: true } } },
+        select: { id: true, name: true, canonicalName: true, categoryId: true, isVisible: true, sortOrder: true },
       }) as unknown as OwnerChannelRow[],
+      this.prisma.streamVariant.findMany({ where: { source: { ownerId } }, select: { channelId: true, healthStatus: true } }) as unknown as Array<{ channelId: string; healthStatus: string | null }>,
     ]);
     const channelsByCategory = new Map<string | null, OwnerChannelRow[]>();
     for (const channel of channels) { const bucket = channelsByCategory.get(channel.categoryId) ?? []; bucket.push(channel); channelsByCategory.set(channel.categoryId, bucket); }
+    const variantsByChannel = new Map<string, string[]>();
+    for (const variant of variantRows) { const list = variantsByChannel.get(variant.channelId) ?? []; list.push(variant.healthStatus ?? ''); variantsByChannel.set(variant.channelId, list); }
 
     const byId = new Map(categories.map((category) => [category.id, category] as const));
     const effective = new Map<string, boolean>();
@@ -96,14 +99,14 @@ export class OwnerConsoleController {
         isVisible: node.isVisible,
         effectiveVisible: effective.get(node.id) ?? node.isVisible,
         channelCount: nodeChannels.length,
-        channels: nodeChannels.map((channel) => this.serializeChannel(channel)),
+        channels: nodeChannels.map((channel) => this.serializeChannel(channel, variantsByChannel.get(channel.id) ?? [])),
         children,
       };
     };
 
     return {
       categories: roots.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((node) => serializeNode(node)),
-      uncategorized: (channelsByCategory.get(null) ?? []).map((channel) => this.serializeChannel(channel)),
+      uncategorized: (channelsByCategory.get(null) ?? []).map((channel) => this.serializeChannel(channel, variantsByChannel.get(channel.id) ?? [])),
     };
   }
 
@@ -188,9 +191,9 @@ export class OwnerConsoleController {
     return candidate;
   }
 
-  private serializeChannel(channel: OwnerChannelRow): OwnerChannel {
-    const healthStatus = channel.variants.some((variant) => variant.healthStatus === 'OK') ? 'OK' : channel.variants.some((variant) => variant.healthStatus === 'DOWN') ? 'DOWN' : null;
-    return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, categoryId: channel.categoryId, isVisible: channel.isVisible, healthStatus: healthStatus as 'OK' | 'DOWN' | null, variantsCount: channel._count.variants };
+  private serializeChannel(channel: OwnerChannelRow, variantHealths: string[]): OwnerChannel {
+    const healthStatus = variantHealths.some((status) => status === 'OK') ? 'OK' : variantHealths.some((status) => status === 'DOWN') ? 'DOWN' : null;
+    return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, categoryId: channel.categoryId, isVisible: channel.isVisible, healthStatus: healthStatus as 'OK' | 'DOWN' | null, variantsCount: variantHealths.length };
   }
   private serializeAudit(entry: AuditRow): AuditEntry { return { id: entry.id, action: entry.action, entity: entry.entity, entityId: entry.entityId, actorId: entry.actorId, metadata: (entry.metadata ?? null) as Record<string, unknown> | null, createdAt: entry.createdAt.toISOString() }; }
 }
