@@ -18,6 +18,8 @@ const MAX_NETWORK_RETRIES = 3;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const STARTUP_DEADLINE_MS = 30_000;
 const MIN_VIABLE_BUFFER_SECONDS = 4;
+const RESUME_BUFFER_SECONDS = 5;
+const STALL_PAUSE_THRESHOLD_SECONDS = 1.5;
 const CONTROLS_HIDE_DELAY_MS = 3_000;
 const MOBILE_CONTROLS_HIDE_DELAY_MS = 4_000;
 const GESTURE_THRESHOLD = 40;
@@ -32,9 +34,9 @@ function networkProfile(): { estimate: number; capHeight: number | null; buffer:
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   const type = conn?.effectiveType;
   const downlink = conn?.downlink ?? 0;
-  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 20, liveSyncCount: 7, startBuffer: 6 };
-  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 26, liveSyncCount: 8, startBuffer: 10 };
-  return { estimate: 1_200_000, capHeight: null, buffer: 36, liveSyncCount: 7, startBuffer: 12 };
+  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 28, liveSyncCount: 7, startBuffer: 6 };
+  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 40, liveSyncCount: 8, startBuffer: 10 };
+  return { estimate: 1_200_000, capHeight: null, buffer: 55, liveSyncCount: 7, startBuffer: 12 };
 }
 function getNetworkInfo(): { effectiveType: string; downlink: number; saveData: boolean } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
@@ -88,6 +90,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const isIosRef = useRef(false);
   const startBufferRef = useRef(12);
+  const stallPauseRef = useRef(false);
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
   selectedLevelRef.current = selectedLevel;
 
@@ -108,7 +111,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => { const video = videoRef.current; if (!video) return; const v = Number(e.target.value); video.volume = v; video.muted = v === 0; setVolume(v); setMuted(v === 0); onVolumeChange?.(v); }, [onVolumeChange]);
   const toggleFullscreen = useCallback(() => { const video = videoRef.current; const el = containerRef.current; if (!video || !el) return; if (document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement) { const exitFn = document.exitFullscreen || (document as Document & { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen; if (exitFn) void exitFn.call(document); return; } if (isPseudoFullscreen) { exitPseudoFullscreen(); return; } if (isIosRef.current && 'webkitEnterFullscreen' in video) { void (video as HTMLVideoElement & { webkitEnterFullscreen: () => void }).webkitEnterFullscreen(); return; } const fsFn = el.requestFullscreen || (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen; if (fsFn) void fsFn.call(el).catch(() => { setIsPseudoFullscreen(true); document.body.style.overflow = 'hidden'; }); else { setIsPseudoFullscreen(true); document.body.style.overflow = 'hidden'; } }, [isPseudoFullscreen, exitPseudoFullscreen]);
   const togglePip = useCallback(async () => { const video = videoRef.current; if (!video) return; try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (document.pictureInPictureEnabled) await video.requestPictureInPicture(); } catch { /* PiP non disponible */ } }, []);
-  const togglePlayback = useCallback(() => { const video = videoRef.current; if (!video || status !== 'ready') return; if (video.paused) void video.play().catch(() => setAutoplayBlocked(true)); else video.pause(); }, [status]);
+  const togglePlayback = useCallback(() => { const video = videoRef.current; if (!video || status !== 'ready') return; if (video.paused) { stallPauseRef.current = false; void video.play().catch(() => setAutoplayBlocked(true)); } else video.pause(); }, [status]);
   const handleVideoClick = useCallback(() => { if (isMobile) { if (controlsVisible) { setControlsVisible(false); setActivePopup(null); } else showControls(); } else togglePlayback(); }, [isMobile, controlsVisible, showControls, togglePlayback]);
   const closePopup = useCallback(() => { setActivePopup(null); showControls(); }, [showControls]);
   const handleTouchStart = useCallback((e: React.TouchEvent) => { if (status !== 'ready') return; const touch = e.touches[0]; gestureRef.current = { startX: touch.clientX, startY: touch.clientY, startTime: Date.now() }; }, [status]);
@@ -130,6 +133,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     startupAtRef.current = performance.now();
     rebufferCountRef.current = 0;
+    stallPauseRef.current = false;
     setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setRetrying(false); setLiveProgress(0); setLiveEdge(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); deadlineTimer = retryTimer = null; };
@@ -148,7 +152,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) { playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); } else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
       startBufferRef.current = profile.startBuffer;
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: profile.capHeight === null, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 45, maxBufferSize: 45 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: 0, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: profile.capHeight === null, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 60, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: 0, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
       hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
@@ -173,12 +177,25 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       });
       hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); } });
       hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
-      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startBufferRef.current) { playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); } });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startBufferRef.current) { playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); } else resumeIfBuffered(); });
     }
     const onPlaying = (): void => markReady();
     const onCanPlay = (): void => { if (!Hls.isSupported()) markReady(); };
-    const onWaiting = (): void => { if (started) { rebufferCountRef.current += 1; setStats((c) => ({ ...c, rebufferCount: rebufferCountRef.current })); } const hls = hlsRef.current; if (hls && selectedLevelRef.current === -1) { hls.nextAutoLevel = 0; hls.startLoad(-1); } setBuffering(true); };
-    const onPlayingReset = (): void => { if (started) { const hls = hlsRef.current; if (hls && selectedLevelRef.current === -1) hls.nextAutoLevel = -1; setBuffering(false); updateStats(); } };
+    const onWaiting = (): void => {
+      if (!started) return;
+      rebufferCountRef.current += 1;
+      setStats((c) => ({ ...c, rebufferCount: rebufferCountRef.current }));
+      const ahead = bufferAhead();
+      if (ahead <= STALL_PAUSE_THRESHOLD_SECONDS && !el.paused) { el.pause(); stallPauseRef.current = true; }
+      const hls = hlsRef.current;
+      if (hls) { if (selectedLevelRef.current === -1 && hls.levels.length > 1) hls.nextAutoLevel = 0; hls.startLoad(-1); }
+      setBuffering(true);
+    };
+    const resumeIfBuffered = (): void => {
+      if (!started || !stallPauseRef.current) return;
+      if (bufferAhead() >= RESUME_BUFFER_SECONDS) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
+    };
+    const onPlayingReset = (): void => { if (started) { const hls = hlsRef.current; if (hls && selectedLevelRef.current === -1) hls.nextAutoLevel = -1; if (!stallPauseRef.current) setBuffering(false); updateStats(); } };
     const onError = (): void => advance();
     el.addEventListener('playing', onPlaying); el.addEventListener('canplay', onCanPlay); el.addEventListener('waiting', onWaiting); el.addEventListener('playing', onPlayingReset); el.addEventListener('error', onError);
     if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else setStatus('error');
@@ -199,7 +216,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   return <div ref={containerRef} className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''} ${isPseudoFullscreen ? styles.pseudoFullscreen : ''}`} data-state={status} onMouseMove={!isMobile ? showControls : undefined} onMouseLeave={() => { if (!isMobile && status === 'ready') setControlsVisible(false); }} onTouchStart={(e) => { showControls(); handleTouchStart(e); }} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
     <video ref={videoRef} className={styles.video} playsInline preload="auto" onClick={handleVideoClick} aria-label={`Lecteur ${title}`} />
     {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && <><Spinner /><p className={styles.hint}>{retrying ? 'Nouvelle tentative…' : <>Préchargement du direct : <strong>{formatBuffer(stats.bufferAhead)}</strong> / {startBufferRef.current} s en mémoire tampon avant le lancement.</>}</p></>}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
-    {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>Rattrapage du direct…</span></div>}
+    {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>{stallPauseRef.current ? `Lissage du flux… reprise à ${RESUME_BUFFER_SECONDS} s de marge` : 'Rattrapage du direct…'}</span></div>}
     {bandwidth !== null && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && autoplayBlocked && <button type="button" className={styles.playPrompt} onClick={() => { const video = videoRef.current; if (video) void video.play().then(() => setAutoplayBlocked(false)).catch(() => undefined); }}>Lancer la lecture</button>}
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}>{gestureOverlay.type === 'volume' ? <Icon.Volume2 size={28} /> : <Icon.Maximize size={28} />}</span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
