@@ -24,9 +24,16 @@ async function bootstrap(): Promise<void> {
   await instance.register(cookie);
 
   // Les playlists sont traitées en flux, jamais matérialisées entièrement dans le heap.
-  for (const contentType of ['application/octet-stream', 'text/plain', 'application/x-mpegurl']) {
-    instance.addContentTypeParser(contentType, (request, payload, done) => done(null, payload));
+  // Les outils IPTV externes poussent les .m3u/.m3u8 avec des MIME très variés :
+  // on déclare les variantes courantes puis un repli générique pour ne plus
+  // renvoyer de 415 « Unsupported Media Type » sur /owner/sources/:id/playlist.
+  const streamContentTypes = ['application/octet-stream', 'text/plain', 'application/x-mpegurl', 'application/vnd.apple.mpegurl', 'audio/x-mpegurl', 'audio/mpegurl'];
+  for (const contentType of streamContentTypes) {
+    instance.addContentTypeParser(contentType, (_request, payload, done) => done(null, payload));
   }
+  // Repli générique : tout autre MIME arrive en Buffer (l'upload de playlist
+  // accepte les deux formes) au lieu d'un 415 bloquant.
+  instance.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, payload, done) => done(null, payload));
 
   app.enableCors({
     origin: corsOrigins(config),
