@@ -16,8 +16,8 @@ interface NetworkInformationLike { effectiveType?: string; downlink?: number; sa
 const MAX_RETRIES = 2;
 const MAX_NETWORK_RETRIES = 3;
 const DATA_SAVER_MAX_HEIGHT = 480;
-const STARTUP_DEADLINE_MS = 30_000;
-const MIN_VIABLE_BUFFER_SECONDS = 4;
+const STARTUP_DEADLINE_MS = 15_000;
+const MIN_VIABLE_BUFFER_SECONDS = 2;
 const RESUME_BUFFER_SECONDS = 5;
 const STALL_PAUSE_THRESHOLD_SECONDS = 1.5;
 const CONTROLS_HIDE_DELAY_MS = 3_000;
@@ -34,9 +34,9 @@ function networkProfile(): { estimate: number; capHeight: number | null; buffer:
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   const type = conn?.effectiveType;
   const downlink = conn?.downlink ?? 0;
-  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 28, liveSyncCount: 7, startBuffer: 6 };
-  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 40, liveSyncCount: 8, startBuffer: 10 };
-  return { estimate: 1_200_000, capHeight: null, buffer: 55, liveSyncCount: 7, startBuffer: 12 };
+  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 28, liveSyncCount: 7, startBuffer: 3 };
+  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 40, liveSyncCount: 8, startBuffer: 3 };
+  return { estimate: 1_200_000, capHeight: null, buffer: 40, liveSyncCount: 5, startBuffer: 2 };
 }
 function getNetworkInfo(): { effectiveType: string; downlink: number; saveData: boolean } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
@@ -89,7 +89,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [fsSupported, setFsSupported] = useState(true);
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const isIosRef = useRef(false);
-  const startBufferRef = useRef(12);
+  const startBufferRef = useRef(2);
   const stallPauseRef = useRef(false);
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
   selectedLevelRef.current = selectedLevel;
@@ -154,7 +154,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) { playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); } else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
       startBufferRef.current = profile.startBuffer;
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: profile.capHeight === null, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 60, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: 0, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 60, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: 0, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
       hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;

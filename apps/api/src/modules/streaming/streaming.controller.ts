@@ -39,7 +39,9 @@ export class StreamingController {
   private async forward(reply: FastifyReply, request: FastifyRequest, context: StreamContext, providerUrl: string, aliasId: string): Promise<FastifyReply> {
     const forwarded: Record<string, string> = {};
     if (typeof request.headers.range === 'string') forwarded.range = request.headers.range;
-    const cacheKey = segmentCacheKey(providerUrl);
+    // Une réponse Range est partielle. La servir depuis le cache de segment
+    // complet (ou y écrire cette portion) provoquait des MP4/fMP4 corrompus.
+    const cacheKey = forwarded.range ? null : segmentCacheKey(providerUrl);
     if (cacheKey) { const cached = this.segmentCache.get(cacheKey); if (cached) return this.sendBuffered(reply, cached.buffer, cached.contentType, 200, 'HIT'); }
     let response: StreamProxyResponse;
     try { response = await this.proxy.fetch(providerUrl, { headers: forwarded, allowedHostnames: this.streamingService.allowedHostnames(context.session) }); }
@@ -61,7 +63,7 @@ export class StreamingController {
     if (response.acceptRanges) reply.header('accept-ranges', response.acceptRanges);
     reply.header('cache-control', SEGMENT_CACHE_CONTROL); reply.header('cdn-cache-control', SEGMENT_CACHE_CONTROL); reply.header('x-mbolo-stream-cache', 'MISS'); reply.header('x-accel-buffering', 'no'); reply.status(response.status);
     let output: Readable = response.stream;
-    if (cacheKey) output = this.teeSegmentToCache(response.stream, cacheKey, response.contentType, MAX_CACHED_SEGMENT_BYTES);
+    if (cacheKey && response.status === 200 && !response.contentRange) output = this.teeSegmentToCache(response.stream, cacheKey, response.contentType, MAX_CACHED_SEGMENT_BYTES);
     abortOnDisconnect(reply, response.stream, output);
     return reply.send(output);
   }

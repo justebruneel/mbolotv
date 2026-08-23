@@ -6,10 +6,16 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 
 type CodeRow = { id: string; codeLast4: string; kind: string; durationHours: number; active: boolean; createdAt: Date; revokedAt: Date | null; grant: { expiresAt: Date } | null };
+const ACTIVE_GRANT_CACHE_TTL_MS = 15_000;
+const INACTIVE_GRANT_CACHE_TTL_MS = 2_000;
+const MAX_ACTIVE_GRANT_CACHE_ENTRIES = 10_000;
 
 @Injectable()
 export class AccessService {
   private readonly whatsappUrl: string;
+  // Les segments HLS arrivent par dizaines. Vérifier le même droit en base pour
+  // chacun sature rapidement la base et retarde le buffer du lecteur.
+  private readonly activeGrantCache = new Map<string, { active: boolean; expiresAt: number }>();
 
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, config: ConfigService) {
     this.whatsappUrl = config.get<string>('PUBLIC_ACCESS_WHATSAPP_URL', 'https://wa.me/qr/CPB7IL3GHAGIK1');
@@ -27,11 +33,16 @@ export class AccessService {
 
   async isGrantActive(deviceId: string | undefined): Promise<boolean> {
     if (!deviceId) return false;
+    const deviceHash = this.hash(deviceId);
+    const cached = this.activeGrantCache.get(deviceHash);
+    if (cached && cached.expiresAt > Date.now()) return cached.active;
     const grant = await this.prisma.deviceGrant.findFirst({
-      where: { deviceHash: this.hash(deviceId), expiresAt: { gt: new Date() }, accessCode: { active: true, revokedAt: null } },
+      where: { deviceHash, expiresAt: { gt: new Date() }, accessCode: { active: true, revokedAt: null } },
       select: { id: true },
     });
-    return Boolean(grant);
+    const active = Boolean(grant);
+    this.cacheGrantStatus(deviceHash, active);
+    return active;
   }
 
   private async resolveWhatsappUrl(): Promise<string> {
@@ -54,6 +65,7 @@ export class AccessService {
       if (accessCode.grant.deviceHash !== deviceHash) throw new ConflictException('Ce code est déjà lié à un autre appareil');
       if (accessCode.grant.expiresAt <= new Date()) throw new ForbiddenException('Ce code a expiré');
       await this.prisma.deviceGrant.update({ where: { id: accessCode.grant.id }, data: { lastSeenAt: new Date() } });
+      this.activeGrantCache.delete(deviceHash);
       return this.status(deviceId);
     }
 
@@ -64,6 +76,7 @@ export class AccessService {
       throw new ConflictException('Ce code vient d’être utilisé sur un autre appareil');
     }
     await this.audit.log(null, 'access.redeem', 'access_code', accessCode.id, { kind: accessCode.kind, expiresAt: expiresAt.toISOString() });
+    this.activeGrantCache.delete(deviceHash);
     return this.status(deviceId);
   }
 
@@ -92,6 +105,8 @@ export class AccessService {
     const row = await this.prisma.accessCode.findFirst({ where: { id, createdById: ownerId } });
     if (!row) throw new NotFoundException('Code introuvable');
     await this.prisma.accessCode.update({ where: { id }, data: { active: false, revokedAt: new Date() } });
+    // Une révocation doit prendre effet sans attendre le TTL de 15 s.
+    this.activeGrantCache.clear();
     await this.audit.log(ownerId, 'access_code.revoke', 'access_code', id, {});
   }
 
@@ -108,4 +123,15 @@ export class AccessService {
   }
 
   private hash(value: string): string { return createHash('sha256').update(value).digest('hex'); }
+
+  private cacheGrantStatus(deviceHash: string, active: boolean): void {
+    if (this.activeGrantCache.size >= MAX_ACTIVE_GRANT_CACHE_ENTRIES) {
+      const now = Date.now();
+      for (const [key, entry] of this.activeGrantCache) {
+        if (entry.expiresAt <= now) this.activeGrantCache.delete(key);
+      }
+      if (this.activeGrantCache.size >= MAX_ACTIVE_GRANT_CACHE_ENTRIES) this.activeGrantCache.delete(this.activeGrantCache.keys().next().value!);
+    }
+    this.activeGrantCache.set(deviceHash, { active, expiresAt: Date.now() + (active ? ACTIVE_GRANT_CACHE_TTL_MS : INACTIVE_GRANT_CACHE_TTL_MS) });
+  }
 }
