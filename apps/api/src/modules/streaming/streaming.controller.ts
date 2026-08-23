@@ -1,7 +1,7 @@
 import { BadGatewayException, Controller, Get, Param, Req, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { ConfigService } from '@nestjs/config';
 import { rewriteM3u8 } from './hls-rewriter';
 import { HostValidationCache } from './host-validation.cache';
@@ -60,17 +60,39 @@ export class StreamingController {
     if (response.contentRange) reply.header('content-range', response.contentRange);
     if (response.acceptRanges) reply.header('accept-ranges', response.acceptRanges);
     reply.header('cache-control', SEGMENT_CACHE_CONTROL); reply.header('cdn-cache-control', SEGMENT_CACHE_CONTROL); reply.header('x-mbolo-stream-cache', 'MISS'); reply.header('x-accel-buffering', 'no'); reply.status(response.status);
-    if (cacheKey) this.teeSegmentToCache(response.stream, cacheKey, response.contentType, MAX_CACHED_SEGMENT_BYTES);
-    abortOnDisconnect(reply, response.stream);
-    return reply.send(response.stream);
+    let output: Readable = response.stream;
+    if (cacheKey) output = this.teeSegmentToCache(response.stream, cacheKey, response.contentType, MAX_CACHED_SEGMENT_BYTES);
+    abortOnDisconnect(reply, response.stream, output);
+    return reply.send(output);
   }
 
-  private teeSegmentToCache(stream: Readable, key: string, contentType: string | null, maxBytes: number): void {
+  /**
+   * Duplique le flux fournisseur : une branche vers le client, une vers le cache.
+   * Utilise pipe() (et non un listener 'data') pour garantir qu'aucun octet n'est
+   * consommé par la branche cache avant d'être envoyé au client — un listener
+   * 'data' passe le flux en mode flowing immédiatement et pouvait tronquer les
+   * premiers chunks de la réponse (segments corrompus côté décodeur).
+   */
+  private teeSegmentToCache(stream: Readable, key: string, contentType: string | null, maxBytes: number): Readable {
+    const output = new PassThrough();
+    const collector = new PassThrough();
     const chunks: Buffer[] = [];
     let total = 0;
     let cacheable = true;
-    stream.on('data', (chunk: Buffer | Uint8Array) => { if (!cacheable) return; const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); total += buffer.byteLength; if (total <= maxBytes) chunks.push(buffer); else { cacheable = false; chunks.length = 0; } });
-    stream.once('end', () => { if (cacheable && total > 0) this.segmentCache.set(key, Buffer.concat(chunks), contentType); });
+    const invalidate = (): void => { cacheable = false; chunks.length = 0; };
+    collector.on('data', (chunk: Buffer) => {
+      if (!cacheable) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buffer.byteLength;
+      if (total <= maxBytes) chunks.push(buffer);
+      else invalidate();
+    });
+    collector.once('end', () => { if (cacheable && total > 0) this.segmentCache.set(key, Buffer.concat(chunks), contentType); });
+    collector.on('error', invalidate);
+    stream.once('close', () => { if (!stream.readableEnded) { invalidate(); output.destroy(); collector.destroy(); } });
+    stream.pipe(output);
+    stream.pipe(collector);
+    return output;
   }
 
   private sendBuffered(reply: FastifyReply, buffer: Buffer, contentType: string | null, status: number, cacheStatus = 'HIT'): FastifyReply { if (contentType) reply.header('content-type', contentType); reply.header('content-length', String(buffer.byteLength)); reply.header('cache-control', SEGMENT_CACHE_CONTROL); reply.header('cdn-cache-control', SEGMENT_CACHE_CONTROL); reply.header('x-mbolo-stream-cache', cacheStatus); reply.status(status); return reply.send(buffer); }
@@ -91,4 +113,4 @@ function streamContextOf(request: FastifyRequest & { streamContext?: StreamConte
 function looksLikePlaylist(contentType: string | null, url: string): boolean { return Boolean(contentType && /mpegurl/i.test(contentType)) || /\.m3u8(\?|$)/i.test(url); }
 function segmentCacheKey(url: string): string | null { try { const parsed = new URL(url); if (/\.m3u8?$/i.test(parsed.pathname)) return null; if (!/\.(?:ts|m4s|mp4|aac|mp3|webm)$/i.test(parsed.pathname)) return null; return `segment:${createHash('sha256').update(url).digest('hex')}`; } catch { return null; } }
 async function readLimited(stream: Readable, maxBytes: number, label: string): Promise<Buffer> { const chunks: Buffer[] = []; let size = 0; try { for await (const chunk of stream) { size += chunk.length; if (size > maxBytes) throw new BadGatewayException(`${label} fournisseur trop volumineux`); chunks.push(chunk); } } finally { stream.destroy(); } return Buffer.concat(chunks); }
-function abortOnDisconnect(reply: FastifyReply, stream: Readable): void { reply.raw.on('close', () => { if (!reply.raw.writableFinished) stream.destroy(); }); }
+function abortOnDisconnect(reply: FastifyReply, ...streams: Readable[]): void { reply.raw.on('close', () => { if (!reply.raw.writableFinished) for (const stream of streams) stream.destroy(); }); }
