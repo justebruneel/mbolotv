@@ -17,6 +17,7 @@ const MAX_RETRIES = 2;
 const MAX_NETWORK_RETRIES = 3;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const STARTUP_DEADLINE_MS = 30_000;
+const MIN_VIABLE_BUFFER_SECONDS = 4;
 const CONTROLS_HIDE_DELAY_MS = 3_000;
 const MOBILE_CONTROLS_HIDE_DELAY_MS = 4_000;
 const GESTURE_THRESHOLD = 40;
@@ -27,13 +28,13 @@ function heightFromBitrate(bps: number | undefined): number { if (!bps) return 0
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
-function networkProfile(): { estimate: number; capHeight: number | null; buffer: number; liveSyncCount: number } {
+function networkProfile(): { estimate: number; capHeight: number | null; buffer: number; liveSyncCount: number; startBuffer: number } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   const type = conn?.effectiveType;
   const downlink = conn?.downlink ?? 0;
-  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 14, liveSyncCount: 7 };
-  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 18, liveSyncCount: 6 };
-  return { estimate: 1_200_000, capHeight: null, buffer: 24, liveSyncCount: 5 };
+  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 20, liveSyncCount: 7, startBuffer: 6 };
+  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 26, liveSyncCount: 8, startBuffer: 10 };
+  return { estimate: 1_200_000, capHeight: null, buffer: 36, liveSyncCount: 7, startBuffer: 12 };
 }
 function getNetworkInfo(): { effectiveType: string; downlink: number; saveData: boolean } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
@@ -77,6 +78,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [isPip, setIsPip] = useState(false);
   const [liveProgress, setLiveProgress] = useState(0);
   const [liveEdge, setLiveEdge] = useState(0);
+  const [bandwidth, setBandwidth] = useState<number | null>(null);
   const [gestureOverlay, setGestureOverlay] = useState<{ type: 'volume' | 'seek'; value: number } | null>(null);
   const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -85,6 +87,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [fsSupported, setFsSupported] = useState(true);
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const isIosRef = useRef(false);
+  const startBufferRef = useRef(12);
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
   selectedLevelRef.current = selectedLevel;
 
@@ -122,11 +125,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let retries = 0;
     let networkRetries = 0;
     let started = false;
+    let playbackInitiated = false;
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     startupAtRef.current = performance.now();
     rebufferCountRef.current = 0;
-    setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setRetrying(false); setLiveProgress(0); setLiveEdge(0); setErrorInfo({ type: null, httpCode: null });
+    setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setRetrying(false); setLiveProgress(0); setLiveEdge(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); deadlineTimer = retryTimer = null; };
     const destroy = (): void => { const hls = hlsRef.current; if (hls) { hls.stopLoad(); hls.detachMedia(); hls.destroy(); } hlsRef.current = null; el.removeAttribute('src'); el.load(); };
@@ -139,9 +143,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
       if (!Hls.isSupported()) { el.src = urls[urlIndex]; el.load(); return; }
       started = false;
-      deadlineTimer = setTimeout(() => { if (!cancelled && !started) advance(); }, STARTUP_DEADLINE_MS);
+      playbackInitiated = false;
+      const initiatePlayback = (): void => { if (playbackInitiated || cancelled) return; playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); };
+      deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) { playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); } else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: profile.capHeight === null, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 30, maxBufferSize: 30 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: 0, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
+      startBufferRef.current = profile.startBuffer;
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: profile.capHeight === null, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 45, maxBufferSize: 45 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: 0, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
       hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
@@ -162,11 +169,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         const dataCap = Math.max(0, ...discovered.filter((l) => l.height <= DATA_SAVER_MAX_HEIGHT).map((l) => l.index));
         hls.autoLevelCapping = initialDataSaver ? Math.min(networkCapRef.current < 0 ? dataCap : networkCapRef.current, dataCap) : networkCapRef.current;
         hls.currentLevel = initialLevel !== undefined && initialLevel >= 0 ? initialLevel : -1;
-        void el.play().catch(() => setAutoplayBlocked(true));
+        if (bufferAhead() >= startBufferRef.current) initiatePlayback();
       });
       hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); } });
       hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
-      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; updateStats(); });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startBufferRef.current) { playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); } });
     }
     const onPlaying = (): void => markReady();
     const onCanPlay = (): void => { if (!Hls.isSupported()) markReady(); };
@@ -191,8 +198,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
 
   return <div ref={containerRef} className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''} ${isPseudoFullscreen ? styles.pseudoFullscreen : ''}`} data-state={status} onMouseMove={!isMobile ? showControls : undefined} onMouseLeave={() => { if (!isMobile && status === 'ready') setControlsVisible(false); }} onTouchStart={(e) => { showControls(); handleTouchStart(e); }} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
     <video ref={videoRef} className={styles.video} playsInline preload="auto" onClick={handleVideoClick} aria-label={`Lecteur ${title}`} />
-    {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && <><Spinner /><p className={styles.hint}>Le lecteur démarre en qualité basse puis augmente selon le réseau.</p></>}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
+    {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && <><Spinner /><p className={styles.hint}>{retrying ? 'Nouvelle tentative…' : <>Préchargement du direct : <strong>{formatBuffer(stats.bufferAhead)}</strong> / {startBufferRef.current} s en mémoire tampon avant le lancement.</>}</p></>}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
     {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>Rattrapage du direct…</span></div>}
+    {bandwidth !== null && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && autoplayBlocked && <button type="button" className={styles.playPrompt} onClick={() => { const video = videoRef.current; if (video) void video.play().then(() => setAutoplayBlocked(false)).catch(() => undefined); }}>Lancer la lecture</button>}
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}>{gestureOverlay.type === 'volume' ? <Icon.Volume2 size={28} /> : <Icon.Maximize size={28} />}</span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
     {status === 'ready' && <div className={styles.progressBar}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}
