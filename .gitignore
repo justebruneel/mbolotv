@@ -12,3 +12,9 @@ uploads/
 *.db-shm
 *.db-wal
 *.tsbuildinfo
+
+# Secrets auto-hébergement (jamais commités)
+docker.env
+docker.env.bak
+cloudflared-data/*.json
+cloudflared-data/*.pem

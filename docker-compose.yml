@@ -1,5 +1,6 @@
 # Stack backend Mbolo TV (auto-hébergé, essai)
 # Build context = racine du monorepo ; le Dockerfile de apps/api build api + worker.
+# Exposition publique : tunnel Cloudflare nommé (service "cloudflared", réseau Compose par défaut).
 services:
   redis:
     image: redis:7-alpine
@@ -15,8 +16,9 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     env_file: ./docker.env
+    # Bindé en local uniquement (diagnostic) ; le trafic public passe par cloudflared.
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     depends_on:
       redis:
         condition: service_healthy
@@ -39,6 +41,18 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cloudflared:
+    # Tag pinné (vérifié sur Docker Hub) ; ne pas utiliser :latest.
+    image: cloudflare/cloudflared:2026.8.2
+    restart: unless-stopped
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "--no-autoupdate", "run"]
+    volumes:
+      - ./cloudflared-data:/etc/cloudflared:ro
+    depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
