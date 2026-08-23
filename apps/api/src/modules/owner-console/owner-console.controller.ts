@@ -12,6 +12,7 @@ import { slugify } from '../../common/normalize/slugify';
 import { z } from 'zod';
 
 const auditQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).optional(), offset: z.coerce.number().int().min(0).optional() });
+const channelQuerySchema = z.object({ categoryId: z.string().optional(), q: z.string().trim().max(120).optional(), limit: z.coerce.number().int().min(1).max(200).optional(), offset: z.coerce.number().int().min(0).optional() });
 type StatusGroup = { status: string; _count: { _all: number } };
 type AuditRow = { id: string; action: string; entity: string; entityId: string | null; actorId: string | null; metadata: unknown; createdAt: Date };
 type OwnerVariant = { healthStatus: string | null };
@@ -45,23 +46,20 @@ export class OwnerConsoleController {
   async catalog(@Req() request: FastifyRequest): Promise<OwnerCatalog> {
     const ownerId = getOwnerContext(request).userId;
     const channelScope = { variants: { some: { source: { ownerId } } } } as const;
-    const [categories, channels, variantRows] = await Promise.all([
+    // L'arbre ne transporte plus les chaînes : après un import IPTV elles se
+    // comptent en dizaines de milliers et le JSON dépassait 12 Mo (plus de
+    // 20 s de transfert via tunnel). Les dossiers portent leurs compteurs ;
+    // les canaux se chargent par dossier, paginés, via GET owner/catalog/channels.
+    const [categories, counts, uncategorizedCount] = await Promise.all([
       this.prisma.category.findMany({
         where: { channels: { some: channelScope } },
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
         select: { id: true, slug: true, name: true, parentId: true, isVisible: true, sortOrder: true },
       }) as unknown as OwnerCategoryRow[],
-      this.prisma.channel.findMany({
-        where: channelScope,
-        orderBy: [{ sortOrder: 'asc' }, { canonicalName: 'asc' }],
-        select: { id: true, name: true, canonicalName: true, categoryId: true, isVisible: true, sortOrder: true },
-      }) as unknown as OwnerChannelRow[],
-      this.prisma.streamVariant.findMany({ where: { source: { ownerId } }, select: { channelId: true, healthStatus: true } }) as unknown as Array<{ channelId: string; healthStatus: string | null }>,
+      this.prisma.channel.groupBy({ by: ['categoryId'], where: channelScope, _count: { _all: true } }) as unknown as Promise<Array<{ categoryId: string | null; _count: { _all: number } }>>,
+      this.prisma.channel.count({ where: { ...channelScope, categoryId: null } }),
     ]);
-    const channelsByCategory = new Map<string | null, OwnerChannelRow[]>();
-    for (const channel of channels) { const bucket = channelsByCategory.get(channel.categoryId) ?? []; bucket.push(channel); channelsByCategory.set(channel.categoryId, bucket); }
-    const variantsByChannel = new Map<string, string[]>();
-    for (const variant of variantRows) { const list = variantsByChannel.get(variant.channelId) ?? []; list.push(variant.healthStatus ?? ''); variantsByChannel.set(variant.channelId, list); }
+    const countByCategory = new Map<string | null, number>(counts.map((row) => [row.categoryId ?? null, Number(row._count._all)]));
 
     const byId = new Map(categories.map((category) => [category.id, category] as const));
     const effective = new Map<string, boolean>();
@@ -90,7 +88,6 @@ export class OwnerConsoleController {
       visitingNodes.add(node.id);
       const children = (childrenByParent.get(node.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((child) => serializeNode(child));
       visitingNodes.delete(node.id);
-      const nodeChannels = channelsByCategory.get(node.id) ?? [];
       return {
         id: node.id,
         slug: node.slug,
@@ -98,17 +95,41 @@ export class OwnerConsoleController {
         parentId: node.parentId,
         isVisible: node.isVisible,
         effectiveVisible: effective.get(node.id) ?? node.isVisible,
-        channelCount: nodeChannels.length,
+        channelCount: countByCategory.get(node.id) ?? 0,
         sortOrder: node.sortOrder,
-        channels: nodeChannels.map((channel) => this.serializeChannel(channel, variantsByChannel.get(channel.id) ?? [])),
+        channels: [],
         children,
       };
     };
 
     return {
       categories: roots.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)).map((node) => serializeNode(node)),
-      uncategorized: (channelsByCategory.get(null) ?? []).map((channel) => this.serializeChannel(channel, variantsByChannel.get(channel.id) ?? [])),
+      uncategorized: [],
+      uncategorizedCount,
     };
+  }
+
+  @Get('catalog/channels')
+  async catalogChannels(@Req() request: FastifyRequest, @Query(new ZodValidationPipe(channelQuerySchema)) query: { categoryId?: string; q?: string; limit?: number; offset?: number }): Promise<{ items: OwnerChannel[]; total: number }> {
+    const ownerId = getOwnerContext(request).userId;
+    const contains = query.q ? { contains: query.q, mode: 'insensitive' as const } : undefined;
+    const where = {
+      variants: { some: { source: { ownerId } } },
+      ...(query.categoryId ? { categoryId: query.categoryId === 'none' ? null : query.categoryId } : {}),
+      ...(contains ? { OR: [{ name: contains }, { canonicalName: contains }] } : {}),
+    };
+    const limit = query.limit ?? 50;
+    const offset = query.offset ?? 0;
+    const [rows, total] = await Promise.all([
+      this.prisma.channel.findMany({ where, orderBy: [{ canonicalName: 'asc' }, { name: 'asc' }], take: limit, skip: offset, select: { id: true, name: true, canonicalName: true, categoryId: true, isVisible: true } }),
+      this.prisma.channel.count({ where }),
+    ]) as unknown as [Array<{ id: string; name: string; canonicalName: string; categoryId: string | null; isVisible: boolean }>, number];
+    // Le compteur de variantes et l'état de santé ne concernent que la page
+    // renvoyée (50 canaux), jamais les dizaines de milliers du catalogue.
+    const variantRows = rows.length > 0 ? await this.prisma.streamVariant.findMany({ where: { source: { ownerId }, channelId: { in: rows.map((row) => row.id) } }, select: { channelId: true, healthStatus: true } }) : [];
+    const variantsByChannel = new Map<string, string[]>();
+    for (const variant of variantRows) { const list = variantsByChannel.get(variant.channelId) ?? []; list.push(variant.healthStatus ?? ''); variantsByChannel.set(variant.channelId, list); }
+    return { items: rows.map((channel) => this.serializeChannel(channel, variantsByChannel.get(channel.id) ?? [])), total };
   }
 
   @Post('categories')
@@ -220,7 +241,7 @@ export class OwnerConsoleController {
     return candidate;
   }
 
-  private serializeChannel(channel: OwnerChannelRow, variantHealths: string[]): OwnerChannel {
+  private serializeChannel(channel: Pick<OwnerChannelRow, 'id' | 'name' | 'canonicalName' | 'categoryId' | 'isVisible'>, variantHealths: string[]): OwnerChannel {
     const healthStatus = variantHealths.some((status) => status === 'OK') ? 'OK' : variantHealths.some((status) => status === 'DOWN') ? 'DOWN' : null;
     return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, categoryId: channel.categoryId, isVisible: channel.isVisible, healthStatus: healthStatus as 'OK' | 'DOWN' | null, variantsCount: variantHealths.length };
   }

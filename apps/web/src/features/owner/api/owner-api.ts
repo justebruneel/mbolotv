@@ -8,6 +8,7 @@ import type {
   ImportRunListResponse,
   Overview,
   OwnerCatalog,
+  OwnerChannel,
   OwnerCategoryCreateInput,
   OwnerCategoryUpdateInput,
   OwnerChannelUpdateInput,
@@ -47,6 +48,17 @@ export const ownerApi = {
   overview: (): Promise<Overview> => fetch(`${BASE_URL}/owner/overview`, { credentials: 'include' }).then(parseResponse<Overview>),
   audit: (limit = 50, offset = 0): Promise<{ items: AuditEntry[]; total: number }> => fetch(`${BASE_URL}/owner/audit?limit=${limit}&offset=${offset}`, { credentials: 'include' }).then(parseResponse<{ items: AuditEntry[]; total: number }>),
   catalog: (): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/catalog`, { credentials: 'include' }).then(parseResponse<OwnerCatalog>),
+  // Canaux paginés par dossier (l'arbre du catalogue ne les embarque plus).
+  // categoryId 'none' = sans dossier ; absent = recherche dans tout le catalogue.
+  catalogChannels: (params: { categoryId?: string | null; q?: string; limit?: number; offset?: number } = {}): Promise<{ items: OwnerChannel[]; total: number }> => {
+    const search = new URLSearchParams();
+    if (params.categoryId != null) search.set('categoryId', params.categoryId);
+    if (params.q) search.set('q', params.q);
+    if (params.limit != null) search.set('limit', String(params.limit));
+    if (params.offset != null) search.set('offset', String(params.offset));
+    const qs = search.toString();
+    return fetch(`${BASE_URL}/owner/catalog/channels${qs ? `?${qs}` : ''}`, { credentials: 'include' }).then(parseResponse<{ items: OwnerChannel[]; total: number }>);
+  },
   categories: {
     create: (input: OwnerCategoryCreateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),
     update: (id: string, input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),

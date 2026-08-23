@@ -1,12 +1,24 @@
 'use client';
 
 import type { OwnerCatalog, OwnerCategory, OwnerChannel } from '@mbolo/contracts';
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ownerApi } from '../../../../../features/owner/api/owner-api';
 
 type Tests = Record<string, string>;
 
 type OrderInfo = { siblings: OwnerCategory[]; index: number };
+
+type ChannelPage = { items: OwnerChannel[]; total: number };
+
+// Les canaux ne voyagent plus dans l'arbre du catalogue (53k chaînes = 12 Mo
+// de JSON et un DOM qui fige l'onglet). Chaque dossier ouvert charge ses
+// chaînes serveur, 50 à la fois.
+const PAGE_SIZE = 50;
+const AUTO_OPEN_MAX_CHANNELS = 100;
+
+function pageKey(categoryId: string | null): string {
+  return categoryId ?? 'none';
+}
 
 function flattenCategories(nodes: OwnerCategory[], acc: OwnerCategory[] = []): OwnerCategory[] {
   for (const node of nodes) { acc.push(node); flattenCategories(node.children ?? [], acc); }
@@ -36,7 +48,7 @@ function buildChildrenByParent(nodes: OwnerCategory[]): Map<string | null, Owner
   return map;
 }
 
-function ChannelRow({ channel, onToggle, onTest, tests, busy }: { channel: OwnerChannel; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null }) {
+const ChannelRow = memo(function ChannelRow({ channel, onToggle, onTest, tests, busy }: { channel: OwnerChannel; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null }) {
   const test = tests[channel.id];
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -49,6 +61,21 @@ function ChannelRow({ channel, onToggle, onTest, tests, busy }: { channel: Owner
       </label>
       <button className="btn" disabled={busy === `test:${channel.id}`} onClick={() => onTest(channel.id)}>{busy === `test:${channel.id}` ? 'Test…' : 'Tester'}</button>
       {test && <span className={`text-xs font-semibold ${test === 'OK' ? 'text-success' : 'text-danger'}`}>{test}</span>}
+    </div>
+  );
+});
+
+function ChannelList({ page, onToggle, onTest, tests, busy, onLoadMore }: { page: ChannelPage; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null; onLoadMore?: () => void }) {
+  return (
+    <div className="divide-y divide-border/70">
+      {page.items.map((channel) => (
+        <ChannelRow key={channel.id} channel={channel} onToggle={onToggle} onTest={onTest} tests={tests} busy={busy} />
+      ))}
+      {onLoadMore && page.items.length < page.total && (
+        <div className="bg-surface-2/40 p-3 text-center">
+          <button type="button" className="btn" onClick={onLoadMore}>Afficher plus ({page.items.length}/{page.total})</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -87,7 +114,7 @@ function ParentPicker({ allFlat, childrenByParent, nodeId, currentParentId, onMo
   );
 }
 
-function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onTest, onReorder, onMoveParent, tests, busy, orderMap, allFlat, childrenByParent }: {
+function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onTest, onReorder, onMoveParent, tests, busy, orderMap, allFlat, childrenByParent, getChannels, isChannelsLoading, ensureChannels, loadMoreChannels }: {
   node: OwnerCategory;
   depth: number;
   onUpdate: (id: string, patch: { name?: string; isVisible?: boolean }) => void;
@@ -101,8 +128,14 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
   orderMap: Map<string, OrderInfo>;
   allFlat: OwnerCategory[];
   childrenByParent: Map<string | null, OwnerCategory[]>;
+  getChannels: (categoryId: string) => ChannelPage | undefined;
+  isChannelsLoading: (categoryId: string) => boolean;
+  ensureChannels: (categoryId: string) => void;
+  loadMoreChannels: (categoryId: string) => void;
 }) {
-  const [open, setOpen] = useState(depth === 0);
+  // Les gros dossiers restent fermés par défaut pour éviter de déclencher
+  // des dizaines de chargements au premier rendu.
+  const [open, setOpen] = useState(depth === 0 && node.channelCount <= AUTO_OPEN_MAX_CHANNELS);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(node.name);
   const [subName, setSubName] = useState('');
@@ -111,6 +144,10 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
   const order = orderMap.get(node.id);
   const canUp = order ? order.index > 0 : false;
   const canDown = order ? order.index < order.siblings.length - 1 : false;
+
+  useEffect(() => { if (open) ensureChannels(node.id); }, [open, ensureChannels, node.id]);
+  const channels = getChannels(node.id);
+  const channelsLoading = isChannelsLoading(node.id);
 
   return (
     <section className="card overflow-hidden">
@@ -139,9 +176,11 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
 
       {open && (
         <div className="divide-y divide-border/70">
-          {node.channels.map((channel) => (
-            <ChannelRow key={channel.id} channel={channel} onToggle={onToggleChannel} onTest={onTest} tests={tests} busy={busy} />
-          ))}
+          {channels ? (
+            <ChannelList page={channels} onToggle={onToggleChannel} onTest={onTest} tests={tests} busy={busy} onLoadMore={channels.items.length < channels.total ? () => loadMoreChannels(node.id) : undefined} />
+          ) : (
+            <div className="p-3 text-sm text-muted">{channelsLoading ? 'Chargement des chaînes…' : 'Aucune chaîne dans ce dossier.'}</div>
+          )}
 
           <div className="flex flex-wrap items-center gap-2 bg-surface-2/40 p-3">
             <input
@@ -161,7 +200,7 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
           </div>
 
           {(node.children ?? []).map((child) => (
-            <CategoryNode key={child.id} node={child} depth={depth + 1} onUpdate={onUpdate} onCreateSub={onCreateSub} onToggleChannel={onToggleChannel} onTest={onTest} onReorder={onReorder} onMoveParent={onMoveParent} tests={tests} busy={busy} orderMap={orderMap} allFlat={allFlat} childrenByParent={childrenByParent} />
+            <CategoryNode key={child.id} node={child} depth={depth + 1} onUpdate={onUpdate} onCreateSub={onCreateSub} onToggleChannel={onToggleChannel} onTest={onTest} onReorder={onReorder} onMoveParent={onMoveParent} tests={tests} busy={busy} orderMap={orderMap} allFlat={allFlat} childrenByParent={childrenByParent} getChannels={getChannels} isChannelsLoading={isChannelsLoading} ensureChannels={ensureChannels} loadMoreChannels={loadMoreChannels} />
           ))}
         </div>
       )}
@@ -175,12 +214,75 @@ export default function CatalogControlPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [rootName, setRootName] = useState('');
   const [tests, setTests] = useState<Tests>({});
+  const [pages, setPages] = useState<Record<string, ChannelPage>>({});
+  const [loadingPages, setLoadingPages] = useState<Record<string, boolean>>({});
+  const loadedRef = useRef<Set<string>>(new Set());
+  const pagesRef = useRef<Record<string, ChannelPage>>({});
+  pagesRef.current = pages;
+  const loadingPagesRef = useRef<Record<string, boolean>>({});
+  loadingPagesRef.current = loadingPages;
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchPage, setSearchPage] = useState<ChannelPage | null>(null);
+  const searchPageRef = useRef<ChannelPage | null>(null);
+  searchPageRef.current = searchPage;
+  const [uncategorizedOpen, setUncategorizedOpen] = useState(false);
 
   const orderMap = useMemo(() => (catalog ? buildOrderMap(catalog.categories) : new Map<string, OrderInfo>()), [catalog]);
   const allFlat = useMemo(() => (catalog ? flattenCategories(catalog.categories) : []), [catalog]);
   const childrenByParent = useMemo(() => (catalog ? buildChildrenByParent(catalog.categories) : new Map<string | null, OwnerCategory[]>()), [catalog]);
 
   useEffect(() => { void reload(); }, []);
+
+  // Recherche globale côté serveur, débouncée.
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (query.length < 2) { setSearchPage(null); return; }
+    const timer = window.setTimeout(async () => {
+      try { setSearchPage(await ownerApi.catalogChannels({ q: query, limit: PAGE_SIZE })); }
+      catch (reason) { setError(reason instanceof Error ? reason.message : 'Recherche impossible.'); }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  const fetchPage = useCallback(async (categoryId: string | null, mode: 'replace' | 'append'): Promise<void> => {
+    const key = pageKey(categoryId);
+    setLoadingPages((current) => ({ ...current, [key]: true }));
+    try {
+      const offset = mode === 'append' ? pagesRef.current[key]?.items.length ?? 0 : 0;
+      const data = await ownerApi.catalogChannels({ categoryId, limit: PAGE_SIZE, offset });
+      setPages((current) => {
+        const previous = mode === 'append' ? current[key] : undefined;
+        const merged: ChannelPage = previous ? { items: [...previous.items, ...data.items], total: data.total } : data;
+        return { ...current, [key]: merged };
+      });
+    } catch (reason) {
+      loadedRef.current.delete(key);
+      setError(reason instanceof Error ? reason.message : 'Chargement des chaînes impossible.');
+    } finally {
+      setLoadingPages((current) => { const next = { ...current }; delete next[key]; return next; });
+    }
+  }, []);
+
+  const ensureChannels = useCallback((categoryId: string) => {
+    const key = pageKey(categoryId);
+    if (loadedRef.current.has(key)) return;
+    loadedRef.current.add(key);
+    void fetchPage(categoryId, 'replace');
+  }, [fetchPage]);
+
+  const loadMoreChannels = useCallback((categoryId: string) => { void fetchPage(categoryId, 'append'); }, [fetchPage]);
+
+  const getChannels = useCallback((categoryId: string) => pagesRef.current[pageKey(categoryId)], []);
+  const isChannelsLoading = useCallback((categoryId: string) => Boolean(loadingPagesRef.current[pageKey(categoryId)]), []);
+
+  const loadMoreSearch = useCallback(() => {
+    const current = searchPageRef.current;
+    if (!current || current.items.length >= current.total) return;
+    const query = searchQuery.trim();
+    void ownerApi.catalogChannels({ q: query, limit: PAGE_SIZE, offset: current.items.length })
+      .then((data) => setSearchPage({ items: [...current.items, ...data.items], total: data.total }))
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Recherche impossible.'));
+  }, [searchQuery]);
 
   async function reload(): Promise<void> {
     try { setCatalog(await ownerApi.catalog()); setError(null); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Connexion propriétaire requise.'); }
@@ -193,14 +295,25 @@ export default function CatalogControlPage() {
     setBusy(`create:${key}`); try { setCatalog(await ownerApi.categories.create({ name, parentId })); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Création impossible.'); } finally { setBusy(null); }
   }
   async function updateChannel(id: string, isVisible: boolean): Promise<void> {
-    setBusy(id); try { setCatalog(await ownerApi.channels.update(id, { isVisible })); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Modification impossible.'); } finally { setBusy(null); }
+    // Patch optimiste local : le serveur ne renvoie plus les listes de chaînes.
+    const apply = (items: OwnerChannel[]): OwnerChannel[] => items.map((channel) => (channel.id === id ? { ...channel, isVisible } : channel));
+    setPages((current) => {
+      const next: Record<string, ChannelPage> = {};
+      for (const [key, page] of Object.entries(current)) next[key] = { ...page, items: apply(page.items) };
+      return next;
+    });
+    setSearchPage((current) => (current ? { ...current, items: apply(current.items) } : current));
+    setBusy(id);
+    try { await ownerApi.channels.update(id, { isVisible }); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Modification impossible.'); }
+    finally { setBusy(null); }
   }
-  async function testChannel(id: string): Promise<void> {
+  const testChannel = useCallback(async (id: string): Promise<void> => {
     setBusy(`test:${id}`); setTests((current) => ({ ...current, [id]: 'test…' }));
     try { const result = await ownerApi.channels.test(id); setTests((current) => ({ ...current, [id]: result.ok ? 'OK' : 'Hors ligne' })); }
     catch (reason) { setTests((current) => ({ ...current, [id]: reason instanceof Error ? reason.message : 'Test impossible' })); }
     finally { setBusy(null); }
-  }
+  }, []);
 
   if (error && !catalog) return <main className="p-6"><div className="card p-6 text-sm text-danger">{error}. <a className="font-semibold text-accent hover:underline" href="/owner/login">Se connecter</a></div></main>;
   if (!catalog) return <main className="p-6 text-sm text-muted">Chargement du catalogue…</main>;
@@ -214,6 +327,22 @@ export default function CatalogControlPage() {
       </header>
 
       {error && <p className="card border-danger/30 bg-danger-muted p-3 text-sm text-danger">{error}</p>}
+
+      <section className="card flex flex-wrap items-center gap-3 p-4">
+        <input
+          value={searchQuery}
+          placeholder="Rechercher une chaîne…"
+          onChange={(event) => setSearchQuery(event.target.value)}
+          className="min-w-[220px] flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-semibold"
+        />
+      </section>
+
+      {searchPage && (
+        <section className="card overflow-hidden">
+          <div className="border-b border-border p-4 font-semibold">Résultats ({searchPage.total})</div>
+          <ChannelList page={searchPage} onToggle={updateChannel} onTest={testChannel} tests={tests} busy={busy} onLoadMore={searchPage.items.length < searchPage.total ? loadMoreSearch : undefined} />
+        </section>
+      )}
 
       <section className="card flex flex-wrap items-center gap-3 p-4">
         <input
@@ -242,16 +371,29 @@ export default function CatalogControlPage() {
             orderMap={orderMap}
             allFlat={allFlat}
             childrenByParent={childrenByParent}
+            getChannels={getChannels}
+            isChannelsLoading={isChannelsLoading}
+            ensureChannels={ensureChannels}
+            loadMoreChannels={loadMoreChannels}
           />
         ))}
-        {catalog.uncategorized.length > 0 && (
+        {catalog.uncategorizedCount > 0 && (
           <section className="card overflow-hidden">
-            <div className="border-b border-border p-4 font-semibold">Sans dossier</div>
-            <div className="divide-y divide-border/70">
-              {catalog.uncategorized.map((channel) => (
-                <ChannelRow key={channel.id} channel={channel} onToggle={updateChannel} onTest={testChannel} tests={tests} busy={busy} />
-              ))}
-            </div>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between border-b border-border p-4 text-left font-semibold hover:bg-surface-2/60"
+              onClick={() => setUncategorizedOpen((value) => { const next = !value; if (next) ensureChannels('none'); return next; })}
+            >
+              <span>Sans dossier ({catalog.uncategorizedCount})</span>
+              <span className="text-muted">{uncategorizedOpen ? '▾' : '▸'}</span>
+            </button>
+            {uncategorizedOpen && (
+              pages['none'] ? (
+                <ChannelList page={pages['none']} onToggle={updateChannel} onTest={testChannel} tests={tests} busy={busy} onLoadMore={pages['none'].items.length < pages['none'].total ? () => void fetchPage(null, 'append') : undefined} />
+              ) : (
+                <div className="p-3 text-sm text-muted">{loadingPages['none'] ? 'Chargement des chaînes…' : 'Aucune chaîne.'}</div>
+              )
+            )}
           </section>
         )}
       </div>

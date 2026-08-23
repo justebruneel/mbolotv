@@ -150,7 +150,7 @@ export const ownerCategorySchema: z.ZodType<OwnerCategory> = z.object({
   channels: z.array(ownerChannelSchema),
   children: z.array(z.lazy(() => ownerCategorySchema)),
 });
-export const ownerCatalogSchema = z.object({ categories: z.array(ownerCategorySchema), uncategorized: z.array(ownerChannelSchema) });
+export const ownerCatalogSchema = z.object({ categories: z.array(ownerCategorySchema), uncategorized: z.array(ownerChannelSchema), uncategorizedCount: z.number() });
 export type OwnerCatalog = z.infer<typeof ownerCatalogSchema>;
 export const channelTestResponseSchema = z.object({ ok: z.boolean(), status: z.enum(['OK', 'DOWN']), checked: z.number() });
 export type ChannelTestResponse = z.infer<typeof channelTestResponseSchema>;
