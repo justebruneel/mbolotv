@@ -129,6 +129,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let networkRetries = 0;
     let started = false;
     let playbackInitiated = false;
+    let mediaRecoveries = 0;
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     startupAtRef.current = performance.now();
@@ -148,6 +149,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (!Hls.isSupported()) { el.src = urls[urlIndex]; el.load(); return; }
       started = false;
       playbackInitiated = false;
+      mediaRecoveries = 0;
       const initiatePlayback = (): void => { if (playbackInitiated || cancelled) return; playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); };
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) { playbackInitiated = true; void el.play().catch(() => setAutoplayBlocked(true)); } else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
@@ -156,7 +158,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
-        if (data.type === ErrorTypes.MEDIA_ERROR) { if (el.buffered.length > 0 && el.currentTime + 0.5 < el.buffered.end(el.buffered.length - 1)) el.currentTime += 0.5; hls.recoverMediaError(); return; }
+        if (data.type === ErrorTypes.MEDIA_ERROR) { mediaRecoveries += 1; if (mediaRecoveries > 3) { advance(); return; } if (el.buffered.length > 0 && el.currentTime + 0.5 < el.buffered.end(el.buffered.length - 1)) el.currentTime += 0.5; try { hls.recoverMediaError(); } catch { advance(); } return; }
         if (data.type === ErrorTypes.NETWORK_ERROR) {
           const code = data.response?.code ?? null; const master = typeof data.url === 'string' && data.url.includes('master.m3u8');
           if (code === 401 || code === 403 || (code === 404 && master)) { setErrorInfo({ type: 'networkError', httpCode: code }); if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrent(); } else setStatus('error'); return; }
@@ -187,15 +189,13 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       setStats((c) => ({ ...c, rebufferCount: rebufferCountRef.current }));
       const ahead = bufferAhead();
       if (ahead <= STALL_PAUSE_THRESHOLD_SECONDS && !el.paused) { el.pause(); stallPauseRef.current = true; }
-      const hls = hlsRef.current;
-      if (hls) { if (selectedLevelRef.current === -1 && hls.levels.length > 1) hls.nextAutoLevel = 0; hls.startLoad(-1); }
       setBuffering(true);
     };
     const resumeIfBuffered = (): void => {
       if (!started || !stallPauseRef.current) return;
       if (bufferAhead() >= RESUME_BUFFER_SECONDS) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
     };
-    const onPlayingReset = (): void => { if (started) { const hls = hlsRef.current; if (hls && selectedLevelRef.current === -1) hls.nextAutoLevel = -1; if (!stallPauseRef.current) setBuffering(false); updateStats(); } };
+    const onPlayingReset = (): void => { if (started && !stallPauseRef.current) { setBuffering(false); updateStats(); } };
     const onError = (): void => advance();
     el.addEventListener('playing', onPlaying); el.addEventListener('canplay', onCanPlay); el.addEventListener('waiting', onWaiting); el.addEventListener('playing', onPlayingReset); el.addEventListener('error', onError);
     if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else setStatus('error');
