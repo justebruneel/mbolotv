@@ -45,16 +45,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  cloudflared:
-    # Tag pinné (vérifié sur Docker Hub) ; ne pas utiliser :latest.
-    image: cloudflare/cloudflared:2026.8.2
-    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "--no-autoupdate", "run"]
-    volumes:
-      - ./cloudflared-data:/etc/cloudflared:ro
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
+  # cloudflared remplacé par un service systemd sur l'hôte (plan B) :
+  # voir infra/systemd/cloudflared-mbolo.service + scripts/install-cloudflared-host.sh
+  # (le NAT docker bridait le débit sortant du tunnel).
 
 volumes:
   uploads:
