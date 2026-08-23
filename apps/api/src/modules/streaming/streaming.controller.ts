@@ -108,7 +108,9 @@ export class StreamingController {
     const message = error instanceof Error ? error.message : 'Erreur de flux distante';
     reply.header('content-type', 'application/json; charset=utf-8');
     reply.header('x-accel-buffering', 'no');
-    return reply.code(502).send({ statusCode: 502, message, error: 'Bad Gateway' });
+    // 503 et non 502 : Cloudflare intercepte les 502 d'origine et renvoie sa
+    // propre page sans en-têtes CORS (voir TunnelSafeExceptionFilter).
+    return reply.code(503).send({ statusCode: 503, message, error: 'Service Unavailable' });
   }
   private async sendPlaylist(reply: FastifyReply, context: StreamContext, stream: Readable, providerUrl: string, aliasId: string): Promise<FastifyReply> { const content = await readLimited(stream, this.maxPlaylistBytes, 'Playlist'); const rewritten = await rewriteM3u8(content.toString('utf8'), providerUrl, (url) => this.streamingService.registerAlias(context.session, url)); await this.playlistCache.set(context.session.id, aliasId, rewritten); return this.sendPlaylistContent(reply, rewritten); }
   private sendPlaylistContent(reply: FastifyReply, content: string): FastifyReply { reply.header('content-type', 'application/vnd.apple.mpegurl'); reply.header('cache-control', PLAYLIST_CACHE_CONTROL); reply.header('cdn-cache-control', PLAYLIST_CACHE_CONTROL); reply.header('x-mbolo-stream-cache', 'PLAYLIST'); reply.header('x-accel-buffering', 'no'); reply.status(200); return reply.send(content); }

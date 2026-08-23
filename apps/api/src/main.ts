@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { fetch as undiciFetch, setGlobalDispatcher, Agent } from 'undici';
 import { AppModule } from './app.module';
+import { TunnelSafeExceptionFilter } from './common/filters/tunnel-safe-exception.filter';
 
 const UPLOAD_BODY_LIMIT = 512 * 1024 * 1024;
 
@@ -15,6 +16,7 @@ async function bootstrap(): Promise<void> {
   globalThis.fetch = undiciFetch as typeof fetch;
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter({ bodyLimit: UPLOAD_BODY_LIMIT }));
   const config = app.get(ConfigService);
+  app.useGlobalFilters(new TunnelSafeExceptionFilter());
   // Sur certaines machines (pas de sortie IPv6 réelle, ULA Tailscale en global),
   // undici tente l'IPv6 et échoue. On force IPv4 pour les fetches sortants.
   if (config.get<string>('FORCE_IPV4', 'false') === 'true') {
