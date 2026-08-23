@@ -16,7 +16,10 @@ const DEFAULT_MAX_PLAYLIST_BYTES = 2 * 1024 * 1024;
 const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_CACHED_SEGMENT_BYTES = 4 * 1024 * 1024;
 const PLAYLIST_CACHE_CONTROL = 'public, max-age=0, s-maxage=2, stale-while-revalidate=5';
-const SEGMENT_CACHE_CONTROL = 'public, max-age=15, s-maxage=60, stale-while-revalidate=300';
+// Les segments TS sont immuables : TTL edge long (s-maxage) pour que le cache
+// Cloudflare serve plusieurs spectateurs depuis le bord et épargne l'upload
+// de la box. Nécessite la Cache Rule « /api/stream/* » côté dashboard CF.
+const SEGMENT_CACHE_CONTROL = 'public, max-age=15, s-maxage=300, stale-while-revalidate=600';
 
 @Controller('stream')
 @UseGuards(StreamSessionGuard)
