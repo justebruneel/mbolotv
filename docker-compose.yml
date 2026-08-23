@@ -48,7 +48,6 @@ services:
   cloudflared:
     # Tag pinné (vérifié sur Docker Hub) ; ne pas utiliser :latest.
     image: cloudflare/cloudflared:2026.8.2
-    restart: unless-stopped
     command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "--no-autoupdate", "run"]
     volumes:
       - ./cloudflared-data:/etc/cloudflared:ro
