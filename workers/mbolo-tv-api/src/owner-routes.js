@@ -6,6 +6,12 @@ import { runSourceImport, ACTIVE_IMPORT_STATES } from './importer.js';
 import { runEpgImportForSource } from './epgimport.js';
 import { checkVariant } from './healthcheck.js';
 
+function chunks(values, size) {
+  const output = [];
+  for (let index = 0; index < values.length; index += size) output.push(values.slice(index, index + size));
+  return output;
+}
+
 function iso(value) {
   return value ? new Date(value).toISOString() : null;
 }
@@ -286,7 +292,27 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   if (sourceDetail && !sourceDetail[2] && method === 'DELETE') {
     const source = await findOwnedSource(ctx, owner, sourceDetail[1]);
     if (!source) return ctx.fail(404, 'Source introuvable');
-    await env.db.query(env, `DELETE FROM "Source" WHERE id = $1`, [source.id]);
+    // Suppression en 2 temps comme sources.service.remove() : la source
+    // d'abord (cascade StreamVariant/EpgProgramme), puis purge des canaux
+    // orphelins (plus aucune variante) pour mettre à jour le catalogue public.
+    const activeRun = await ctx.env.db.query(ctx.env, `SELECT id FROM "ImportRun" WHERE "sourceId" = $1 AND state IN ('QUEUED','FETCHING','PARSING','NORMALIZING') LIMIT 1`, [source.id]);
+    if (activeRun.rows.length > 0) return ctx.fail(409, 'Impossible de supprimer une source pendant un import. Annulez l’import puis réessayez.');
+    await ctx.env.db.query(ctx.env, `DELETE FROM "Source" WHERE id = $1`, [source.id]);
+    const orphanChannels = await ctx.env.db.query(
+      ctx.env,
+      `SELECT c.id FROM "Channel" c
+       WHERE NOT EXISTS (SELECT 1 FROM "StreamVariant" v WHERE v."channelId" = c.id)
+         AND NOT EXISTS (SELECT 1 FROM "EpgProgramme" p WHERE p."channelId" = c.id)`,
+      [],
+    );
+    let orphanChannelsRemoved = 0;
+    for (const part of chunks(orphanChannels.rows.map((row) => row.id), 10000)) {
+      await ctx.env.db.query(ctx.env, `DELETE FROM "Favorite" WHERE "channelId" = ANY($1::text[])`, [part]).catch(() => undefined);
+      const result = await ctx.env.db.query(ctx.env, `DELETE FROM "Channel" WHERE id = ANY($1::text[]) RETURNING id`, [part]);
+      orphanChannelsRemoved += result.rowCount;
+    }
+    void orphanChannelsRemoved;
+    await audit(ctx, owner.userId, 'source.delete', 'source', source.id, { name: source.name });
     return new Response(null, { status: 204, headers: ctx.corsHeaders() });
   }
 
