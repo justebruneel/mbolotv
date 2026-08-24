@@ -23,17 +23,21 @@ export function ImportLiveStatus({ initialRun }: { initialRun: ImportRun }) {
   const processed = run.metrics?.processed ?? run.metrics?.read ?? 0;
 
   useEffect(() => {
-    if (!ACTIVE.has(initialRun.state)) return;
+    if (!ACTIVE.has(run.state)) return;
     const timer = window.setInterval(() => {
       ownerApi.imports.detail(initialRun.id).then(setRun).catch(() => undefined);
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [initialRun.id, initialRun.state]);
+  }, [initialRun.id, run.state]);
 
   async function cancel() {
     setCanceling(true);
     try { setRun(await ownerApi.imports.cancel(run.id)); } finally { setCanceling(false); }
   }
+
+  const total = run.metrics?.read ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const indeterminate = active && total === 0;
 
   return (
     <>
@@ -42,14 +46,23 @@ export function ImportLiveStatus({ initialRun }: { initialRun: ImportRun }) {
           <CardBody>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2"><ImportStateBadge state={run.state} /><span className="text-sm text-muted">{processed} chaîne(s) traitée(s)</span></div>
+                <div className="flex items-center gap-2"><ImportStateBadge state={run.state} /><span className="text-sm text-muted">{processed}{total ? ` / ${total}` : ''} chaîne(s) traitée(s){pct ? ` · ${pct}%` : ''}</span></div>
                 <p className="mt-2 text-xs text-muted">La progression se met à jour automatiquement.</p>
               </div>
               <button type="button" className="btn btn-secondary" onClick={cancel} disabled={canceling}>
                 {canceling ? 'Annulation…' : 'Annuler l’import'}
               </button>
             </div>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-2"><div className="h-full w-full animate-pulse rounded-full bg-accent/70" /></div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-2">
+              <div
+                className={`h-full rounded-full bg-accent/70 transition-all duration-500 ${indeterminate ? 'w-full animate-pulse' : ''}`}
+                style={indeterminate ? undefined : { width: `${pct || 4}%` }}
+                role="progressbar"
+                aria-valuenow={pct}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              />
+            </div>
           </CardBody>
         </Card>
       )}
