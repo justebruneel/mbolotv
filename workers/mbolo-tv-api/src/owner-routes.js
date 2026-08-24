@@ -132,20 +132,19 @@ export async function handleOwnerRoute(ctx, url, path, method) {
 
   if (path === '/api/owner/catalog/channels' && method === 'GET') {
     const q = url.searchParams.get('q');
-    const category = url.searchParams.get('category') ?? 'all';
+    const categoryId = url.searchParams.get('categoryId') ?? 'all';
     const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
     const offset = Number(url.searchParams.get('offset') ?? 0) || 0;
-    const params = [owner.userId];
-    let filters = `EXISTS (SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" WHERE v."channelId" = c.id AND s."ownerId" = $${params.length})`;
-    if (category === 'none') filters += ` AND c."categoryId" IS NULL`;
-    else if (category !== 'all') { params.push(category); filters += ` AND c."categoryId" = $${params.length}`; }
-    if (q) { params.push(`%${q}%`); filters += ` AND (c.name ILIKE $${params.length} OR c."canonicalName" ILIKE $${params.length})`; }
-    params.push(limit, offset);
-    const limitIndex = params.length - 1;
-    const offsetIndex = params.length;
+    // Les filtres partagent $1..$n ; LIMIT/OFFSET sont ajoutés ensuite pour le
+    // SELECT uniquement (le COUNT ne doit recevoir que les paramètres de filtre).
+    const baseParams = [owner.userId];
+    let filters = `EXISTS (SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" WHERE v."channelId" = c.id AND s."ownerId" = $${baseParams.length})`;
+    if (categoryId === 'none') filters += ` AND c."categoryId" IS NULL`;
+    else if (categoryId !== 'all') { baseParams.push(categoryId); filters += ` AND c."categoryId" = $${baseParams.length}`; }
+    if (q) { baseParams.push(`%${q}%`); filters += ` AND (c.name ILIKE $${baseParams.length} OR c."canonicalName" ILIKE $${baseParams.length})`; }
     const [rows, count] = await Promise.all([
-      env.db.query(env, `SELECT c.* FROM "Channel" c WHERE ${filters} ORDER BY c."canonicalName" ASC LIMIT $${limitIndex} OFFSET $${offsetIndex}`, params),
-      env.db.query(env, `SELECT COUNT(*)::int AS total FROM "Channel" c WHERE ${filters}`, params),
+      env.db.query(env, `SELECT c.* FROM "Channel" c WHERE ${filters} ORDER BY c."canonicalName" ASC LIMIT $${baseParams.length + 1} OFFSET $${baseParams.length + 2}`, [...baseParams, limit, offset]),
+      env.db.query(env, `SELECT COUNT(*)::int AS total FROM "Channel" c WHERE ${filters}`, baseParams),
     ]);
     const ids = rows.rows.map((row) => row.id);
     const health = new Map();

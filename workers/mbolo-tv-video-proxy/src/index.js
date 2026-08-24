@@ -5,7 +5,15 @@ export default {
     const target = url.searchParams.get("url");
     if (!target) return new Response("Missing url param", { status: 400 });
 
-    const isPlaylist = target.endsWith(".m3u8");
+    // L'URL peut contenir un jeton après l'extension. Tester le pathname évite
+    // de relayer une playlist HLS comme un simple fichier binaire.
+    let targetUrl;
+    try {
+      targetUrl = new URL(target);
+    } catch {
+      return new Response("Invalid url param", { status: 400 });
+    }
+    const isPlaylist = /\.m3u8?$/i.test(targetUrl.pathname);
 
     const cache = caches.default;
     const cacheKey = new Request(url.toString(), request);
@@ -26,7 +34,28 @@ export default {
 
     if (isPlaylist) {
       let text = await originResp.text();
-      const base = new URL(target);
+      // Un vrai manifest HLS commence toujours par #EXTM3U. Les panels IPTV
+      // renvoient sinon une « playlist » d'erreur (ex : « error code: 1003 » =
+      // blocage des IP datacenter) : échouer clairement plutôt que servir une
+      // pseudo-playlist que le lecteur ne pourra pas lire.
+      if (!/^\uFEFF?\s*#EXTM3U/.test(text)) {
+        return new Response(
+          "Le fournisseur a refusé la requête depuis le réseau edge (blocage IP datacenter probable)",
+          {
+            status: 502,
+            headers: {
+              "content-type": "text/plain; charset=utf-8",
+              "access-control-allow-origin": "*",
+              "cache-control": "no-store",
+            },
+          },
+        );
+      }
+      // Les fournisseurs Xtream redirigent souvent vers un serveur média et
+      // ajoutent un jeton. Les URI de segments sont alors relatives à l'URL
+      // finale, pas à l'URL Xtream initiale. Utiliser originResp.url est
+      // indispensable pour que ces segments restent lisibles.
+      const base = new URL(originResp.url || target);
       const proxyBase = `${url.origin}${url.pathname}`;
 
       text = text

@@ -1,17 +1,12 @@
 // Réplique de channel-health.service.ts : GET (pas HEAD) du locator déchiffré,
-// détection playlist triple, plafond 1 Mo, timeout 6 s, batch + pause.
+// plafond 1 Mo, timeout 6 s, batch + pause.
+// Un manifest valide commence toujours par #EXTM3U. Les panels IPTV répondent
+// sinon avec une « playlist » d'erreur en content-type mpegurl (error code:
+// 1003 = IP datacenter bloquée, 1002 = connexions max…) : à marquer DOWN.
 import { decryptLocator } from './crypto.js';
 
 const MAX_BYTES = 1024 * 1024;
 const TIMEOUT_MS = Number(process.env.HEALTH_CHECK_TIMEOUT_MS ?? 6000);
-
-function looksLikePlaylist(contentType, finalUrl, body) {
-  return Boolean(
-    (contentType && /mpegurl/i.test(contentType))
-    || /\.m3u8?(\?|$)/i.test(finalUrl)
-    || /^\s*#EXTM3U(?:\s|$)/i.test(body ?? ''),
-  );
-}
 
 export async function checkVariant(env, cryptoKey, variant) {
   let url;
@@ -27,12 +22,12 @@ export async function checkVariant(env, cryptoKey, variant) {
       redirect: 'follow',
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    const contentType = response.headers.get('content-type') ?? undefined;
     if (!response.ok || response.status >= 400) throw new Error(`HTTP ${response.status}`);
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength > MAX_BYTES) throw new Error('Trop volumineux');
-    const text = new TextDecoder().decode(buffer.slice(0, Math.min(buffer.byteLength, 4096)));
-    if (!looksLikePlaylist(contentType, response.url || url, text)) throw new Error('Pas une playlist');
+    const head = new TextDecoder().decode(buffer.slice(0, Math.min(buffer.byteLength, 2048)));
+    if (!/^\uFEFF?\s*#EXTM3U/.test(head)) throw new Error('Réponse fournisseur invalide (pas un manifest)');
+    if (/error\s*code/i.test(head)) throw new Error('Erreur fournisseur');
     await env.db.query(env, `UPDATE "StreamVariant" SET "healthStatus" = 'OK', "healthCheckedAt" = now() WHERE id = $1`, [variant.id]);
     return 'OK';
   } catch {
