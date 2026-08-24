@@ -11,14 +11,17 @@ import {
 } from '../../../../features/owner/components/ui/icons';
 import { PageHeader } from '../../../../features/owner/components/ui/page-header';
 import { ImportStateBadge } from '../../../../features/owner/components/ui/status-badge';
+import { AutoRefresh } from '../../../../features/owner/components/auto-refresh';
 
 export default async function ImportsPage() {
   const imports = await serverOwnerFetch<ImportRunListResponse>('/api/owner/imports').catch(
     () => null,
   );
+  const hasActive = Boolean(imports?.items.some((r) => ['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING'].includes(r.state)));
 
   return (
     <>
+      <AutoRefresh enabled={hasActive} interval={1500} />
       <PageHeader
         title="Imports"
         description={imports ? `Historique des ${imports.total} import(s) de contenu.` : undefined}

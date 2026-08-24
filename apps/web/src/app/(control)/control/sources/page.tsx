@@ -10,6 +10,7 @@ import {
 } from '../../../../features/owner/components/ui/icons';
 import { PageHeader } from '../../../../features/owner/components/ui/page-header';
 import { KindBadge, SourceStatusBadge } from '../../../../features/owner/components/ui/status-badge';
+import { AutoRefresh } from '../../../../features/owner/components/auto-refresh';
 
 export default async function SourcesPage() {
   let sources: SourceResponse[];
@@ -22,9 +23,11 @@ export default async function SourcesPage() {
       </p>
     );
   }
+  const hasImporting = sources.some((s) => s.status === 'IMPORTING');
 
   return (
     <>
+      <AutoRefresh enabled={hasImporting} interval={2000} />
       <PageHeader
         title="Sources"
         description={`${sources.length} source(s) de contenu connectée(s) à la plateforme.`}

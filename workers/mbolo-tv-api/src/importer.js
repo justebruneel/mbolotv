@@ -65,6 +65,10 @@ export async function runSourceImport(env, sourceId, importRunId) {
     const metrics = { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0 };
     const seenInput = new Set();
     const seenChannelIds = new Set();
+    const persistMetrics = (extra = {}) =>
+      env.db
+        .query(env, `UPDATE "ImportRun" SET metrics = $2 WHERE id = $1`, [importRunId, JSON.stringify({ ...metrics, ...extra })])
+        .catch(() => undefined);
 
     if (source.kind === 'M3U') {
       const url = connection.url ?? connection.playlistUrl;
@@ -74,8 +78,9 @@ export async function runSourceImport(env, sourceId, importRunId) {
       const response = await fetchWithLimits(url, { maxBytes, timeoutMs: Number(env.IMPORT_FETCH_TIMEOUT_MS ?? 300_000) });
       const entries = [];
       await parseM3uStream(response.body, (entry) => entries.push(entry), maxBytes);
-      metrics.read += entries.length;
-      await ingestEntries(env, key, source, entries, importRunId, metrics, seenInput, seenChannelIds);
+      metrics.read = entries.length;
+      await persistMetrics();
+      await ingestEntries(env, key, source, entries, importRunId, metrics, seenInput, seenChannelIds, persistMetrics);
     } else if (source.kind === 'XTREAM') {
       if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants');
       await env.db.query(env, `UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
@@ -85,7 +90,9 @@ export async function runSourceImport(env, sourceId, importRunId) {
       } catch (error) {
         throw new ImportError('CONNECTOR_ERROR', error.message);
       }
-      await ingestEntries(env, key, source, entries, importRunId, metrics, seenInput, seenChannelIds);
+      metrics.read = entries.length;
+      await persistMetrics();
+      await ingestEntries(env, key, source, entries, importRunId, metrics, seenInput, seenChannelIds, persistMetrics);
     } else {
       throw new ImportError('UNSUPPORTED_KIND', 'Type de source non pris en charge dans le Worker');
     }
@@ -117,8 +124,10 @@ export async function runSourceImport(env, sourceId, importRunId) {
   }
 }
 
-async function ingestEntries(env, cryptoKey, source, entries, importRunId, metrics, seenInput, seenChannelIds) {
+async function ingestEntries(env, cryptoKey, source, entries, importRunId, metrics, seenInput, seenChannelIds, persistMetrics = null) {
+  const flush = persistMetrics ?? ((extra = {}) => env.db.query(env, `UPDATE "ImportRun" SET metrics = $2 WHERE id = $1`, [importRunId, JSON.stringify({ ...metrics, ...extra })]).catch(() => undefined));
   await env.db.query(env, `UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
+  await flush();
   const categorySlugs = new Set();
   const categoryNameBySlug = new Map();
   const metas = [];
@@ -218,6 +227,7 @@ async function ingestEntries(env, cryptoKey, source, entries, importRunId, metri
       seenChannelIds.add(row.id);
       metrics.created += 1;
     }
+    if (inserted.rows.length) await flush();
   }
 
   // logoKey = URL directe (pas de re-téléchargement en Worker).
@@ -258,6 +268,8 @@ async function ingestEntries(env, cryptoKey, source, entries, importRunId, metri
     });
     await env.db.query(env, `INSERT INTO "StreamVariant" (id, "channelId", "sourceId", "encryptedLocator") VALUES ${values.join(", ")}`, params);
     metrics.created += part.length;
+    metrics.processed = Math.min(metrics.read, metrics.created + metrics.updated + metrics.duplicates + metrics.errors);
+    await flush({ processed: metrics.processed });
   }
 
   for (const part of chunks(updates, 1000)) {
@@ -279,5 +291,5 @@ async function ingestEntries(env, cryptoKey, source, entries, importRunId, metri
   metrics.updated += updates.length + variantUpdates.length;
   metrics.processed = metrics.read;
   metrics.ignored = Math.max(0, metrics.read - metrics.created - metrics.updated - metrics.duplicates - metrics.errors);
-  await env.db.query(env, `UPDATE "ImportRun" SET metrics = $2 WHERE id = $1`, [importRunId, JSON.stringify(metrics)]);
+  await flush();
 }
