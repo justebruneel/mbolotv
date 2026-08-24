@@ -29,7 +29,7 @@ interface ImportState { metrics: ImportMetrics; seenInput: Set<string>; seenChan
 const BATCH = 5000;
 const QUERY_BATCH = 2000;
 const LOGO_CONCURRENCY = 6;
-const ACTIVE_IMPORT_STATES = new Set(['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING']);
+const _ACTIVE_IMPORT_STATES = new Set(['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING']);
 
 class ImportError extends Error { constructor(readonly code: string, message: string) { super(message); } }
 class ImportCanceled extends Error { constructor() { super('Import annulé'); } }

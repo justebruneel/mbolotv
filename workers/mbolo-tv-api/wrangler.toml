@@ -1,0 +1,17 @@
+name = "mbolo-tv-api"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/2 * * * *", "*/10 * * * *", "*/15 * * * *", "0 5 * * *"]
+
+[vars]
+VIDEO_PROXY_URL = "https://mbolo-tv-video-proxy.mbolo-tv-video-proxy.workers.dev"
+PUBLIC_API_URL = "https://mbolo-tv-api.mbolo-tv-video-proxy.workers.dev"
+CORS_ALLOWED_ORIGINS = "https://mbolotv-web.vercel.app,http://localhost:3000"
+MATCH_DETECTION_ENABLED = "true"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "75d74bf3c4b24e36ab9666697030b0fb"

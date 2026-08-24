@@ -81,7 +81,10 @@ export function usePlayUrl(id: string) {
   return useQuery({
     queryKey: ['play', id],
     queryFn: () => apiGet<PlayResponse>(`/channels/${id}/play`),
-    staleTime: 30 * 60_000,
+    // Les URLs de lecture pointent désormais directement vers les fournisseurs
+    // (via le proxy edge) et peuvent embarquer des tokens à vie courte :
+    // on re-valide au clic après 60 s au lieu des 30 min de l'ère session-gateway.
+    staleTime: 60_000,
   });
 }
 

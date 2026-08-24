@@ -1,9 +1,0 @@
-# Tunnel Cloudflare « localement managé » — Mbolo TV API
-# Variante pour un cloudflared installé directement sur l'hôte (hors Docker).
-# L'API est publiée sur 127.0.0.1:4000 par docker-compose.
-tunnel: 2d4b4742-0703-4f6f-a801-693be15a3131
-credentials-file: /etc/cloudflared/2d4b4742-0703-4f6f-a801-693be15a3131.json
-ingress:
-  - hostname: api.mbolotv.dpdns.org
-    service: http://127.0.0.1:4000
-  - service: http_status:404

@@ -1,8 +1,0 @@
-# Tunnel Cloudflare « localement managé » — Mbolo TV API
-# Les secrets de ce dossier (*.json / *.pem) ne doivent jamais être commités.
-tunnel: 2d4b4742-0703-4f6f-a801-693be15a3131
-credentials-file: /etc/cloudflared/2d4b4742-0703-4f6f-a801-693be15a3131.json
-ingress:
-  - hostname: api.mbolotv.dpdns.org
-    service: http://api:4000
-  - service: http_status:404

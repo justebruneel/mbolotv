@@ -41,6 +41,11 @@ export class StreamingService {
     // L’audit ne doit pas retarder l’émission de l’URL HLS. Une panne Neon ne doit
     // jamais transformer le lancement du player en écran de chargement.
     void this.audit.log(null, 'stream.session_created', 'channel', channelId, { sessionId: session.id, variantId: variant.id }).catch(() => undefined);
+    // Proxy vidéo à la marge (Cloudflare Worker) : l'URL source est servie directement
+    // par le Worker (cache + réécriture HLS côté edge), plus aucun octet vidéo ne passe
+    // par cette API. Sans VIDEO_PROXY_URL, repli sur la session gateway historique.
+    const videoProxyUrl = (this.config.get<string>('VIDEO_PROXY_URL') ?? '').trim().replace(/\/+$/, '');
+    if (videoProxyUrl) return { url: `${videoProxyUrl}/?url=${encodeURIComponent(providerUrl)}`, expiresAt: new Date(session.expiresAt).toISOString() };
     const publicApiUrl = (this.config.get<string>('PUBLIC_API_URL') ?? this.config.get<string>('API_URL') ?? DEFAULT_PUBLIC_API_URL).replace(/\/+$/, '');
     return { url: `${publicApiUrl}/api/stream/${session.id}/master.m3u8`, expiresAt: new Date(session.expiresAt).toISOString() };
   }

@@ -35,7 +35,8 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
         .fetchQuery({
           queryKey: ['play', channel.id],
           queryFn: () => apiGet<PlayResponse>(`/channels/${channel.id}/play`),
-          staleTime: 30 * 60_000,
+          // Aligné sur usePlayUrl : les URLs fournisseurs peuvent expirer vite.
+          staleTime: 60_000,
         })
         .then((data) => {
           if (data?.url) warmStream(data.url);

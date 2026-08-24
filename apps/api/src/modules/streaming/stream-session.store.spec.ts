@@ -1,8 +1,7 @@
-import { ConfigService } from '@nestjs/config';
 import { InMemoryStreamSessionStore } from './stream-session.store';
 
 function createStore() {
-  return new InMemoryStreamSessionStore({ get: (_key: string, fallback: number) => fallback } as unknown as ConfigService);
+  return new InMemoryStreamSessionStore();
 }
 
 describe('InMemoryStreamSessionStore', () => {

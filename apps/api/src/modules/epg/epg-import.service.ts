@@ -9,7 +9,7 @@ import { parseXmltvStream, type XmltvProgramme } from './xmltv.parser';
 export interface EpgImportResult { sources: number; channels: number; programmes: number; stored: number; durationMs: number; }
 type EpgSource = { id: string; name: string; kind: string; status: string; priority: number; connectionEncrypted: Uint8Array; epgUrl?: string | null };
 type EpgRow = { channelId: string; startsAt: Date; endsAt: Date; title: string; description?: string | null; imageUrl?: string | null; metadata?: Record<string, unknown> };
-type EpgCreateResult = { count: number };
+type _EpgCreateResult = { count: number };
 type BufferedProgramme = { xmltvChannelId: string; startsAt: Date; endsAt: Date; title: string; description?: string | null; imageUrl?: string | null; categories: string[] };
 
 function normalizeName(value: string): string {

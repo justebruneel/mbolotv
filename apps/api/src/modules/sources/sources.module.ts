@@ -6,13 +6,12 @@ import { EpgModule } from '../epg/epg.module';
 import { ImportCancellationRegistry } from './import-cancellation';
 import { ImportProcessor } from './import.processor';
 import { ImportsController } from './imports.controller';
-import { InternalJobsController } from './internal-jobs.controller';
 import { SourcesController } from './sources.controller';
 import { SourcesService } from './sources.service';
 
 @Module({
   imports: [QueueModule, OwnerAuthModule, StorageModule, EpgModule],
-  controllers: [SourcesController, ImportsController, InternalJobsController],
+  controllers: [SourcesController, ImportsController],
   providers: [ImportCancellationRegistry, SourcesService, ImportProcessor],
 })
 export class SourcesModule {}

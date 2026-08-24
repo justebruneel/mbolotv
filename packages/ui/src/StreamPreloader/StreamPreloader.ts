@@ -1,73 +1,29 @@
-import Hls from 'hls.js';
+// Préchauffage du direct : un simple GET du manifest via le proxy vidéo.
+// Sous l'architecture edge, monter un hls.js caché ne sert à rien (son buffer
+// n'est pas transférable au lecteur) et coûte un aller-retour fournisseur à
+// chaque survol. Le fetch léger réchauffe DNS/TLS/HTTP2 navigateur↔proxy et
+// proxy↔fournisseur, et valide que le flux répond — y compris sur iOS/Safari
+// où hls.js n'est pas supporté.
 
-interface ActiveWarm { hls: Hls; timer: ReturnType<typeof setTimeout> | null }
-
-let active: ActiveWarm | null = null;
-let videoEl: HTMLVideoElement | null = null;
-
-function getVideoElement(): HTMLVideoElement {
-  if (videoEl) return videoEl;
-  const el = document.createElement('video');
-  el.muted = true;
-  el.playsInline = true;
-  el.preload = 'none';
-  el.setAttribute('aria-hidden', 'true');
-  Object.assign(el.style, {
-    position: 'fixed',
-    width: '1px',
-    height: '1px',
-    left: '-9999px',
-    top: '0',
-    opacity: '0',
-    pointerEvents: 'none',
-    zIndex: '-1',
-  });
-  document.body.appendChild(el);
-  videoEl = el;
-  return el;
-}
+let lastWarmedUrl: string | null = null;
+let inFlight: Promise<void> | null = null;
 
 export function warmStream(url: string): void {
-  if (typeof window === 'undefined' || !Hls.isSupported() || !url) return;
-  cancelWarm();
-  const video = getVideoElement();
-  const hls = new Hls({
-    enableWorker: true,
-    lowLatencyMode: false,
-    maxBufferLength: 1,
-    maxMaxBufferLength: 2,
-    startFragPrefetch: false,
-    capLevelToPlayerSize: false,
-    manifestLoadingTimeOut: 15_000,
-    manifestLoadingMaxRetry: 2,
-    levelLoadingTimeOut: 15_000,
-    levelLoadingMaxRetry: 2,
-    fragLoadingTimeOut: 20_000,
-    fragLoadingMaxRetry: 2,
-  });
-  active = { hls, timer: null };
-  hls.loadSource(url);
-  hls.attachMedia(video);
-  hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    hls.stopLoad();
-    if (active?.hls === hls) {
-      active.timer = setTimeout(() => cancelWarm(), 300);
-    }
-  });
-  hls.on(Hls.Events.ERROR, (_event, data) => {
-    if (data.fatal) cancelWarm();
-  });
+  if (typeof window === "undefined" || !url) return;
+  if (url === lastWarmedUrl || inFlight) return;
+  lastWarmedUrl = url;
+  inFlight = fetch(url, { mode: "cors", cache: "no-store" })
+    .then((response) => {
+      // Manifest reçu : la connexion navigateur↔proxy↔fournisseur est chaude.
+      // Le corps n'est pas lu intégralement : on annule pour libérer la socket.
+      void response.body?.cancel().catch(() => undefined);
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      inFlight = null;
+    });
 }
 
 export function cancelWarm(): void {
-  if (!active) return;
-  if (active.timer) clearTimeout(active.timer);
-  try {
-    active.hls.stopLoad();
-    active.hls.detachMedia();
-    active.hls.destroy();
-  } catch {
-    /* noop */
-  }
-  active = null;
+  lastWarmedUrl = null;
 }
