@@ -35,6 +35,17 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  // 0. Requêtes internes Next.js (payloads RSC / préfetch route) :
+  //    ne JAMAIS les intercepter — une réponse en cache périmée force le
+  //    router à basculer sur un rechargement complet de la page.
+  if (
+    request.headers.get('x-nextjs-data') ||
+    request.headers.get('RSC') === '1' ||
+    url.searchParams.has('_rsc')
+  ) {
+    return;
+  }
+
   // 1. Navigations : réseau d'abord.
   if (request.mode === 'navigate') {
     event.respondWith(
