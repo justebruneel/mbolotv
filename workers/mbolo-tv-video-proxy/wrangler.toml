@@ -4,6 +4,6 @@ compatibility_date = "2026-08-01"
 
 # Sortie résidentielle (tunnel cloudflared local) pour les fournisseurs qui
 # bloquent les IP datacenter. Clé = host:port du fournisseur, valeur = origine
-# du relais. Retirer l'entrée si la machine locale est mise hors service.
+# du relais. Retirer une entrée si la machine locale est mise hors service.
 [vars]
-RELAY_MAP = '{"obsfullhd.tv:25461":"https://relay-tv.mbolotv.dpdns.org","45.155.226.71:8080":"https://relay-media.mbolotv.dpdns.org"}'
+RELAY_MAP = '{"obsfullhd.tv:25461":"https://relay-tv.mbolotv.dpdns.org","45.155.226.71:8080":"https://relay-media.mbolotv.dpdns.org","vippyddncr.top:8080":"https://relay-vip.mbolotv.dpdns.org","192.142.36.209:8080":"https://relay-vip-media.mbolotv.dpdns.org"}'

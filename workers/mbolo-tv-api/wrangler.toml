@@ -15,7 +15,7 @@ MATCH_DETECTION_ENABLED = "true"
 # bloquent les IP datacenter. Même carte que le proxy vidéo : le health-check
 # sonde les flux via le relais. Batch réduit : la ligne IPTV limite les
 # connexions simultanées.
-RELAY_MAP = '{"obsfullhd.tv:25461":"https://relay-tv.mbolotv.dpdns.org","45.155.226.71:8080":"https://relay-media.mbolotv.dpdns.org"}'
+RELAY_MAP = '{"obsfullhd.tv:25461":"https://relay-tv.mbolotv.dpdns.org","45.155.226.71:8080":"https://relay-media.mbolotv.dpdns.org","vippyddncr.top:8080":"https://relay-vip.mbolotv.dpdns.org","192.142.36.209:8080":"https://relay-vip-media.mbolotv.dpdns.org"}'
 HEALTH_CHECK_BATCH_SIZE = "3"
 
 [[hyperdrive]]
