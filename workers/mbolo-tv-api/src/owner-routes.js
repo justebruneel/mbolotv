@@ -375,20 +375,33 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     return new Response(null, { status: 204, headers: ctx.corsHeaders() });
   }
 
+  if (path === '/api/owner/channels/ids' && method === 'GET') {
+    // Liste complète d'IDs pour la sélection massive (scope propriétaire).
+    if ((url.searchParams.get('scope') ?? '') !== 'uncategorized') return ctx.fail(400, 'scope non supporté');
+    const rows = await ctx.env.db.query(
+      ctx.env,
+      `SELECT c.id FROM "Channel" c WHERE c."categoryId" IS NULL AND EXISTS (
+         SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId"
+         WHERE v."channelId" = c.id AND s."ownerId" = $1
+       )`,
+      [owner.userId],
+    );
+    return ctx.json({ ids: rows.rows.map((row) => row.id), total: rows.rows.length });
+  }
+
   if (path === '/api/owner/channels/delete-batch' && method === 'POST') {
     const body = await ctx.readJson().catch(() => null);
     const requestedIds = Array.isArray(body?.ids) ? body.ids.filter((value) => typeof value === 'string') : [];
     if (requestedIds.length === 0) return ctx.fail(400, 'Aucune chaîne sélectionnée');
     // Scope propriétaire strict : seules les chaînes portant une variante d'une
     // source du owner sont supprimées (cascade variantes + EPG + favoris).
-    const placeholders = requestedIds.map((_, index) => `$${index + 1}`).join(', ');
     const result = await ctx.env.db.query(
       ctx.env,
-      `DELETE FROM "Channel" WHERE id IN (${placeholders}) AND EXISTS (
+      `DELETE FROM "Channel" WHERE id = ANY($1::text[]) AND EXISTS (
          SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId"
-         WHERE v."channelId" = "Channel".id AND s."ownerId" = $${requestedIds.length + 1}
+         WHERE v."channelId" = "Channel".id AND s."ownerId" = $2
        ) RETURNING id`,
-      [...requestedIds, owner.userId],
+      [requestedIds, owner.userId],
     );
     await audit(ctx, owner.userId, 'catalog.channel_delete_batch', 'channel', null, { requested: requestedIds.length, deleted: result.rowCount });
     return ctx.json({ deleted: result.rowCount });

@@ -367,6 +367,21 @@ export default function CatalogControlPage() {
       return next;
     });
   }
+  // « Tout cocher » sélectionne TOUTES les chaînes sans dossier côté serveur,
+  // pas seulement les 50 lignes chargées à l'écran.
+  const [checkingAllUncat, setCheckingAllUncat] = useState(false);
+  async function checkAllUncategorized(): Promise<void> {
+    setCheckingAllUncat(true);
+    try {
+      const { ids } = await ownerApi.channels.ids('uncategorized');
+      setUncatSelected(new Set(ids));
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Sélection complète impossible.');
+    } finally {
+      setCheckingAllUncat(false);
+    }
+  }
   async function deleteUncatSelected(): Promise<void> {
     const ids = [...uncatSelected];
     if (ids.length === 0) return;
@@ -545,7 +560,9 @@ export default function CatalogControlPage() {
                   </button>
                   {uncatSelectMode && (
                     <>
-                      <button type="button" className="btn" onClick={() => setUncatSelected(new Set((pages['none']?.items ?? []).map((channel) => channel.id)))}>Tout cocher ({pages['none']?.items.length ?? 0})</button>
+                      <button type="button" className="btn" disabled={checkingAllUncat} onClick={() => void checkAllUncategorized()}>
+                        {checkingAllUncat ? 'Sélection…' : `Tout cocher (${catalog.uncategorizedCount})`}
+                      </button>
                       <button type="button" className="btn" onClick={() => setUncatSelected(new Set())}>Décocher</button>
                       <span className="text-sm text-muted">{uncatSelected.size} sélectionnée(s)</span>
                       <button
