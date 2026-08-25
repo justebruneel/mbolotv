@@ -37,7 +37,6 @@ export function HeaderSearch() {
     const query = value.trim();
     const timer = window.setTimeout(() => writeUrl(query), DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
   function close(): void {
