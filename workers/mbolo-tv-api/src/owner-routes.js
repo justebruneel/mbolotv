@@ -198,6 +198,50 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     return ctx.json({ ok: status === 'OK', status, checked });
   }
 
+  if (path === '/api/owner/categories/delete-batch' && method === 'POST') {
+    const body = await ctx.readJson().catch(() => null);
+    const requestedIds = Array.isArray(body?.ids) ? body.ids.filter((value) => typeof value === 'string') : [];
+    if (requestedIds.length === 0) return ctx.fail(400, 'Aucun dossier sélectionné');
+    const placeholders = requestedIds.map((_, index) => `$${index + 1}`).join(', ');
+    const foundRows = await ctx.env.db.query(ctx.env, `SELECT id FROM "Category" WHERE id IN (${placeholders})`, requestedIds);
+    const found = foundRows.rows.map((row) => row.id);
+    if (found.length === 0) return ctx.fail(404, 'Category not found');
+    // Chaînes des dossiers supprimés → « sans dossier ».
+    await ctx.env.db.query(ctx.env, `UPDATE "Channel" SET "categoryId" = NULL WHERE "categoryId" = ANY($1::text[])`, [found]);
+    // Les sous-dossiers survivants remontent à l'ancêtre survivant le plus proche.
+    const allRows = await ctx.env.db.query(ctx.env, `SELECT id, "parentId" FROM "Category"`);
+    const parentOf = new Map(allRows.rows.map((row) => [row.id, row.parentId]));
+    const deleted = new Set(found);
+    const reparents = [];
+    for (const row of allRows.rows) {
+      if (deleted.has(row.id)) continue;
+      let cursor = row.parentId;
+      let moved = false;
+      while (cursor && deleted.has(cursor)) {
+        cursor = parentOf.get(cursor) ?? null;
+        moved = true;
+      }
+      if (moved) reparents.push({ id: row.id, parentId: cursor });
+    }
+    for (const part of chunks(reparents, 500)) {
+      const values = [];
+      const params = [];
+      part.forEach((row, position) => {
+        values.push(`($${position * 2 + 1}::text, $${position * 2 + 2}::text)`);
+        params.push(row.id, row.parentId ?? '');
+      });
+      await ctx.env.db.query(
+        ctx.env,
+        `UPDATE "Category" AS c SET "parentId" = CASE WHEN v.pid = '' THEN NULL ELSE v.pid END
+         FROM (VALUES ${values.join(', ')}) AS v(id, pid) WHERE c.id = v.id`,
+        params,
+      );
+    }
+    const result = await ctx.env.db.query(ctx.env, `DELETE FROM "Category" WHERE id = ANY($1::text[]) RETURNING id`, [found]);
+    await audit(ctx, owner.userId, 'catalog.category_delete_batch', 'category', null, { requested: requestedIds.length, deleted: result.rowCount });
+    return ctx.json(await buildOwnerCatalog(ctx, owner));
+  }
+
   const catDelete = path.match(/^\/api\/owner\/categories\/([^/]+)$/);
   if (catDelete && method === 'DELETE') {
     const id = decodeURIComponent(catDelete[1]);

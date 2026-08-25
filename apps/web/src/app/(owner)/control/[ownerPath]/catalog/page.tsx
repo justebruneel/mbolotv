@@ -237,6 +237,11 @@ export default function CatalogControlPage() {
   const searchPageRef = useRef<ChannelPage | null>(null);
   searchPageRef.current = searchPage;
   const [uncategorizedOpen, setUncategorizedOpen] = useState(false);
+  // Mode sélection multiple : liste plate triée par nom + suppression en lot.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectFilter, setSelectFilter] = useState('');
+  const [deletingBatch, setDeletingBatch] = useState(false);
 
   const orderMap = useMemo(() => (catalog ? buildOrderMap(catalog.categories) : new Map<string, OrderInfo>()), [catalog]);
   const allFlat = useMemo(() => (catalog ? flattenCategories(catalog.categories) : []), [catalog]);
@@ -308,6 +313,41 @@ export default function CatalogControlPage() {
   async function deleteCategory(id: string): Promise<void> {
     setBusy(id); try { setCatalog(await ownerApi.categories.remove(id)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Suppression impossible.'); } finally { setBusy(null); }
   }
+  const selectableList = useMemo(
+    () => [...allFlat].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })),
+    [allFlat],
+  );
+  const parentNameById = useMemo(() => new Map(allFlat.map((node) => [node.id, node.name])), [allFlat]);
+  const filteredSelectable = useMemo(() => {
+    const query = selectFilter.trim().toLowerCase();
+    if (!query) return selectableList;
+    return selectableList.filter((node) => node.name.toLowerCase().includes(query));
+  }, [selectableList, selectFilter]);
+
+  function toggleSelected(id: string): void {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function deleteSelected(): Promise<void> {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (!window.confirm(`Supprimer ${ids.length} dossier(s) ?\n\nLes chaînes passent en « Sans dossier » et les sous-dossiers remontent d'un niveau. Aucune chaîne n'est supprimée.`)) return;
+    setDeletingBatch(true);
+    try {
+      setCatalog(await ownerApi.categories.removeBatch(ids));
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Suppression impossible.');
+    } finally {
+      setDeletingBatch(false);
+    }
+  }
   async function updateChannel(id: string, isVisible: boolean): Promise<void> {
     // Patch optimiste local : le serveur ne renvoie plus les listes de chaînes.
     const apply = (items: OwnerChannel[]): OwnerChannel[] => items.map((channel) => (channel.id === id ? { ...channel, isVisible } : channel));
@@ -366,7 +406,61 @@ export default function CatalogControlPage() {
           className="min-w-[220px] flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-semibold"
         />
         <button className="btn btn-primary" disabled={!rootName.trim() || busy === 'create:root'} onClick={() => { if (rootName.trim()) { void createFolder(null, rootName.trim()); setRootName(''); } }}>{busy === 'create:root' ? 'Création…' : 'Créer un dossier'}</button>
+        <button
+          type="button"
+          className={`btn ${selectMode ? 'btn-danger' : ''}`}
+          onClick={() => { setSelectMode((value) => !value); setSelectedIds(new Set()); setSelectFilter(''); }}
+        >
+          {selectMode ? 'Quitter la sélection' : 'Sélectionner'}
+        </button>
       </section>
+
+      {selectMode && (
+        <section className="card overflow-hidden">
+          <div className="flex flex-wrap items-center gap-3 border-b border-border p-4">
+            <div className="flex-1">
+              <p className="font-semibold">Suppression de dossiers</p>
+              <p className="text-xs text-muted">Cochez les dossiers à supprimer. Les chaînes passeront en « Sans dossier » ; les sous-dossiers remontent d'un niveau.</p>
+            </div>
+            <input
+              value={selectFilter}
+              placeholder="Filtrer par nom…"
+              onChange={(event) => setSelectFilter(event.target.value)}
+              className="min-w-[180px] rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm"
+            />
+            <button type="button" className="btn" onClick={() => setSelectedIds(new Set(filteredSelectable.map((node) => node.id)))}>Tout cocher ({filteredSelectable.length})</button>
+            <button type="button" className="btn" onClick={() => setSelectedIds(new Set())}>Décocher</button>
+          </div>
+          <div className="max-h-[60vh] divide-y divide-border/70 overflow-y-auto">
+            {filteredSelectable.map((node) => (
+              <label key={node.id} className="flex cursor-pointer items-center gap-3 px-4 py-2 text-sm hover:bg-surface-2/60">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(node.id)}
+                  onChange={() => toggleSelected(node.id)}
+                />
+                <span className="min-w-0 flex-1 truncate">{node.name}</span>
+                {node.parentId && parentNameById.get(node.parentId) && (
+                  <span className="shrink-0 text-xs text-muted">dans « {parentNameById.get(node.parentId)} »</span>
+                )}
+                <span className="shrink-0 font-mono text-xs text-muted">{node.channelCount} chaîne(s)</span>
+              </label>
+            ))}
+            {filteredSelectable.length === 0 && <div className="p-4 text-sm text-muted">Aucun dossier ne correspond au filtre.</div>}
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-border bg-surface-2/40 p-4">
+            <span className="text-sm text-muted">{selectedIds.size} dossier(s) sélectionné(s)</span>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={selectedIds.size === 0 || deletingBatch}
+              onClick={() => void deleteSelected()}
+            >
+              {deletingBatch ? 'Suppression…' : `Supprimer la sélection (${selectedIds.size})`}
+            </button>
+          </div>
+        </section>
+      )}
 
       <div className="space-y-4">
         {catalog.categories.map((category) => (
