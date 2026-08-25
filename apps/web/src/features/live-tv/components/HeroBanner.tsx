@@ -42,7 +42,7 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
 
   return (
     <div
-      className="relative h-[46svh] min-h-[320px] w-full overflow-hidden md:h-[62vh] md:min-h-[400px]"
+      className="relative h-[46svh] min-h-[320px] w-full overflow-hidden md:h-[78vh] md:min-h-[520px] md:max-h-[760px]"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
@@ -50,10 +50,10 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
         <HeroSlide key={channel.id} channel={channel} active={position === index} />
       ))}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-bg to-transparent" />
-      <div className="pointer-events-none absolute inset-y-0 left-0 w-full bg-gradient-to-r from-bg/90 via-bg/30 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42%] bg-gradient-to-t from-bg via-bg/70 to-transparent" />
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-[72%] bg-gradient-to-r from-bg via-bg/60 to-transparent md:w-[58%]" />
 
-      <div className="absolute inset-x-0 bottom-5 z-20 flex flex-row items-center justify-center gap-2 md:inset-x-auto md:bottom-24 md:right-6 md:flex-col md:items-end">
+      <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 flex-row items-center gap-1.5 md:bottom-8 md:left-auto md:right-8 md:translate-x-0">
         {channels.map((channel, position) => (
           <button
             key={channel.id}
@@ -89,19 +89,19 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
           src={backdrop}
           alt=""
           onError={() => setImgError(true)}
-          className={`h-full w-full object-cover ${isLogoBackdrop ? 'object-contain p-16 opacity-40 blur-[1px] scale-110' : ''}`}
+          className={`h-full w-full object-cover ${isLogoBackdrop ? 'object-contain !h-[42%] !w-auto !max-w-[44%] !p-0 mx-auto my-auto !top-[44%] !left-1/2 !-translate-x-1/2 !-translate-y-1/2 absolute opacity-90 drop-shadow-[0_8px_32px_rgba(0,0,0,0.6)]' : ''}`}
           loading={active ? 'eager' : 'lazy'}
           decoding="async"
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-surface-3 via-surface to-bg">
-          <span className="select-none text-[9rem] font-black leading-none text-white/5">{channel.name.slice(0, 2).toUpperCase()}</span>
+        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0f1419] via-surface to-bg">
+          <span className="select-none text-[9rem] font-black leading-none text-white/[0.04] md:text-[13rem]">{channel.name.slice(0, 2).toUpperCase()}</span>
         </div>
       )}
-      {isLogoBackdrop && <div className="absolute inset-0 bg-gradient-to-br from-surface-3/60 via-surface/40 to-bg/80" />}
+      {isLogoBackdrop && <div className="absolute inset-0 bg-gradient-to-t from-bg via-bg/40 to-surface/20" />}
 
-      <div className={`absolute inset-x-0 bottom-0 p-5 pb-[calc(76px+env(safe-area-inset-bottom))] md:p-16 ${active ? '' : 'pointer-events-none'}`}>
-        <div className="max-w-[560px]">
+      <div className={`absolute inset-0 flex flex-col justify-end p-5 pb-[calc(84px+env(safe-area-inset-bottom))] md:justify-center md:p-0 md:pl-[4%] md:pr-[42%] md:pb-0 ${active ? '' : 'pointer-events-none'}`}>
+        <div className="max-w-[640px]">
           <p className="mb-2 flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-accent">
             <span className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-accent text-[10px] text-on-accent">N°1</span> En vedette aujourd'hui
           </p>
@@ -116,8 +116,8 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
             <span className="text-xs font-semibold uppercase tracking-widest text-white/70">{channel.country ?? 'Live'} · {programme ? 'En cours' : 'Chaîne'}</span>
           </div>
 
-          <h1 className="mt-2 line-clamp-2 text-[22px] font-black leading-[0.95] drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] sm:text-2xl md:mt-3 md:text-[46px] md:leading-[0.95]">{programme?.title ?? channel.name}</h1>
-          <p className="mt-2 line-clamp-2 text-sm leading-snug text-white/75 md:text-[15px]">{programme ? `${channel.name} · ${new Date(programme.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} – ${new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : 'Regardez en direct sur Mbolo TV — qualité adaptative, sans coupure.'}</p>
+          <h1 className="mt-3 line-clamp-2 text-[26px] font-black leading-[0.92] tracking-tight drop-shadow-[0_2px_16px_rgba(0,0,0,0.7)] sm:text-3xl md:text-[52px] md:leading-[0.9]">{programme?.title ?? channel.name}</h1>
+          <p className="mt-2.5 line-clamp-2 text-[13px] leading-snug text-white/70 md:text-[15px] md:leading-relaxed">{programme ? `${channel.name} · ${new Date(programme.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} – ${new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} · En direct` : 'Regardez en direct sur Mbolo TV — qualité adaptative, sans coupure.'}</p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <Link
