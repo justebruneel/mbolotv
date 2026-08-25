@@ -3,6 +3,7 @@
 import { Icon } from '@mbolo/ui';
 import { useTheme } from './ThemeProvider';
 
+// Bouton compact icône-seule : le libellé complet est dans le tooltip.
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
 
@@ -19,13 +20,13 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={cycle}
-      className="flex items-center gap-2.5 w-full min-h-[40px] px-3 rounded-lg text-sm font-medium text-[var(--mbolo-text-muted)] hover:text-[var(--mbolo-text)] hover:bg-[var(--mbolo-surface-2)] transition-colors"
+      title={`Thème : ${label}`}
       aria-label={`Thème actuel : ${label}. Cliquer pour changer.`}
+      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--mbolo-text-muted)] hover:bg-[var(--mbolo-surface-2)] hover:text-[var(--mbolo-text)] transition-colors"
     >
       <span className="flex w-5 items-center justify-center">
         <IconComponent size={18} />
       </span>
-      <span>Thème : {label}</span>
     </button>
   );
 }

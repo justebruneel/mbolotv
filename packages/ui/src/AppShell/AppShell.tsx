@@ -83,7 +83,7 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
           {sidebarActions}
           <button
             type="button"
-            className={styles.iconButton}
+            className={[styles.iconButton, styles.desktopOnly].join(' ')}
             aria-label="Plus d'options"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((value) => !value)}

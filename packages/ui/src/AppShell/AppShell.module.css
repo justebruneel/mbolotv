@@ -250,3 +250,11 @@
     display: none !important;
   }
 }
+
+/* Le burger ⋮ de la barre desktop est masqué sur mobile :
+   le menu y est accessible via l'onglet « Plus » des onglets bas. */
+@media (max-width: 767px) {
+  .iconButton.desktopOnly {
+    display: none;
+  }
+}
