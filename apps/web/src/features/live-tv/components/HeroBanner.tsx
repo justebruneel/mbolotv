@@ -71,8 +71,8 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42%] bg-gradient-to-t from-bg via-bg/70 to-transparent" />
       <div className="pointer-events-none absolute inset-y-0 left-0 w-[72%] bg-gradient-to-r from-bg via-bg/60 to-transparent md:w-[58%]" />
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center pb-[calc(18px+env(safe-area-inset-bottom))] md:bottom-8 md:pb-0">
-        <div className="flex items-center gap-1.5 rounded-full bg-black/35 px-2.5 py-1.5 backdrop-blur-md">
+      <div className="pointer-events-none absolute bottom-8 left-1/2 z-30 flex -translate-x-1/2 justify-center pb-[env(safe-area-inset-bottom)]">
+        <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-2 backdrop-blur-md shadow-lg">
           {channels.map((channel, position) => (
             <button
               key={channel.id}

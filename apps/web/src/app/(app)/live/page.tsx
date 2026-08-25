@@ -107,7 +107,7 @@ function HomeView() {
     <main className="pb-16">
       <HeroBanner channels={featured} />
 
-      <div className="relative z-10 -mt-20 space-y-9 md:-mt-28">
+      <div className="relative z-10 -mt-6 space-y-9 md:-mt-10">
         {nowPlayingRow.length >= 4 && <NetflixRow title="Programmes en cours" channels={nowPlayingRow} />}
 
         {favChannels.length > 0 && <NetflixRow title="Mes favoris" channels={favChannels} seeAllHref="/favorites" />}
