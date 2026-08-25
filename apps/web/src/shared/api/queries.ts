@@ -78,10 +78,14 @@ export function useChannelEpg(id: string) {
   });
 }
 
-export function usePlayUrl(id: string) {
+export function usePlayUrl(id: string, options?: { eco?: boolean }) {
   return useQuery({
-    queryKey: ['play', id],
-    queryFn: () => apiGet<PlayResponse>(`/channels/${id}/play`),
+    queryKey: ['play', id, options?.eco ?? false],
+    queryFn: () =>
+      apiGet<PlayResponse>(
+        `/channels/${id}/play`,
+        options?.eco ? { eco: 1 } : undefined,
+      ),
     // Les URLs de lecture pointent désormais directement vers les fournisseurs
     // (via le proxy edge) et peuvent embarquer des tokens à vie courte :
     // on re-valide au clic après 60 s au lieu des 30 min de l'ère session-gateway.

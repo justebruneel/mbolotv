@@ -50,7 +50,7 @@ export default function WatchPage() {
   const setLastWatchedChannelId = useSettingsStore((state) => state.setLastWatchedChannelId);
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
-  const playQuery = usePlayUrl(channelId);
+  const playQuery = usePlayUrl(channelId, { eco: dataSaver });
   const channelsQuery = useInfiniteChannels({ category, country, q }, PAGE_SIZE);
   const navChannels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const viewersQuery = useChannelViewers(channelId);
