@@ -95,7 +95,7 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
 
       {/* ================= BARRE MOBILE (< 768 px) ================= */}
       <header className={styles.mobileBar}>
-        <span className={styles.mobileBrand}>{brand}<span className={styles.mobileWordmark}>Mbolo TV</span></span>
+        <span className={styles.mobileBrand}>{brand}</span>
 
         <div className={styles.barRight}>
           {usersBadge}

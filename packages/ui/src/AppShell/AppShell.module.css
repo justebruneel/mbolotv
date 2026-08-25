@@ -78,12 +78,6 @@
   gap: 8px;
   min-width: 0;
 }
-.mobileWordmark {
-  font-size: 15px;
-  font-weight: 900;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
 
 /* ---------- Badge spectateurs actifs ---------- */
 .activeBadge {
