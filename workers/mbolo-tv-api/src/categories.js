@@ -42,21 +42,25 @@ export async function loadHiddenIds(env) {
 
 export function categoryFilterSql(hiddenIds, slug, alias = "c", startIndex = 1) {
   // startIndex : position du premier paramètre DANS la requête finale de
-  // l'appelant (les indices sont globaux, pas relatifs à ce module).
+  // l'appelant. Les indices avancent avec le curseur pour rester CONSÉCUTIFS
+  // même quand une clause est absente (sinon PG échoue sur un trou $1→$2).
   const params = [];
   let sql = "";
   const clauses = [];
+  let cursor = startIndex;
   if (hiddenIds.size > 0) {
     params.push([...hiddenIds]);
     clauses.push(
-      `(${alias}."categoryId" IS NULL OR ${alias}."categoryId" <> ALL($${startIndex}::text[]))`,
+      `(${alias}."categoryId" IS NULL OR ${alias}."categoryId" <> ALL($${cursor}::text[]))`,
     );
+    cursor += 1;
   }
   if (slug) {
     params.push(slug);
     clauses.push(
-      `${alias}."categoryId" IN (SELECT id FROM "Category" WHERE slug = $${startIndex + 1})`,
+      `${alias}."categoryId" IN (SELECT id FROM "Category" WHERE slug = $${cursor})`,
     );
+    cursor += 1;
   }
   if (clauses.length > 0) sql = ` AND (${clauses.join(" AND ")})`;
   return { sql, params };
