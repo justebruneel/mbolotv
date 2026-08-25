@@ -6,6 +6,7 @@ import type {
   ChannelQuery,
   ChannelViewersResponse,
   CountryOption,
+  MatchListResponse,
   PlayResponse,
   Programme,
   ProgrammeSearchResponse,
@@ -104,6 +105,15 @@ export function useActiveUsers() {
     queryFn: () => apiGet<ActiveCountsResponse>('/activity/counts'),
     refetchInterval: 15_000,
     staleTime: 10_000,
+  });
+}
+
+export function useMatches(state?: 'LIVE' | 'SCHEDULED') {
+  return useQuery({
+    queryKey: ['matches', state ?? 'all'],
+    queryFn: () => apiGet<MatchListResponse>('/matches', state ? { state } : undefined),
+    staleTime: 60_000,
+    refetchInterval: state === 'LIVE' ? 60_000 : undefined,
   });
 }
 

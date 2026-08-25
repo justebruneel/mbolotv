@@ -237,8 +237,7 @@
 .main {
   flex: 1;
   min-width: 0;
-  margin-left: 264px;
-  padding: 32px 40px 48px;
+  padding-top: 64px;
   animation: mbolo-fade-in 400ms var(--mbolo-ease-out) both;
 }
 
@@ -307,5 +306,102 @@
   }
   .desktopHeader {
     display: none;
+  }
+}
+
+/* ---------- Mode overlay (barre horizontale type Netflix) ---------- */
+.topbar {
+  display: flex;
+  height: 64px;
+  padding: 0 22px;
+  background: var(--mbolo-bg);
+  border-bottom: 1px solid var(--mbolo-border);
+  backdrop-filter: none;
+}
+.topLinks {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 18px;
+}
+.topLink {
+  padding: 8px 14px;
+  border-radius: 8px;
+  color: var(--mbolo-text-muted);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+  transition: color var(--mbolo-duration-fast) var(--mbolo-ease-out),
+    background var(--mbolo-duration-fast) var(--mbolo-ease-out);
+}
+.topLink:hover {
+  color: var(--mbolo-text);
+}
+.topLinkActive {
+  color: var(--mbolo-accent);
+  font-weight: 800;
+}
+.topRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.menuBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+}
+.menuPanel {
+  position: fixed;
+  top: 60px;
+  right: 14px;
+  z-index: 50;
+  min-width: 220px;
+  padding: 8px;
+  border: 1px solid var(--mbolo-border);
+  border-radius: var(--mbolo-radius-lg);
+  background: var(--mbolo-surface-2);
+  box-shadow: var(--mbolo-shadow-lg);
+  animation: menuIn 0.16s ease-out;
+}
+@keyframes menuIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.menuSection {
+  padding: 8px 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mbolo-text-faint);
+}
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--mbolo-radius-sm);
+  background: transparent;
+  color: var(--mbolo-text-secondary);
+  font-size: 13.5px;
+  font-weight: 550;
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--mbolo-duration-fast) var(--mbolo-ease-out), color var(--mbolo-duration-fast) var(--mbolo-ease-out);
+}
+.menuItem:hover {
+  background: var(--mbolo-surface-3);
+  color: var(--mbolo-text);
+}
+
+@media (min-width: 900px) {
+  .topbar {
+    padding: 0 32px;
   }
 }
