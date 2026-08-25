@@ -5,7 +5,7 @@ import { Button, MatchCard, Spinner } from '@mbolo/ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { useCategories, useChannelRow, useInfiniteChannels, useMatches } from '../../../shared/api/queries';
+import { useCategories, useInfiniteChannels, useMatches } from '../../../shared/api/queries';
 import { CategoryTree } from '../../../features/live-tv/components/CategoryTree';
 import { HeroBanner } from '../../../features/live-tv/components/HeroBanner';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
@@ -20,7 +20,6 @@ const HERO_CANDIDATES = 5;
 const MAX_BOUQUETS = 24;
 const SEARCH_DEBOUNCE_MS = 300;
 const SCROLL_KEY = 'mbolo:live:scroll';
-const HERO_SIZE = 5;
 const ROW_CATEGORIES = 8;
 const ROW_BOUQUETS = 6;
 
@@ -39,7 +38,7 @@ function LiveContent() {
   const browseMode = Boolean(category) || query.trim().length > 0;
 
   return browseMode ? (
-    <BrowseView initialCategory={category} initialQuery={query} />
+    <BrowseView initialQuery={query} />
   ) : (
     <HomeView />
   );
@@ -48,7 +47,6 @@ function LiveContent() {
 /* ============================== ACCUEIL NETFLIX ============================== */
 
 function HomeView() {
-  const router = useRouter();
   const channelsQuery = useInfiniteChannels({}, PAGE_SIZE);
   const categoriesQuery = useCategories();
   const liveMatchesQuery = useMatches('LIVE');
@@ -184,7 +182,7 @@ function useFavoriteChannels(favoriteIds: string[]): Channel[] {
 
 /* ============================ VUE TOUT PARCOURIR ============================ */
 
-function BrowseView({ initialCategory, initialQuery }: { initialCategory?: string; initialQuery: string }) {
+function BrowseView({ initialQuery }: { initialQuery: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const category = searchParams.get('category') ?? undefined;

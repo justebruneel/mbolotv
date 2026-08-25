@@ -38,7 +38,6 @@ export function NetflixRow({
   slug,
   channels: directChannels,
   seeAllHref,
-  watchContext,
 }: {
   title: string;
   subtitle?: string;
@@ -47,7 +46,6 @@ export function NetflixRow({
   /** Chaînes fournies directement (sans fetch). */
   channels?: Channel[];
   seeAllHref?: string;
-  watchContext?: { category?: string; country?: string; q?: string };
 }) {
   const { ref, inView } = useInView();
   const enabled = Boolean(inView && (slug || directChannels));
@@ -130,7 +128,7 @@ export function NetflixRow({
                 </div>
               ))
             : channels.map((channel) => (
-                <RowCard key={channel.id} channel={channel} watchContext={watchContext} />
+                <RowCard key={channel.id} channel={channel} />
               ))}
           {!isLoading && channels.length === 0 && <p className="py-8 text-sm text-muted">Aucune chaîne.</p>}
         </div>
@@ -139,7 +137,7 @@ export function NetflixRow({
   );
 }
 
-function RowCard({ channel, watchContext }: { channel: Channel; watchContext?: { category?: string; country?: string; q?: string } }) {
+function RowCard({ channel }: { channel: Channel }) {
   const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
   const toggle = useFavoritesStore((state) => state.toggle);
   const badge = channelBadge(channel.name);
@@ -157,13 +155,11 @@ function RowCard({ channel, watchContext }: { channel: Channel; watchContext?: {
         {/* Visuel : vignette du programme en cours, sinon logo sur dégradé */}
         <div className="relative aspect-video w-full">
           {thumb ? (
-            // eslint-disable-next-line @next/next/no-img-element
             <img src={thumb} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-surface-3 to-surface">
               {channel.logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={channel.logoUrl} alt="" loading="lazy" decoding="async" className="max-h-[55%] max-w-[65%] object-contain drop-shadow-md" />
+                    <img src={channel.logoUrl} alt="" loading="lazy" decoding="async" className="max-h-[55%] max-w-[65%] object-contain drop-shadow-md" />
               ) : (
                 <span className="text-3xl font-black text-white/10">{channelInitials(channel.name)}</span>
               )}

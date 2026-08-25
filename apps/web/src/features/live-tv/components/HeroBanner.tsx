@@ -80,7 +80,6 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
       className={`absolute inset-0 transition-opacity duration-700 ${active ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
     >
       {backdrop ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={backdrop} alt="" className="h-full w-full object-cover" loading={active ? 'eager' : 'lazy'} decoding="async" />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-surface-3 via-surface to-bg">
