@@ -119,6 +119,32 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
       </header>
 
       <main className={styles.main}>{children}</main>
+
+      {/* Onglets bas — signature Netflix mobile (< 768 px) */}
+      <nav className={styles.bottomTabs} aria-label="Navigation mobile">
+        {navItems.slice(0, 2).map((item) => {
+          const active = item.href === activeHref;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={[styles.bottomTab, active ? styles.bottomTabActive : ""].filter(Boolean).join(" ")}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
+        <button
+          type="button"
+          className={[styles.bottomTab, menuOpen ? styles.bottomTabActive : ""].filter(Boolean).join(" ")}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((value) => !value)}
+        >
+          <MoreVertical size={20} aria-hidden />
+          <span>Plus</span>
+        </button>
+      </nav>
     </div>
   );
 }

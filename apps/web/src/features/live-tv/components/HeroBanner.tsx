@@ -16,10 +16,11 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
   const [paused, setPaused] = useState(false);
 
   useEffect(() => {
-    if (channels.length <= 1 || paused) {
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) setPaused(true);
-      return;
-    }
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const touch = window.matchMedia('(hover: none)').matches;
+    // Sur tactile : hero statique (la rotation gêne le scroll vertical), les
+    // pastilles servent de sélecteur manuel.
+    if (channels.length <= 1 || paused || reduced || touch) return;
     const timer = window.setInterval(() => setIndex((value) => (value + 1) % channels.length), ROTATE_MS);
     return () => window.clearInterval(timer);
   }, [channels.length, paused]);
@@ -41,7 +42,7 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
 
   return (
     <div
-      className="relative h-[62vh] min-h-[400px] w-full overflow-hidden"
+      className="relative h-[46svh] min-h-[320px] w-full overflow-hidden md:h-[62vh] md:min-h-[400px]"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
@@ -52,7 +53,7 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-bg to-transparent" />
       <div className="pointer-events-none absolute inset-y-0 left-0 w-full bg-gradient-to-r from-bg/90 via-bg/30 to-transparent" />
 
-      <div className="absolute bottom-24 right-6 z-20 hidden flex-col items-end gap-2 md:flex">
+      <div className="absolute inset-x-0 bottom-5 z-20 flex flex-row items-center justify-center gap-2 md:inset-x-auto md:bottom-24 md:right-6 md:flex-col md:items-end">
         {channels.map((channel, position) => (
           <button
             key={channel.id}
@@ -87,7 +88,7 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
         </div>
       )}
 
-      <div className={`absolute inset-x-0 bottom-0 p-6 md:p-16 ${active ? '' : 'pointer-events-none'}`}>
+      <div className={`absolute inset-x-0 bottom-0 p-5 pb-[calc(76px+env(safe-area-inset-bottom))] md:p-16 ${active ? '' : 'pointer-events-none'}`}>
         <div className="max-w-xl">
           <div className="flex flex-wrap items-center gap-2">
             {badge && <span className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-black tracking-wide text-on-accent">{badge}</span>}
@@ -100,7 +101,7 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
             <span className="text-xs font-semibold uppercase tracking-widest text-white/70">{channel.country ?? 'Live'}</span>
           </div>
 
-          <h1 className="mt-3 line-clamp-2 text-3xl font-black leading-tight drop-shadow-lg md:text-5xl">{programme?.title ?? channel.name}</h1>
+          <h1 className="mt-2 line-clamp-2 text-xl font-black leading-snug drop-shadow-lg sm:text-2xl md:mt-3 md:text-5xl md:leading-tight">{programme?.title ?? channel.name}</h1>
           <p className="mt-2 text-sm font-semibold text-white/80">{channel.name}</p>
           {programme && (
             <p className="mt-1 text-xs text-white/60">

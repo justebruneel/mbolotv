@@ -150,7 +150,7 @@ function RowCard({ channel }: { channel: Channel }) {
       <Link
         href={`/watch/${channel.id}`}
         aria-label={`Regarder ${channel.name}`}
-        className="group/card relative block w-[240px] overflow-hidden rounded-xl border border-border/60 bg-surface transition-all duration-300 hover:z-30 hover:scale-[1.07] hover:border-accent/70 hover:shadow-2xl md:w-[264px]"
+        className="group/card relative block w-[44vw] max-w-[248px] shrink-0 overflow-hidden rounded-xl border border-border/60 bg-surface transition-all duration-300 hover:z-30 hover:scale-[1.05] hover:border-accent/70 hover:shadow-2xl md:w-[264px] md:max-w-none md:hover:scale-[1.07]"
       >
         {/* Visuel : vignette du programme en cours, sinon logo sur dégradé */}
         <div className="relative aspect-video w-full">
@@ -182,7 +182,7 @@ function RowCard({ channel }: { channel: Channel }) {
           {/* Favori au survol */}
           {!down && (
             <span
-              className="absolute bottom-8 right-1.5 z-10 opacity-0 transition-opacity group-hover/card:opacity-100"
+              className="absolute bottom-8 right-1.5 z-10 opacity-100 transition-opacity md:opacity-0 md:group-hover/card:opacity-100"
               onClick={(event) => event.preventDefault()}
             >
               <FavoriteButton
@@ -212,9 +212,11 @@ function RowCard({ channel }: { channel: Channel }) {
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-2 px-2.5 py-2">
-          <p className="min-w-0 truncate text-xs font-semibold text-foreground/90">{channel.name}</p>
-          {channel.country && <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted">{channel.country}</span>}
+        <div className="min-w-0 px-2.5 py-2">
+          <p className="truncate text-xs font-bold text-foreground/90">{programme?.title ?? channel.name}</p>
+          <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-wide text-muted">
+            {programme ? `${channel.name} · fin ${new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : channel.country ?? ''}
+          </p>
         </div>
       </Link>
     </article>

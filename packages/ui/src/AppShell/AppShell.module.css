@@ -405,3 +405,63 @@
     padding: 0 32px;
   }
 }
+
+/* ---------- Mobile : onglets bas + ajustements ---------- */
+.bottomTabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 48;
+  display: flex;
+  border-top: 1px solid var(--mbolo-border);
+  background: oklch(from var(--mbolo-bg) l c h / 0.94);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.bottomTab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 0 7px;
+  background: none;
+  border: none;
+  color: var(--mbolo-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--mbolo-duration-fast) var(--mbolo-ease-out);
+}
+.bottomTab:hover {
+  color: var(--mbolo-text-secondary);
+}
+.bottomTabActive,
+.bottomTabActive:hover {
+  color: var(--mbolo-accent);
+}
+
+/* Liens inline masqués sur petit écran (burger + onglets prennent le relais) */
+@media (max-width: 767px) {
+  .topLinks {
+    display: none;
+  }
+  .main {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+  .topbar {
+    height: auto;
+    min-height: 56px;
+    padding-top: env(safe-area-inset-top);
+  }
+  /* Le menu s'ancre au-dessus des onglets bas */
+  .menuPanel {
+    top: auto;
+    left: 10px;
+    right: 10px;
+    bottom: calc(78px + env(safe-area-inset-bottom));
+  }
+}
