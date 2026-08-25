@@ -9,7 +9,6 @@ import { decryptLocator } from './crypto.js';
 
 const MAX_BYTES = 1024 * 1024;
 const TIMEOUT_MS = Number(process.env.HEALTH_CHECK_TIMEOUT_MS ?? 6000);
-const MAX_REDIRECTS = 5;
 
 function applyRelay(env, targetUrl) {
   if (!env.RELAY_MAP) return targetUrl;
@@ -25,22 +24,32 @@ function applyRelay(env, targetUrl) {
 }
 
 async function fetchThroughRelay(env, url, timeoutMs = TIMEOUT_MS) {
-  let currentUrl = url;
-  let response;
-  let hops = 0;
-  for (;;) {
-    response = await fetch(applyRelay(env, currentUrl), {
-      headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const location = response.headers.get('location');
-    if (![301, 302, 303, 307, 308].includes(response.status) || !location) break;
-    if (++hops > MAX_REDIRECTS) throw new Error('Trop de redirections fournisseur');
-    currentUrl = new URL(location, response.url || currentUrl).toString();
-    void response.body?.cancel().catch(() => undefined);
+  // Le load-balancer du panel peut attribuer un serveur média injoignable :
+  // on retente la chaîne complète (LB réattribuera un autre serveur).
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let currentUrl = url;
+    let response;
+    let hops = 0;
+    try {
+      for (;;) {
+        response = await fetch(applyRelay(env, currentUrl), {
+          headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        const location = response.headers.get('location');
+        if (![301, 302, 303, 307, 308].includes(response.status) || !location) break;
+        if (++hops > MAX_REDIRECTS) throw new Error('Trop de redirections fournisseur');
+        currentUrl = new URL(location, response.url || currentUrl).toString();
+        void response.body?.cancel().catch(() => undefined);
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
   }
-  return response;
+  throw lastError ?? new Error('Échec relais');
 }
 
 export async function checkVariant(env, cryptoKey, variant) {

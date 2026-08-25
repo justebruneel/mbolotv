@@ -6,8 +6,15 @@
 // Les redirections du fournisseur (changement de serveur média + jeton) sont
 // suivies MANUELLEMENT côté Worker afin que chaque saut repasse par le relais
 // — un redirect:"follow" ferait sortir le 2e saut directement de Cloudflare.
+//
+// Les panels font de la répartition de charge entre plusieurs serveurs médias,
+// dont certains sont parfois injoignables depuis une ligne résidentielle :
+// en cas d'échec d'une chaîne complète, on relance depuis le début — le LB
+// réattribuera généralement un autre serveur.
 
 const MAX_REDIRECTS = 5;
+const MAX_CHAIN_ATTEMPTS = 3;
+const FETCH_TIMEOUT_MS = 15_000;
 
 export default {
   async fetch(request, env, ctx) {
@@ -38,87 +45,80 @@ export default {
       ...(request.headers.get("Range") ? { Range: request.headers.get("Range") } : {}),
     };
 
-    // Chaîne de requêtes en redirect:"manual", chaque saut remappé vers le
-    // relais résidentiel s'il correspond à un hôte configuré.
-    let originResp;
-    let currentUrl = target;
-    try {
-      let hops = 0;
-      for (;;) {
-        originResp = await fetch(applyRelay(env, currentUrl), { headers, redirect: "manual" });
-        const location = originResp.headers.get("location");
-        if (![301, 302, 303, 307, 308].includes(originResp.status) || !location) break;
-        if (++hops > MAX_REDIRECTS) {
-          return new Response("Trop de redirections fournisseur", {
-            status: 502,
-            headers: corsHeaders(),
-          });
+    let lastFailure = null;
+
+    for (let attempt = 0; attempt < MAX_CHAIN_ATTEMPTS; attempt += 1) {
+      let outcome;
+      try {
+        outcome = await fetchChain(env, target, headers);
+      } catch {
+        lastFailure = { reason: "relais indisponible" };
+        continue;
+      }
+
+      if (isPlaylist) {
+        const text = await outcome.resp.text();
+        // Un vrai manifest HLS commence toujours par #EXTM3U. Sinon c'est une
+        // page d'erreur (du panel ou du edge Cloudflare sur un saut raté) :
+        // on retente la chaîne entière, le LB changera de serveur média.
+        if (!/^\uFEFF?\s*#EXTM3U/.test(text)) {
+          lastFailure = {
+            reason: "réponse fournisseur invalide",
+            finalUrl: (outcome.finalUrl || target).slice(0, 200),
+            upstreamStatus: outcome.resp.status,
+            bodyHead: text.slice(0, 120),
+          };
+          void outcome.resp.body?.cancel().catch(() => undefined);
+          continue;
         }
-        currentUrl = new URL(location, originResp.url || currentUrl).toString();
-        void originResp.body?.cancel().catch(() => undefined);
-      }
-    } catch {
-      return new Response("Relais vidéo indisponible (machine locale éteinte ?)", {
-        status: 502,
-        headers: corsHeaders(),
-      });
-    }
+        const base = new URL(outcome.finalUrl || target);
+        const proxyBase = `${url.origin}${url.pathname}`;
+        const rewritten = text
+          .split("\n")
+          .map((line) => {
+            if (line.startsWith("#") || line.trim() === "") return line;
+            const absolute = new URL(line, base).toString();
+            return `${proxyBase}?url=${encodeURIComponent(absolute)}`;
+          })
+          .join("\n");
 
-    if (isPlaylist) {
-      let text = await originResp.text();
-      // Un vrai manifest HLS commence toujours par #EXTM3U. Les panels IPTV
-      // renvoient sinon une « playlist » d'erreur (ex : « error code: 1003 » =
-      // blocage des IP datacenter) : échouer clairement plutôt que servir une
-      // pseudo-playlist que le lecteur ne pourra pas lire.
-      if (!/^\uFEFF?\s*#EXTM3U/.test(text)) {
-        return new Response(
-          "Le fournisseur a refusé la requête (blocage IP datacenter ou relais indisponible)",
-          {
-            status: 502,
-            headers: {
-              "content-type": "text/plain; charset=utf-8",
-              ...corsHeaders(),
-              "cache-control": "no-store",
-            },
+        return new Response(rewritten, {
+          headers: {
+            "content-type": "application/vnd.apple.mpegurl",
+            ...corsHeaders(),
+            "cache-control": "public, max-age=3",
           },
-        );
+        });
       }
-      // Les fournisseurs Xtream redirigent souvent vers un serveur média et
-      // ajoutent un jeton. Les URI de segments sont alors relatives à l'URL
-      // finale, pas à l'URL Xtream initiale. Utiliser originResp.url est
-      // indispensable pour que ces segments restent lisibles.
-      const base = new URL(originResp.url || currentUrl || target);
-      const proxyBase = `${url.origin}${url.pathname}`;
 
-      text = text
-        .split("\n")
-        .map((line) => {
-          if (line.startsWith("#") || line.trim() === "") return line;
-          const absolute = new URL(line, base).toString();
-          return `${proxyBase}?url=${encodeURIComponent(absolute)}`;
-        })
-        .join("\n");
-
-      return new Response(text, {
-        headers: {
-          "content-type": "application/vnd.apple.mpegurl",
-          ...corsHeaders(),
-          "cache-control": "public, max-age=3",
-        },
+      // Segment / fichier binaire.
+      if (outcome.resp.status >= 500) {
+        lastFailure = { reason: `upstream ${outcome.resp.status}` };
+        void outcome.resp.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      const responseHeaders = new Headers(outcome.resp.headers);
+      responseHeaders.set("access-control-allow-origin", "*");
+      responseHeaders.set("cache-control", "public, max-age=3600, immutable");
+      const response = new Response(outcome.resp.body, {
+        status: outcome.resp.status,
+        headers: responseHeaders,
       });
+      ctx.waitUntil(cache.put(cacheKey, response.clone()));
+      return response;
     }
 
-    const responseHeaders = new Headers(originResp.headers);
-    responseHeaders.set("access-control-allow-origin", "*");
-    responseHeaders.set("cache-control", "public, max-age=3600, immutable");
-
-    const response = new Response(originResp.body, {
-      status: originResp.status,
-      headers: responseHeaders,
-    });
-
-    ctx.waitUntil(cache.put(cacheKey, response.clone()));
-    return response;
+    return new Response(
+      JSON.stringify({ error: "Flux indisponible via le relais", ...(lastFailure ? { detail: lastFailure } : {}) }),
+      {
+        status: 502,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          ...corsHeaders(),
+          "cache-control": "no-store",
+        },
+      },
+    );
   },
 };
 
@@ -135,6 +135,25 @@ function applyRelay(env, targetUrl) {
     return targetUrl.replace(`${parsed.protocol}//${parsed.host}`, destination.replace(/\/+$/, ""));
   } catch {
     return targetUrl;
+  }
+}
+
+async function fetchChain(env, target, headers) {
+  let currentUrl = target;
+  let hops = 0;
+  for (;;) {
+    const resp = await fetch(applyRelay(env, currentUrl), {
+      headers,
+      redirect: "manual",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    const location = resp.headers.get("location");
+    if (![301, 302, 303, 307, 308].includes(resp.status) || !location) {
+      return { resp, finalUrl: currentUrl };
+    }
+    if (++hops > MAX_REDIRECTS) throw new Error("Trop de redirections fournisseur");
+    currentUrl = new URL(location, resp.url || currentUrl).toString();
+    void resp.body?.cancel().catch(() => undefined);
   }
 }
 
