@@ -341,7 +341,42 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     return ctx.json(serializeRun(rows.rows[0]));
   }
 
-  if (path === '/api/owner/audit' && method === 'GET') {
+  if (path === "/api/owner/catalog/purge-empty" && method === "POST") {
+    const cats = await ctx.env.db.query(ctx.env, `SELECT id, "parentId" FROM "Category"`);
+    const counts = await ctx.env.db.query(ctx.env, `SELECT "categoryId", COUNT(*)::int AS count FROM "Channel" GROUP BY "categoryId"`);
+    const countByCat = new Map(counts.rows.map((row) => [row.categoryId, row.count]));
+    const childrenByParent = new Map();
+    for (const row of cats.rows) {
+      const bucket = childrenByParent.get(row.parentId) ?? [];
+      bucket.push(row);
+      childrenByParent.set(row.parentId, bucket);
+    }
+    const memo = new Map();
+    const visiting = new Set();
+    const subtreeCount = (id) => {
+      const cached = memo.get(id);
+      if (cached !== undefined) return cached;
+      if (visiting.has(id)) return 0;
+      visiting.add(id);
+      let total = countByCat.get(id) ?? 0;
+      for (const child of childrenByParent.get(id) ?? []) total += subtreeCount(child.id);
+      visiting.delete(id);
+      memo.set(id, total);
+      return total;
+    };
+    // Un dossier est inutile si son sous-arbre entier ne contient AUCUNE chaîne :
+    // ses enfants vides sont dans la même liste, la suppression groupée est sûre.
+    const toDelete = cats.rows.filter((row) => subtreeCount(row.id) === 0).map((row) => row.id);
+    let deleted = 0;
+    for (const part of chunks(toDelete, 500)) {
+      const result = await ctx.env.db.query(ctx.env, `DELETE FROM "Category" WHERE id = ANY($1::text[]) RETURNING id`, [part]);
+      deleted += result.rowCount;
+    }
+    await audit(ctx, owner.userId, "catalog.purge_empty", "category", null, { deleted, examined: cats.rows.length });
+    return ctx.json({ deleted, examined: cats.rows.length, kept: cats.rows.length - deleted });
+  }
+
+  if (path === "/api/owner/audit" && method === "GET") {
     const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
     const offset = Number(url.searchParams.get('offset') ?? 0) || 0;
     const [rows, count] = await Promise.all([
