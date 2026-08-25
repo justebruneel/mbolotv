@@ -40,20 +40,22 @@ export async function loadHiddenIds(env) {
   return hiddenCategoryIds(result.rows);
 }
 
-export function categoryFilterSql(hiddenIds, slug, alias = "c") {
+export function categoryFilterSql(hiddenIds, slug, alias = "c", startIndex = 1) {
+  // startIndex : position du premier paramètre DANS la requête finale de
+  // l'appelant (les indices sont globaux, pas relatifs à ce module).
   const params = [];
   let sql = "";
   const clauses = [];
   if (hiddenIds.size > 0) {
     params.push([...hiddenIds]);
     clauses.push(
-      `(${alias}."categoryId" IS NULL OR ${alias}."categoryId" <> ALL($${params.length}::text[]))`,
+      `(${alias}."categoryId" IS NULL OR ${alias}."categoryId" <> ALL($${startIndex}::text[]))`,
     );
   }
   if (slug) {
     params.push(slug);
     clauses.push(
-      `${alias}."categoryId" IN (SELECT id FROM "Category" WHERE slug = $${params.length})`,
+      `${alias}."categoryId" IN (SELECT id FROM "Category" WHERE slug = $${startIndex + 1})`,
     );
   }
   if (clauses.length > 0) sql = ` AND (${clauses.join(" AND ")})`;

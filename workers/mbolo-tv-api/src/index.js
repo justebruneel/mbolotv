@@ -230,7 +230,7 @@ async function route(ctx, url) {
   if (channelMatch && channelMatch[3] === "play" && method === "GET") {
     const channelId = decodeURIComponent(channelMatch[1]);
     const hiddenIds = await categoriesRepo.loadHiddenIds(env);
-    const category = categoriesRepo.categoryFilterSql(hiddenIds, null);
+    const category = categoriesRepo.categoryFilterSql(hiddenIds, null, 'c', 2);
     const visible = await env.db.query(
       env,
       `SELECT 1 FROM "Channel" c WHERE c.id = $1 AND c."isVisible" = true${category.sql} LIMIT 1`,

@@ -132,7 +132,7 @@ export async function countries(env) {
 
 async function findVisibleChannel(env, id, requirePlayable) {
   const hiddenIds = await loadHiddenIds(env);
-  const category = categoryFilterSql(hiddenIds, null);
+  const category = categoryFilterSql(hiddenIds, null, 'c', 2);
   const playable = requirePlayable ? ` AND ${VISIBLE_VARIANTS}` : "";
   const result = await env.db.query(
     env,

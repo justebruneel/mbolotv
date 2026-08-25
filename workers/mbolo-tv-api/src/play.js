@@ -48,7 +48,7 @@ export function playResponse(env, providerUrl) {
 
 export async function channelIsVisible(env, channelId) {
   const hiddenIds = await loadHiddenIds(env);
-  const category = categoryFilterSql(hiddenIds, null);
+  const category = categoryFilterSql(hiddenIds, null, 'c', 2);
   const result = await env.db.query(
     env,
     `SELECT 1 FROM "Channel" c WHERE c.id = $1 AND c."isVisible" = true AND EXISTS (
