@@ -258,3 +258,33 @@
     display: none;
   }
 }
+
+/* ---------- Slot recherche (nav) ---------- */
+.searchSlot {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.searchSlotDesktop {
+  flex: 1;
+  max-width: 360px;
+  margin: 0 12px;
+}
+
+@media (max-width: 767px) {
+  .mobileBar {
+    height: auto;
+    padding-bottom: 8px;
+  }
+  .mobileBarRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+  }
+  .searchSlot {
+    width: 100%;
+    margin-top: 6px;
+  }
+}

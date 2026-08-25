@@ -15,6 +15,8 @@ export interface AppShellProps {
   pathname?: string;
   activeUsers?: number;
   children: ReactNode;
+  /** Slot rendu au centre des barres (recherche Netflix). */
+  searchSlot?: ReactNode;
 }
 
 interface BeforeInstallPromptEvent extends Event {
@@ -27,7 +29,7 @@ interface BeforeInstallPromptEvent extends Event {
 //   .desktopBar : ≥ 768 px   → logo · liens inline · badge · thème · ⋮
 //   .mobileBar  : < 768 px   → logo + « Mbolo TV » · badge · thème · ⋮
 //   .bottomTabs : < 768 px   → onglets bas Accueil / Favoris / Plus
-export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, activeHref, pathname: _pathname, activeUsers, children }: AppShellProps) {
+export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, activeHref, pathname: _pathname, activeUsers, children, searchSlot }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
 
@@ -78,6 +80,8 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
           })}
         </nav>
 
+        {searchSlot && <div className={[styles.searchSlot, styles.searchSlotDesktop].join(" ")}>{searchSlot}</div>}
+
         <div className={styles.barRight}>
           {usersBadge}
           {sidebarActions}
@@ -95,12 +99,15 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
 
       {/* ================= BARRE MOBILE (< 768 px) ================= */}
       <header className={styles.mobileBar}>
-        <span className={styles.mobileBrand}>{brand}</span>
+        <div className={styles.mobileBarRow}>
+          <span className={styles.mobileBrand}>{brand}</span>
 
-        <div className={styles.barRight}>
-          {usersBadge}
-          {sidebarActions}
+          <div className={styles.barRight}>
+            {usersBadge}
+            {sidebarActions}
+          </div>
         </div>
+        {searchSlot && <div className={styles.searchSlot}>{searchSlot}</div>}
       </header>
 
       {/* Menu ⋮ partagé (navigation sur mobile, utilitaires sur desktop) */}

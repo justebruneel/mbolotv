@@ -7,6 +7,7 @@ import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
 import { useActiveUsers, useActivityHeartbeat } from '../../shared/api/queries';
+import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
 import { AccessGate } from '../../features/auth/components/access-gate';
 
 const NAV_ITEMS = [
@@ -35,6 +36,11 @@ function ShellContent({ children }: { children: ReactNode }) {
         navItems={NAV_ITEMS}
         utilityItems={UTILITY_ITEMS}
         sidebarActions={<ThemeToggle />}
+        searchSlot={pathname?.startsWith('/live') ? (
+          <Suspense fallback={<div className="h-10 w-10" />}>
+            <HeaderSearch />
+          </Suspense>
+        ) : undefined}
         activeHref={active}
         pathname={pathname}
         activeUsers={activeData?.global}
