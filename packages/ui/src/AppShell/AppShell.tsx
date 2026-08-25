@@ -100,15 +100,6 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
         <div className={styles.barRight}>
           {usersBadge}
           {sidebarActions}
-          <button
-            type="button"
-            className={styles.iconButton}
-            aria-label="Menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((value) => !value)}
-          >
-            <MoreVertical size={20} aria-hidden />
-          </button>
         </div>
       </header>
 
