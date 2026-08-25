@@ -70,6 +70,7 @@ export const ownerApi = {
   channels: {
     update: (id: string, input: OwnerChannelUpdateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/channels/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),
     test: (id: string): Promise<ChannelTestResponse> => fetch(`${BASE_URL}/owner/channels/${id}/test`, { method: 'POST', credentials: 'include' }).then(parseResponse<ChannelTestResponse>),
+    removeBatch: (ids: string[]): Promise<{ deleted: number }> => fetch(`${BASE_URL}/owner/channels/delete-batch`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ ids }) }).then(parseResponse<{ deleted: number }>),
   },
   accessCodes: {
     list: (): Promise<AccessCode[]> => fetch(`${BASE_URL}/owner/access-codes`, { credentials: 'include' }).then(parseResponse<AccessCode[]>),

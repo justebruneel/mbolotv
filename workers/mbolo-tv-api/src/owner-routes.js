@@ -375,6 +375,25 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     return new Response(null, { status: 204, headers: ctx.corsHeaders() });
   }
 
+  if (path === '/api/owner/channels/delete-batch' && method === 'POST') {
+    const body = await ctx.readJson().catch(() => null);
+    const requestedIds = Array.isArray(body?.ids) ? body.ids.filter((value) => typeof value === 'string') : [];
+    if (requestedIds.length === 0) return ctx.fail(400, 'Aucune chaîne sélectionnée');
+    // Scope propriétaire strict : seules les chaînes portant une variante d'une
+    // source du owner sont supprimées (cascade variantes + EPG + favoris).
+    const placeholders = requestedIds.map((_, index) => `$${index + 1}`).join(', ');
+    const result = await ctx.env.db.query(
+      ctx.env,
+      `DELETE FROM "Channel" WHERE id IN (${placeholders}) AND EXISTS (
+         SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId"
+         WHERE v."channelId" = "Channel".id AND s."ownerId" = $${requestedIds.length + 1}
+       ) RETURNING id`,
+      [...requestedIds, owner.userId],
+    );
+    await audit(ctx, owner.userId, 'catalog.channel_delete_batch', 'channel', null, { requested: requestedIds.length, deleted: result.rowCount });
+    return ctx.json({ deleted: result.rowCount });
+  }
+
   if (path === '/api/owner/imports' && method === 'GET') {
     const rows = await env.db.query(env, `SELECT r.*, s.name AS source_name FROM "ImportRun" r JOIN "Source" s ON s.id = r."sourceId" WHERE s."ownerId" = $1 ORDER BY r."startedAt" DESC LIMIT 100`, [owner.userId]);
     return ctx.json({ items: rows.rows.map(serializeRun), total: rows.rows.length });

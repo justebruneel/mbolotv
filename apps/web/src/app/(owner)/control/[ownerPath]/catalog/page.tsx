@@ -48,10 +48,18 @@ function buildChildrenByParent(nodes: OwnerCategory[]): Map<string | null, Owner
   return map;
 }
 
-const ChannelRow = memo(function ChannelRow({ channel, onToggle, onTest, tests, busy }: { channel: OwnerChannel; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null }) {
+const ChannelRow = memo(function ChannelRow({ channel, onToggle, onTest, tests, busy, selectable, selected, onSelect }: { channel: OwnerChannel; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null; selectable?: boolean; selected?: boolean; onSelect?: (id: string) => void }) {
   const test = tests[channel.id];
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+      {selectable && (
+        <input
+          type="checkbox"
+          aria-label={`Sélectionner ${channel.name}`}
+          checked={Boolean(selected)}
+          onChange={() => onSelect?.(channel.id)}
+        />
+      )}
       <div className="min-w-[200px] flex-1">
         <p className="text-sm font-medium">{channel.name}</p>
         <p className="text-xs text-muted">{channel.variantsCount} source(s) · {channel.healthStatus ?? 'non testé'}</p>
@@ -65,11 +73,11 @@ const ChannelRow = memo(function ChannelRow({ channel, onToggle, onTest, tests, 
   );
 });
 
-function ChannelList({ page, onToggle, onTest, tests, busy, onLoadMore }: { page: ChannelPage; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null; onLoadMore?: () => void }) {
+function ChannelList({ page, onToggle, onTest, tests, busy, onLoadMore, selectable, selectedIds, onSelect }: { page: ChannelPage; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null; onLoadMore?: () => void; selectable?: boolean; selectedIds?: Set<string>; onSelect?: (id: string) => void }) {
   return (
     <div className="divide-y divide-border/70">
       {page.items.map((channel) => (
-        <ChannelRow key={channel.id} channel={channel} onToggle={onToggle} onTest={onTest} tests={tests} busy={busy} />
+        <ChannelRow key={channel.id} channel={channel} onToggle={onToggle} onTest={onTest} tests={tests} busy={busy} selectable={selectable} selected={selectedIds?.has(channel.id)} onSelect={onSelect} />
       ))}
       {onLoadMore && page.items.length < page.total && (
         <div className="bg-surface-2/40 p-3 text-center">
@@ -242,6 +250,10 @@ export default function CatalogControlPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectFilter, setSelectFilter] = useState('');
   const [deletingBatch, setDeletingBatch] = useState(false);
+  // Suppression des chaînes « sans dossier ».
+  const [uncatSelectMode, setUncatSelectMode] = useState(false);
+  const [uncatSelected, setUncatSelected] = useState<Set<string>>(new Set());
+  const [deletingChannels, setDeletingChannels] = useState(false);
 
   const orderMap = useMemo(() => (catalog ? buildOrderMap(catalog.categories) : new Map<string, OrderInfo>()), [catalog]);
   const allFlat = useMemo(() => (catalog ? flattenCategories(catalog.categories) : []), [catalog]);
@@ -346,6 +358,31 @@ export default function CatalogControlPage() {
       setError(reason instanceof Error ? reason.message : 'Suppression impossible.');
     } finally {
       setDeletingBatch(false);
+    }
+  }
+  function toggleUncatSelected(id: string): void {
+    setUncatSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  async function deleteUncatSelected(): Promise<void> {
+    const ids = [...uncatSelected];
+    if (ids.length === 0) return;
+    if (!window.confirm(`Supprimer définitivement ${ids.length} chaîne(s) sans dossier ?\n\nCette action est irréversible (flux, EPG et favoris associés sont supprimés). Un nouvel import peut les recréer.`)) return;
+    setDeletingChannels(true);
+    try {
+      await ownerApi.channels.removeBatch(ids);
+      setUncatSelected(new Set());
+      setUncatSelectMode(false);
+      setError(null);
+      await reload();
+      await fetchPage(null, 'replace');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Suppression impossible.');
+    } finally {
+      setDeletingChannels(false);
     }
   }
   async function updateChannel(id: string, isVisible: boolean): Promise<void> {
@@ -497,11 +534,47 @@ export default function CatalogControlPage() {
               <span className="text-muted">{uncategorizedOpen ? '▾' : '▸'}</span>
             </button>
             {uncategorizedOpen && (
-              pages['none'] ? (
-                <ChannelList page={pages['none']} onToggle={updateChannel} onTest={testChannel} tests={tests} busy={busy} onLoadMore={pages['none'].items.length < pages['none'].total ? () => void fetchPage(null, 'append') : undefined} />
-              ) : (
-                <div className="p-3 text-sm text-muted">{loadingPages['none'] ? 'Chargement des chaînes…' : 'Aucune chaîne.'}</div>
-              )
+              <>
+                <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-2/40 p-3">
+                  <button
+                    type="button"
+                    className={`btn ${uncatSelectMode ? 'btn-danger' : ''}`}
+                    onClick={() => { setUncatSelectMode((value) => !value); setUncatSelected(new Set()); }}
+                  >
+                    {uncatSelectMode ? 'Quitter la sélection' : 'Sélectionner'}
+                  </button>
+                  {uncatSelectMode && (
+                    <>
+                      <button type="button" className="btn" onClick={() => setUncatSelected(new Set((pages['none']?.items ?? []).map((channel) => channel.id)))}>Tout cocher ({pages['none']?.items.length ?? 0})</button>
+                      <button type="button" className="btn" onClick={() => setUncatSelected(new Set())}>Décocher</button>
+                      <span className="text-sm text-muted">{uncatSelected.size} sélectionnée(s)</span>
+                      <button
+                        type="button"
+                        className="btn btn-danger ml-auto"
+                        disabled={uncatSelected.size === 0 || deletingChannels}
+                        onClick={() => void deleteUncatSelected()}
+                      >
+                        {deletingChannels ? 'Suppression…' : `Supprimer la sélection (${uncatSelected.size})`}
+                      </button>
+                    </>
+                  )}
+                </div>
+                {pages['none'] ? (
+                  <ChannelList
+                    page={pages['none']}
+                    onToggle={updateChannel}
+                    onTest={testChannel}
+                    tests={tests}
+                    busy={busy}
+                    onLoadMore={pages['none'].items.length < pages['none'].total ? () => void fetchPage(null, 'append') : undefined}
+                    selectable={uncatSelectMode}
+                    selectedIds={uncatSelected}
+                    onSelect={toggleUncatSelected}
+                  />
+                ) : (
+                  <div className="p-3 text-sm text-muted">{loadingPages['none'] ? 'Chargement des chaînes…' : 'Aucune chaîne.'}</div>
+                )}
+              </>
             )}
           </section>
         )}
