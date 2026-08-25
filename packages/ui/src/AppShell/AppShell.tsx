@@ -15,8 +15,6 @@ export interface AppShellProps {
   pathname?: string;
   activeUsers?: number;
   children: ReactNode;
-  /** 'overlay' : barre horizontale type Netflix (défaut). */
-  variant?: 'sidebar' | 'overlay';
 }
 
 interface BeforeInstallPromptEvent extends Event {
@@ -24,11 +22,16 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: string }>;
 }
 
-export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, activeHref, pathname, activeUsers, children, variant = 'overlay' }: AppShellProps) {
+// Deux barres de navigation INDÉPENDANTES, chacune masquée hors de son
+// breakpoint par le CSS — aucun héritage ni partage de structure :
+//   .desktopBar : ≥ 768 px   → logo · liens inline · badge · thème · ⋮
+//   .mobileBar  : < 768 px   → logo + « Mbolo TV » · badge · thème · ⋮
+//   .bottomTabs : < 768 px   → onglets bas Accueil / Favoris / Plus
+export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, activeHref, pathname: _pathname, activeUsers, children }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
 
-  useEffect(() => setMenuOpen(false), [pathname]);
+  useEffect(() => setMenuOpen(false), [_pathname]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenuOpen(false); };
     document.addEventListener('keydown', handler);
@@ -56,18 +59,18 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
 
   return (
     <div className={styles.shell}>
-      <header className={styles.topbar}>
-        <span className={styles.topbarBrand}>{brand}</span>
+      {/* ================= BARRE DESKTOP (≥ 768 px) ================= */}
+      <header className={styles.desktopBar}>
+        <span className={styles.brand}>{brand}</span>
 
-        {/* Liens principaux (desktop) */}
-        <nav className={styles.topLinks} aria-label="Navigation principale">
+        <nav className={styles.desktopNav} aria-label="Navigation principale">
           {navItems.map((item) => {
             const active = item.href === activeHref;
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={[styles.topLink, active ? styles.topLinkActive : ''].filter(Boolean).join(' ')}
+                className={[styles.desktopLink, active ? styles.desktopLinkActive : ''].filter(Boolean).join(' ')}
               >
                 {item.label}
               </Link>
@@ -75,12 +78,12 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
           })}
         </nav>
 
-        <div className={styles.topRight}>
+        <div className={styles.barRight}>
           {usersBadge}
           {sidebarActions}
           <button
             type="button"
-            className={styles.menuButton}
+            className={styles.iconButton}
             aria-label="Plus d'options"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((value) => !value)}
@@ -88,47 +91,84 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
             <MoreVertical size={20} aria-hidden />
           </button>
         </div>
+      </header>
 
-        {menuOpen && (
-          <>
-            <div className={styles.menuBackdrop} onClick={() => setMenuOpen(false)} aria-hidden="true" />
-            <div className={styles.menuPanel} role="menu">
-              <p className={styles.menuSection}>Navigation</p>
-              {navItems.map((item) => (
-                <Link key={`n-${item.href}`} href={item.href} role="menuitem" className={styles.menuItem} onClick={() => setMenuOpen(false)}>
+      {/* ================= BARRE MOBILE (< 768 px) ================= */}
+      <header className={styles.mobileBar}>
+        <span className={styles.mobileBrand}>{brand}<span className={styles.mobileWordmark}>Mbolo TV</span></span>
+
+        <div className={styles.barRight}>
+          {usersBadge}
+          {sidebarActions}
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label="Menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((value) => !value)}
+          >
+            <MoreVertical size={20} aria-hidden />
+          </button>
+        </div>
+      </header>
+
+      {/* Menu ⋮ partagé (navigation sur mobile, utilitaires sur desktop) */}
+      {menuOpen && (
+        <>
+          <div className={styles.menuBackdrop} onClick={() => setMenuOpen(false)} aria-hidden="true" />
+          <div className={styles.menuPanel} role="menu">
+            <p className={styles.menuSection}>Navigation</p>
+            {navItems.map((item) => {
+              const active = item.href === activeHref;
+              return (
+                <Link
+                  key={`nav-${item.href}`}
+                  href={item.href}
+                  role="menuitem"
+                  className={[styles.menuItem, active ? styles.menuItemActive : ''].filter(Boolean).join(' ')}
+                  onClick={() => setMenuOpen(false)}
+                >
                   {item.icon}
                   {item.label}
                 </Link>
-              ))}
-              <p className={styles.menuSection}>Plus</p>
-              {utilityItems.map((item) => (
-                <a key={`u-${item.href}`} href={item.href} role="menuitem" className={styles.menuItem} target="_blank" rel="noreferrer" onClick={() => setMenuOpen(false)}>
-                  {item.icon}
-                  {item.label}
-                </a>
-              ))}
-              {installEvent && (
-                <button type="button" role="menuitem" className={styles.menuItem} onClick={() => { void install(); setMenuOpen(false); }}>
-                  <Download size={17} aria-hidden />
-                  Installer l’application
-                </button>
-              )}
-            </div>
-          </>
-        )}
-      </header>
+              );
+            })}
+            <p className={styles.menuSection}>Plus</p>
+            {utilityItems.map((item) => (
+              <a
+                key={`util-${item.href}`}
+                href={item.href}
+                role="menuitem"
+                target="_blank"
+                rel="noreferrer"
+                className={styles.menuItem}
+                onClick={() => setMenuOpen(false)}
+              >
+                {item.icon}
+                {item.label}
+              </a>
+            ))}
+            {installEvent && (
+              <button type="button" role="menuitem" className={styles.menuItem} onClick={() => { void install(); setMenuOpen(false); }}>
+                <Download size={17} aria-hidden />
+                Installer l’application
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       <main className={styles.main}>{children}</main>
 
-      {/* Onglets bas — signature Netflix mobile (< 768 px) */}
+      {/* Onglets bas mobiles */}
       <nav className={styles.bottomTabs} aria-label="Navigation mobile">
         {navItems.slice(0, 2).map((item) => {
           const active = item.href === activeHref;
           return (
             <Link
-              key={item.href}
+              key={`tab-${item.href}`}
               href={item.href}
-              className={[styles.bottomTab, active ? styles.bottomTabActive : ""].filter(Boolean).join(" ")}
+              className={[styles.bottomTab, active ? styles.bottomTabActive : ''].filter(Boolean).join(' ')}
             >
               {item.icon}
               <span>{item.label}</span>
@@ -137,7 +177,7 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
         })}
         <button
           type="button"
-          className={[styles.bottomTab, menuOpen ? styles.bottomTabActive : ""].filter(Boolean).join(" ")}
+          className={[styles.bottomTab, menuOpen ? styles.bottomTabActive : ''].filter(Boolean).join(' ')}
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((value) => !value)}
         >
