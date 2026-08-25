@@ -73,7 +73,11 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
   const toggle = useFavoritesStore((state) => state.toggle);
   const badge = channelBadge(channel.name);
   const programme = channel.nowPlaying;
-  const backdrop = programme?.imageUrl ?? null;
+  const [imgError, setImgError] = useState(false);
+  useEffect(() => setImgError(false), [channel.id]);
+  const rawBackdrop = programme?.imageUrl ?? channel.logoUrl ?? null;
+  const backdrop = rawBackdrop && !imgError ? rawBackdrop : null;
+  const isLogoBackdrop = backdrop === channel.logoUrl;
 
   return (
     <div
@@ -81,45 +85,60 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
       className={`absolute inset-0 transition-opacity duration-700 ${active ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
     >
       {backdrop ? (
-        <img src={backdrop} alt="" className="h-full w-full object-cover" loading={active ? 'eager' : 'lazy'} decoding="async" />
+        <img
+          src={backdrop}
+          alt=""
+          onError={() => setImgError(true)}
+          className={`h-full w-full object-cover ${isLogoBackdrop ? 'object-contain p-16 opacity-40 blur-[1px] scale-110' : ''}`}
+          loading={active ? 'eager' : 'lazy'}
+          decoding="async"
+        />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-surface-3 via-surface to-bg">
           <span className="select-none text-[9rem] font-black leading-none text-white/5">{channel.name.slice(0, 2).toUpperCase()}</span>
         </div>
       )}
+      {isLogoBackdrop && <div className="absolute inset-0 bg-gradient-to-br from-surface-3/60 via-surface/40 to-bg/80" />}
 
       <div className={`absolute inset-x-0 bottom-0 p-5 pb-[calc(76px+env(safe-area-inset-bottom))] md:p-16 ${active ? '' : 'pointer-events-none'}`}>
-        <div className="max-w-xl">
+        <div className="max-w-[560px]">
+          <p className="mb-2 flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-accent">
+            <span className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-accent text-[10px] text-on-accent">N°1</span> En vedette aujourd'hui
+          </p>
           <div className="flex flex-wrap items-center gap-2">
-            {badge && <span className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-black tracking-wide text-on-accent">{badge}</span>}
+            {badge && <span className="rounded-sm bg-white/15 px-1.5 py-0.5 text-[10px] font-black tracking-wide text-white backdrop-blur">{badge}</span>}
             {programme && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-danger px-2 py-0.5 text-[10px] font-black tracking-widest text-white">
+              <span className="inline-flex items-center gap-1.5 rounded-sm bg-danger px-2 py-0.5 text-[10px] font-black tracking-widest text-white">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
                 DIRECT
               </span>
             )}
-            <span className="text-xs font-semibold uppercase tracking-widest text-white/70">{channel.country ?? 'Live'}</span>
+            <span className="text-xs font-semibold uppercase tracking-widest text-white/70">{channel.country ?? 'Live'} · {programme ? 'En cours' : 'Chaîne'}</span>
           </div>
 
-          <h1 className="mt-2 line-clamp-2 text-xl font-black leading-snug drop-shadow-lg sm:text-2xl md:mt-3 md:text-5xl md:leading-tight">{programme?.title ?? channel.name}</h1>
-          <p className="mt-2 text-sm font-semibold text-white/80">{channel.name}</p>
-          {programme && (
-            <p className="mt-1 text-xs text-white/60">
-              {new Date(programme.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-              {' – '}
-              {new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-            </p>
-          )}
+          <h1 className="mt-2 line-clamp-2 text-[22px] font-black leading-[0.95] drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] sm:text-2xl md:mt-3 md:text-[46px] md:leading-[0.95]">{programme?.title ?? channel.name}</h1>
+          <p className="mt-2 line-clamp-2 text-sm leading-snug text-white/75 md:text-[15px]">{programme ? `${channel.name} · ${new Date(programme.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} – ${new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : 'Regardez en direct sur Mbolo TV — qualité adaptative, sans coupure.'}</p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <Link href={`/watch/${channel.id}`} className="btn btn-primary !px-7 !py-3 !text-base shadow-lg">
-              ▶ Regarder
+            <Link
+              href={`/watch/${channel.id}`}
+              className="inline-flex items-center gap-2 rounded-md bg-white px-7 py-3 text-[15px] font-black text-black shadow-lg transition hover:bg-white/90"
+            >
+              <span className="text-lg leading-none">▶</span> Lecture
             </Link>
-            <FavoriteButton
-              label={isFavorite ? `Retirer ${channel.name} des favoris` : `Ajouter ${channel.name} des favoris`}
-              isActive={isFavorite}
-              onToggle={() => toggle(channel.id)}
-            />
+            <Link
+              href={`/watch/${channel.id}`}
+              className="inline-flex items-center gap-2 rounded-md bg-white/15 px-6 py-3 text-sm font-bold text-white backdrop-blur transition hover:bg-white/25"
+            >
+              Plus d'infos
+            </Link>
+            <span className="ml-1">
+              <FavoriteButton
+                label={isFavorite ? `Retirer ${channel.name} des favoris` : `Ajouter ${channel.name} aux favoris`}
+                isActive={isFavorite}
+                onToggle={() => toggle(channel.id)}
+              />
+            </span>
           </div>
         </div>
       </div>

@@ -65,8 +65,9 @@ function HomeView() {
   }, [channelsQuery, pool.length]);
 
   const featured = useMemo(() => {
-    const withImage = pool.filter((channel) => channel.nowPlaying?.imageUrl);
-    return (withImage.length >= 2 ? withImage : pool).slice(0, HERO_CANDIDATES);
+    const withVisual = pool.filter((channel) => channel.nowPlaying?.imageUrl || channel.logoUrl);
+    if (withVisual.length >= 1) return withVisual.slice(0, HERO_CANDIDATES);
+    return pool.slice(0, HERO_CANDIDATES);
   }, [pool]);
 
   const nowPlayingRow = useMemo(() => pool.filter((channel) => channel.nowPlaying).slice(0, 24), [pool]);
