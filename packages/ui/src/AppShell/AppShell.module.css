@@ -465,3 +465,31 @@
     bottom: calc(78px + env(safe-area-inset-bottom));
   }
 }
+
+/* ---------- Séparation stricte desktop / mobile ---------- */
+/* Desktop (≥ 768 px) : barre horizontale en haut, PAS d'onglets bas. */
+@media (min-width: 768px) {
+  .bottomTabs {
+    display: none;
+  }
+  .menuBackdrop {
+    z-index: 49;
+  }
+}
+
+/* Mobile (< 768 px) : topbar compacte + onglets bas. Pas de double barre :
+   les liens inline restent masqués et la topbar se réduit à l'essentiel. */
+@media (max-width: 767px) {
+  .topbar {
+    height: 56px;
+    min-height: 56px;
+    padding: 0 12px calc(env(safe-area-inset-top)) 0;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: 10px;
+    gap: 8px;
+  }
+  .topbarBrand {
+    flex: 1;
+    min-width: 0;
+  }
+}
