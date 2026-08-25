@@ -16,6 +16,57 @@ const MAX_REDIRECTS = 5;
 const MAX_CHAIN_ATTEMPTS = 3;
 const FETCH_TIMEOUT_MS = 15_000;
 
+// Plafond de qualité Éco : filtre les variantes du MASTER dont la hauteur
+// dépasse maxh (garde au minimum la plus basse). Aucun transcodage : on ne
+// fait que retirer des entrées #EXT-X-STREAM-INF + leur URI. Les masters
+// sans RESOLUTION (mono-variante) passent intacts.
+function parseHeight(infLine) {
+  const match = /RESOLUTION=(\d+)x(\d+)/i.exec(infLine);
+  return match ? Number(match[2]) : null;
+}
+
+function filterMasterByHeight(text, maxh) {
+  if (!maxh || !text.includes("#EXT-X-STREAM-INF")) return text;
+  const lines = text.split("\n");
+  const variants = [];
+  let pendingInf = null;
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
+      pendingInf = { idx, height: parseHeight(trimmed) };
+      return;
+    }
+    if (pendingInf && trimmed !== "" && !trimmed.startsWith("#")) {
+      variants.push({ ...pendingInf, uriIdx: idx });
+      pendingInf = null;
+    }
+  });
+  if (variants.length === 0) return text;
+
+  const knownHeights = variants.map((variant) => variant.height).filter((height) => height != null);
+  if (knownHeights.length === 0) return text;
+
+  const keep = new Set();
+  variants.forEach((variant, position) => {
+    if (variant.height == null || variant.height <= maxh) keep.add(position);
+  });
+  if (keep.size === 0) {
+    let minPosition = 0;
+    let minHeight = Infinity;
+    variants.forEach((variant, position) => {
+      const height = variant.height ?? Infinity;
+      if (height < minHeight) { minHeight = height; minPosition = position; }
+    });
+    keep.add(minPosition);
+  }
+
+  const drop = new Set();
+  variants.forEach((variant, position) => {
+    if (!keep.has(position)) { drop.add(variant.idx); drop.add(variant.uriIdx); }
+  });
+  return lines.filter((_, idx) => !drop.has(idx)).join("\n");
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -57,7 +108,7 @@ export default {
       }
 
       if (isPlaylist) {
-        const text = await outcome.resp.text();
+        let text = await outcome.resp.text();
         // Un vrai manifest HLS commence toujours par #EXTM3U. Sinon c'est une
         // page d'erreur (du panel ou du edge Cloudflare sur un saut raté) :
         // on retente la chaîne entière, le LB changera de serveur média.
@@ -71,7 +122,9 @@ export default {
           void outcome.resp.body?.cancel().catch(() => undefined);
           continue;
         }
-        const base = new URL(outcome.finalUrl || target);
+        const maxHeightParam = Number(url.searchParams.get("maxh")) || null;
+        if (maxHeightParam) text = filterMasterByHeight(text, maxHeightParam);
+      const base = new URL(outcome.finalUrl || target);
         const proxyBase = `${url.origin}${url.pathname}`;
         const rewritten = text
           .split("\n")

@@ -37,11 +37,13 @@ export async function assertGrantActive(env, deviceId) {
   return result.rows.length > 0;
 }
 
-export function playResponse(env, providerUrl) {
+export function playResponse(env, providerUrl, maxHeight) {
   const proxyUrl = (env.VIDEO_PROXY_URL ?? "").trim().replace(/\/+$/, "");
   if (!proxyUrl) throw new Error("VIDEO_PROXY_URL non configurée");
+  let url = `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}`;
+  if (maxHeight) url += `&maxh=${maxHeight}`;
   return {
-    url: `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}`,
+    url,
     expiresAt: new Date(Date.now() + 24 * 3_600_000).toISOString(),
   };
 }

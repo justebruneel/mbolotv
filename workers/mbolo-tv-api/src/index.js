@@ -79,7 +79,7 @@ async function readJson(request) {
 
 // Mur d'accès équivalent à StreamSessionGuard : l'URL de lecture n'est délivrée
 // qu'aux appareils munis d'un DeviceGrant actif (x-device-id).
-async function respondWithPlay(ctx, locatorPromise) {
+async function respondWithPlay(ctx, locatorPromise, maxHeight) {
   const deviceId = ctx.request.headers.get("x-device-id") ?? undefined;
   if (!(await assertGrantActive(ctx.env, deviceId)))
     return ctx.fail(403, "Un code d’accès actif est requis");
@@ -89,7 +89,7 @@ async function respondWithPlay(ctx, locatorPromise) {
   } catch {
     return ctx.fail(404, "Flux indisponible pour cette chaîne");
   }
-  return ctx.json(playResponse(ctx.env, providerUrl));
+  return ctx.json(playResponse(ctx.env, providerUrl, maxHeight));
 }
 
 async function categoriesList(ctx) {
@@ -229,6 +229,7 @@ async function route(ctx, url) {
 
   if (channelMatch && channelMatch[3] === "play" && method === "GET") {
     const channelId = decodeURIComponent(channelMatch[1]);
+    const ecoMaxHeight = url.searchParams.get("eco") === "1" ? 480 : undefined;
     const hiddenIds = await categoriesRepo.loadHiddenIds(env);
     const category = categoriesRepo.categoryFilterSql(hiddenIds, null, 'c', 2);
     const visible = await env.db.query(
@@ -243,6 +244,7 @@ async function route(ctx, url) {
     return respondWithPlay(
       ctx,
       decryptLocatorWithSecret(env.ENCRYPTION_KEY, variant.encryptedLocator),
+      ecoMaxHeight,
     );
   }
 
@@ -284,6 +286,7 @@ async function route(ctx, url) {
   const matchMatch = path.match(/^\/api\/matches\/([^/]+)(\/play)?$/);
 
   if (matchMatch && matchMatch[2] && method === "POST") {
+    const matchEcoMaxHeight = url.searchParams.get("eco") === "1" ? 480 : undefined;
     const matchId = decodeURIComponent(matchMatch[1]);
     const found = await matches.findMatchVariants(env, matchId);
     if (!found) return ctx.fail(404, "Match not found");
@@ -301,6 +304,7 @@ async function route(ctx, url) {
     return respondWithPlay(
       ctx,
       decryptLocatorWithSecret(env.ENCRYPTION_KEY, variant.encryptedLocator),
+      matchEcoMaxHeight,
     );
   }
 
