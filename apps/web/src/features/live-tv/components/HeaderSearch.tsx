@@ -1,15 +1,16 @@
 'use client';
 
-import { useCategories, } from '../../../shared/api/queries';
+import { useCategories } from '../../../shared/api/queries';
 import { categoryLabel } from '../utils';
 import { SearchIcon, XIcon } from './Icons';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const DEBOUNCE_MS = 300;
 
 // Recherche Netflix dans la barre de navigation : filtre le dossier courant
-// (via ?category) ou tout le catalogue, piloté par l'URL (?q=).
+// (?category) ou tout le catalogue. L'état est piloté par l'URL (?q=) —
+// l'écriture est gardée par un ref pour éviter tout écho replace ↔ searchParams.
 export function HeaderSearch() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -17,31 +18,32 @@ export function HeaderSearch() {
   const urlQuery = searchParams.get('q') ?? '';
   const [open, setOpen] = useState(Boolean(urlQuery));
   const [value, setValue] = useState(urlQuery);
+  const lastWrittenRef = useRef<string | null>(urlQuery);
 
   const categoriesQuery = useCategories();
   const folderName = category ? categoryLabel(categoriesQuery.data ?? [], category) : undefined;
 
-  // Synchronise l'URL (debounce) — la vue parcourir lit ?q.
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams(searchParams);
-      if (value.trim()) params.set('q', value.trim());
-      else params.delete('q');
-      const next = params.toString() ? `/live?${params}` : '/live';
-      if (next !== `${window.location.pathname}${window.location.search}`) {
-        router.replace(next, { scroll: false });
-      }
-    }, DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [value, router, searchParams]);
+  function writeUrl(query: string): void {
+    if (lastWrittenRef.current === query) return;
+    lastWrittenRef.current = query;
+    const params = new URLSearchParams(window.location.search);
+    if (query) params.set('q', query);
+    else params.delete('q');
+    router.replace(params.toString() ? `/live?${params}` : '/live', { scroll: false });
+  }
 
-  // Fermeture du champ = efface la recherche.
+  // Debounce : écrit ?q une seule fois par frappe stabilisée.
+  useEffect(() => {
+    const query = value.trim();
+    const timer = window.setTimeout(() => writeUrl(query), DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
   function close(): void {
     setValue('');
     setOpen(false);
-    const params = new URLSearchParams(searchParams);
-    params.delete('q');
-    router.replace(params.toString() ? `/live?${params}` : '/live', { scroll: false });
+    writeUrl('');
   }
 
   if (!open) {

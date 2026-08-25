@@ -137,3 +137,14 @@ export function useActivityHeartbeat(channelId?: string) {
     return () => clearInterval(interval);
   }, [channelId]);
 }
+
+// Requête large dédiée (clé propre) pour la rangée favoris — ne partage PAS
+// la clé ['channels', …] avec les requêtes paginées (sinon refetch en boucle).
+export function useWideChannels(limit = 200, enabled = true) {
+  return useQuery({
+    queryKey: ["channels-wide", limit],
+    queryFn: () => apiGet<ChannelListResponse>("/channels", { limit }),
+    enabled,
+    staleTime: 60_000,
+  });
+}

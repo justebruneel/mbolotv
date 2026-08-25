@@ -5,7 +5,7 @@ import { Button, MatchCard, Spinner } from '@mbolo/ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Suspense, useDeferredValue, useEffect, useMemo } from 'react';
-import { useCategories, useInfiniteChannels, useMatches } from '../../../shared/api/queries';
+import { useCategories, useInfiniteChannels, useMatches, useWideChannels } from '../../../shared/api/queries';
 import { HeroBanner } from '../../../features/live-tv/components/HeroBanner';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
@@ -32,7 +32,7 @@ function LiveContent() {
   const browseMode = Boolean(category) || query.trim().length > 0;
 
   return browseMode ? (
-    <BrowseView initialQuery={query} />
+    <BrowseView />
   ) : (
     <HomeView />
   );
@@ -85,7 +85,7 @@ function HomeView() {
   );
 
   // Favoris : une requête large cachée, filtrée par les ids du store.
-  const favChannels = useFavoriteChannels(favoritesIds);
+  const favChannels = useFavoriteChannels(favoritesIds, pool.length > 0);
 
   const liveMatches = (liveMatchesQuery.data?.items ?? []).filter((match) => match.state === 'LIVE').slice(0, 12);
 
@@ -164,24 +164,25 @@ function MatchLinkInner({ match, channelId }: { match: Match; channelId?: string
   );
 }
 
-// Rangée de favoris : une seule requête large mise en cache, filtrée localement.
-function useFavoriteChannels(favoriteIds: string[]): Channel[] {
-  const wideQuery = useInfiniteChannels({}, 200);
+// Rangée de favoris : requête large dédiée (clé propre), filtrée localement.
+function useFavoriteChannels(favoriteIds: string[], enabled: boolean): Channel[] {
+  const wideQuery = useWideChannels(200, enabled && favoriteIds.length > 0);
   return useMemo(() => {
     if (favoriteIds.length === 0) return [];
     const wanted = new Set(favoriteIds);
-    const all = wideQuery.data?.pages.flatMap((page) => page.items) ?? [];
-    return all.filter((channel) => wanted.has(channel.id)).slice(0, 24);
+    return (wideQuery.data?.items ?? []).filter((channel) => wanted.has(channel.id)).slice(0, 24);
   }, [favoriteIds, wideQuery.data]);
 }
 
 /* ============================ VUE TOUT PARCOURIR ============================ */
 
-function BrowseView({ initialQuery }: { initialQuery: string }) {
+function BrowseView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const category = searchParams.get('category') ?? undefined;
-  const deferredQuery = useDeferredValue(initialQuery);
+  // q est piloté par HeaderSearch (débouncé dans l'URL) : lecture directe.
+  const rawQuery = searchParams.get('q') ?? '';
+  const deferredQuery = useDeferredValue(rawQuery);
   const categoriesQuery = useCategories();
   const categories = categoriesQuery.data ?? [];
   const selectedCategoryName = categoryLabel(categories, category);
