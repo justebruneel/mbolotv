@@ -2,28 +2,44 @@
 
 import type { Channel } from '@mbolo/contracts';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FavoriteButton } from '@mbolo/ui';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { channelBadge } from '../utils';
 
-const ROTATE_MS = 8_000;
+const ROTATE_MS = 5_000;
 
-// Hero Netflix-style : rotation automatique des chaînes en vedette,
-// fond = visuel du programme en cours (repli : dégradé + logo).
+// Hero Netflix-style : rotation 5s, swipe tactile, pastilles avec progression.
 export function HeroBanner({ channels }: { channels: Channel[] }) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const startXRef = useRef<number | null>(null);
 
   useEffect(() => {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const touch = window.matchMedia('(hover: none)').matches;
-    // Sur tactile : hero statique (la rotation gêne le scroll vertical), les
-    // pastilles servent de sélecteur manuel.
-    if (channels.length <= 1 || paused || reduced || touch) return;
+    if (channels.length <= 1 || paused || reduced) return;
     const timer = window.setInterval(() => setIndex((value) => (value + 1) % channels.length), ROTATE_MS);
     return () => window.clearInterval(timer);
   }, [channels.length, paused]);
+
+  useEffect(() => {
+    const onVis = () => setPaused(document.hidden);
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  function onTouchStart(event: React.TouchEvent) {
+    startXRef.current = event.touches[0].clientX;
+  }
+  function onTouchEnd(event: React.TouchEvent) {
+    if (startXRef.current == null) return;
+    const delta = event.changedTouches[0].clientX - startXRef.current;
+    startXRef.current = null;
+    if (Math.abs(delta) < 40) return;
+    setIndex((value) => (delta < 0 ? (value + 1) % channels.length : (value - 1 + channels.length) % channels.length));
+    setPaused(true);
+    window.setTimeout(() => setPaused(false), 3000);
+  }
 
   if (channels.length === 0) {
     return (
@@ -42,9 +58,11 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
 
   return (
     <div
-      className="relative h-[46svh] min-h-[320px] w-full overflow-hidden md:h-[78vh] md:min-h-[520px] md:max-h-[760px]"
+      className="relative h-[52svh] min-h-[360px] w-full overflow-hidden touch-pan-y md:h-[78vh] md:min-h-[520px] md:max-h-[760px]"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
     >
       {channels.map((channel, position) => (
         <HeroSlide key={channel.id} channel={channel} active={position === index} />
@@ -53,17 +71,33 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42%] bg-gradient-to-t from-bg via-bg/70 to-transparent" />
       <div className="pointer-events-none absolute inset-y-0 left-0 w-[72%] bg-gradient-to-r from-bg via-bg/60 to-transparent md:w-[58%]" />
 
-      <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 flex-row items-center gap-1.5 md:bottom-8 md:left-auto md:right-8 md:translate-x-0">
-        {channels.map((channel, position) => (
-          <button
-            key={channel.id}
-            type="button"
-            aria-label={`Mettre en avant ${channel.name}`}
-            onClick={() => setIndex(position)}
-            className={`h-1 rounded-full transition-all duration-300 ${position === index ? 'w-8 bg-accent' : 'w-4 bg-white/30 hover:bg-white/60'}`}
-          />
-        ))}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center pb-[calc(18px+env(safe-area-inset-bottom))] md:bottom-8 md:pb-0">
+        <div className="flex items-center gap-1.5 rounded-full bg-black/35 px-2.5 py-1.5 backdrop-blur-md">
+          {channels.map((channel, position) => (
+            <button
+              key={channel.id}
+              type="button"
+              aria-label={`Mettre en avant ${channel.name}`}
+              onClick={() => setIndex(position)}
+              className={`pointer-events-auto relative h-[3px] overflow-hidden rounded-full transition-all duration-300 ${
+                position === index ? 'w-8 bg-white/30' : 'w-5 bg-white/20 hover:bg-white/40'
+              }`}
+            >
+              {position === index && (
+                <span
+                  key={`${index}-${paused ? 'p' : 'a'}`}
+                  className="absolute inset-y-0 left-0 bg-white"
+                  style={{
+                    animation: `heroFill ${ROTATE_MS}ms linear forwards`,
+                    animationPlayState: paused ? 'paused' : 'running',
+                  }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
       </div>
+      <style>{`@keyframes heroFill { from { width: 0% } to { width: 100% } }`}</style>
     </div>
   );
 }
