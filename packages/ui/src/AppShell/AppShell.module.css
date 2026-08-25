@@ -274,9 +274,7 @@
 @media (max-width: 767px) {
   .mobileBar {
     height: auto;
-    flex-direction: column;
-    align-items: stretch;
-    padding-bottom: 10px;
+    padding-bottom: 8px;
   }
   .mobileBarRow {
     display: flex;
@@ -285,10 +283,17 @@
     gap: 10px;
     width: 100%;
   }
-  /* Loupe fermée : alignée à droite de sa propre ligne ; ouverte : pleine largeur */
+  /* Loupe fermée : alignée à droite, sur la même ligne que le reste */
   .searchSlot {
-    width: 100%;
-    margin-top: 8px;
-    justify-content: flex-end;
+    margin-left: auto;
+  }
+  /* Ouverte : logo/badge/thème masqués, champ pleine largeur */
+  .mobileBar:has([data-search-open="true"]) .mobileBrand,
+  .mobileBar:has([data-search-open="true"]) .barRight {
+    display: none;
+  }
+  .mobileBar:has([data-search-open="true"]) .searchSlot {
+    flex: 1;
+    margin-left: 0;
   }
 }

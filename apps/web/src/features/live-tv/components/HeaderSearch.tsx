@@ -58,7 +58,7 @@ export function HeaderSearch() {
   }
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" data-search-open={open ? "true" : undefined}>
       <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted">
         <SearchIcon size={16} />
       </span>

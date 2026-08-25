@@ -106,8 +106,9 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
             {usersBadge}
             {sidebarActions}
           </div>
+
+          {searchSlot && <div className={styles.searchSlot}>{searchSlot}</div>}
         </div>
-        {searchSlot && <div className={styles.searchSlot}>{searchSlot}</div>}
       </header>
 
       {/* Menu ⋮ partagé (navigation sur mobile, utilitaires sur desktop) */}
