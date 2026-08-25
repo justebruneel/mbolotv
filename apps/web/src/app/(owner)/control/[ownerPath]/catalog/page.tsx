@@ -114,11 +114,12 @@ function ParentPicker({ allFlat, childrenByParent, nodeId, currentParentId, onMo
   );
 }
 
-function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onTest, onReorder, onMoveParent, tests, busy, orderMap, allFlat, childrenByParent, getChannels, isChannelsLoading, ensureChannels, loadMoreChannels }: {
+function CategoryNode({ node, depth, onUpdate, onCreateSub, onDelete, onToggleChannel, onTest, onReorder, onMoveParent, tests, busy, orderMap, allFlat, childrenByParent, getChannels, isChannelsLoading, ensureChannels, loadMoreChannels }: {
   node: OwnerCategory;
   depth: number;
   onUpdate: (id: string, patch: { name?: string; isVisible?: boolean }) => void;
   onCreateSub: (parentId: string, name: string) => void;
+  onDelete: (id: string) => void;
   onToggleChannel: (id: string, visible: boolean) => void;
   onTest: (id: string) => void;
   onReorder: (id: string, sortOrder: number) => void;
@@ -171,6 +172,16 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
           <input type="checkbox" checked={node.isVisible} onChange={(event) => onUpdate(node.id, { isVisible: event.target.checked })} /> Publié
         </label>
         <button type="button" className="btn btn-danger" onClick={() => setEditing(true)}>Renommer</button>
+        <button
+          type="button"
+          className="btn btn-danger"
+          disabled={busy === node.id}
+          onClick={() => {
+            if (window.confirm(`Supprimer le dossier « ${node.name} » ?\n\nLes chaînes passent en « Sans dossier » et les sous-dossiers remontent d'un niveau. Aucune chaîne n'est supprimée.`)) onDelete(node.id);
+          }}
+        >
+          Supprimer
+        </button>
         <ParentPicker allFlat={allFlat} childrenByParent={childrenByParent} nodeId={node.id} currentParentId={node.parentId} onMove={(parentId) => onMoveParent(node.id, parentId)} />
       </div>
 
@@ -200,7 +211,7 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onToggleChannel, onT
           </div>
 
           {(node.children ?? []).map((child) => (
-            <CategoryNode key={child.id} node={child} depth={depth + 1} onUpdate={onUpdate} onCreateSub={onCreateSub} onToggleChannel={onToggleChannel} onTest={onTest} onReorder={onReorder} onMoveParent={onMoveParent} tests={tests} busy={busy} orderMap={orderMap} allFlat={allFlat} childrenByParent={childrenByParent} getChannels={getChannels} isChannelsLoading={isChannelsLoading} ensureChannels={ensureChannels} loadMoreChannels={loadMoreChannels} />
+            <CategoryNode key={child.id} node={child} depth={depth + 1} onUpdate={onUpdate} onCreateSub={onCreateSub} onDelete={onDelete} onToggleChannel={onToggleChannel} onTest={onTest} onReorder={onReorder} onMoveParent={onMoveParent} tests={tests} busy={busy} orderMap={orderMap} allFlat={allFlat} childrenByParent={childrenByParent} getChannels={getChannels} isChannelsLoading={isChannelsLoading} ensureChannels={ensureChannels} loadMoreChannels={loadMoreChannels} />
           ))}
         </div>
       )}
@@ -294,6 +305,9 @@ export default function CatalogControlPage() {
     const key = parentId ?? 'root';
     setBusy(`create:${key}`); try { setCatalog(await ownerApi.categories.create({ name, parentId })); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Création impossible.'); } finally { setBusy(null); }
   }
+  async function deleteCategory(id: string): Promise<void> {
+    setBusy(id); try { setCatalog(await ownerApi.categories.remove(id)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Suppression impossible.'); } finally { setBusy(null); }
+  }
   async function updateChannel(id: string, isVisible: boolean): Promise<void> {
     // Patch optimiste local : le serveur ne renvoie plus les listes de chaînes.
     const apply = (items: OwnerChannel[]): OwnerChannel[] => items.map((channel) => (channel.id === id ? { ...channel, isVisible } : channel));
@@ -362,6 +376,7 @@ export default function CatalogControlPage() {
             depth={0}
             onUpdate={updateCategory}
             onCreateSub={(parentId, name) => void createFolder(parentId, name)}
+            onDelete={(id) => void deleteCategory(id)}
             onToggleChannel={updateChannel}
             onTest={testChannel}
             onReorder={(id, sortOrder) => void updateCategory(id, { sortOrder })}

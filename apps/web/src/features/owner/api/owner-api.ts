@@ -62,6 +62,7 @@ export const ownerApi = {
   categories: {
     create: (input: OwnerCategoryCreateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),
     update: (id: string, input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),
+    remove: (id: string): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<OwnerCatalog>),
   },
   profile: (): Promise<OwnerProfile> => fetch(`${BASE_URL}/owner/profile`, { credentials: 'include' }).then(parseResponse<OwnerProfile>),
   profileUpdate: (input: OwnerProfileUpdateInput): Promise<OwnerProfile> => fetch(`${BASE_URL}/owner/profile`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerProfile>),

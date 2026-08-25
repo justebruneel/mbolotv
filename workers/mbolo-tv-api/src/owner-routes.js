@@ -198,6 +198,21 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     return ctx.json({ ok: status === 'OK', status, checked });
   }
 
+  const catDelete = path.match(/^\/api\/owner\/categories\/([^/]+)$/);
+  if (catDelete && method === 'DELETE') {
+    const id = decodeURIComponent(catDelete[1]);
+    const rows = await ctx.env.db.query(ctx.env, `SELECT id, "parentId", name FROM "Category" WHERE id = $1`, [id]);
+    const category = rows.rows[0];
+    if (!category) return ctx.fail(404, 'Category not found');
+    // Aucune perte : les chaînes du dossier passent en « sans dossier » et les
+    // sous-dossiers remontent au parent supprimé.
+    await ctx.env.db.query(ctx.env, `UPDATE "Channel" SET "categoryId" = NULL WHERE "categoryId" = $1`, [id]);
+    await ctx.env.db.query(ctx.env, `UPDATE "Category" SET "parentId" = $2 WHERE "parentId" = $1`, [id, category.parentId]);
+    await ctx.env.db.query(ctx.env, `DELETE FROM "Category" WHERE id = $1`, [id]);
+    await audit(ctx, owner.userId, 'catalog.category_delete', 'category', id, { name: category.name });
+    return ctx.json(await buildOwnerCatalog(ctx, owner));
+  }
+
   if (path === '/api/owner/sources' && method === 'GET') {
     const rows = await env.db.query(env, `SELECT * FROM "Source" WHERE "ownerId" = $1 ORDER BY priority ASC, "createdAt" ASC`, [owner.userId]);
     return ctx.json(rows.rows.map(serializeSource));
