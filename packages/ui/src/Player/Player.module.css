@@ -9,6 +9,8 @@
   box-shadow: var(--mbolo-shadow-xl);
   isolation: isolate;
   cursor: none;
+  /* Les gestes tactiles (volume) ne doivent pas déclencher le scroll page. */
+  touch-action: none;
   /* Force dark-theme tokens inside player (controls always dark on video) */
   --mbolo-text: oklch(0.95 0.010 255);
   --mbolo-text-secondary: oklch(0.80 0.020 258);
@@ -122,7 +124,8 @@
 /* ---------- Bandwidth badge ---------- */
 .bandwidthBadge {
   position: absolute;
-  top: 10px;
+  /* Sous les chips DIRECT / spectateurs superposés par la page watch. */
+  top: 48px;
   right: 12px;
   display: inline-flex;
   align-items: center;
@@ -572,6 +575,8 @@
   left: 0;
   max-height: 60%;
   overflow-y: auto;
+  /* Réactive le scroll tactile dans la popup (le parent l'interdit). */
+  touch-action: pan-y;
   border-radius: 16px 16px 0 0;
   background: var(--mbolo-surface-2);
   backdrop-filter: blur(20px);

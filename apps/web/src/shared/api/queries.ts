@@ -14,6 +14,7 @@ import type {
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { apiGet, apiPost } from './client';
+import { useSettingsStore } from '../stores/settings';
 
 export function useCategories() {
   return useQuery({
@@ -78,17 +79,21 @@ export function useChannelEpg(id: string) {
   });
 }
 
-export function usePlayUrl(id: string, options?: { eco?: boolean }) {
+export function usePlayUrl(id: string) {
   return useQuery({
-    queryKey: ['play', id, options?.eco ?? false],
+    // Pas d'« eco » dans la clé : basculer Éco en cours de lecture ne doit pas
+    // changer l'URL (donc pas de redémarrage du flux) — le plafonnement est
+    // appliqué instantanément côté hls.js, et la valeur courante de dataSaver
+    // est lue au moment du fetch pour les chargements suivants.
+    queryKey: ['play', id],
     queryFn: () =>
       apiGet<PlayResponse>(
         `/channels/${id}/play`,
-        options?.eco ? { eco: 1 } : undefined,
+        useSettingsStore.getState().dataSaver ? { eco: 1 } : undefined,
       ),
-    // Les URLs de lecture pointent désormais directement vers les fournisseurs
-    // (via le proxy edge) et peuvent embarquer des tokens à vie courte :
-    // on re-valide au clic après 60 s au lieu des 30 min de l'ère session-gateway.
+    // Les URLs de lecture pointent directement vers les fournisseurs (via le
+    // proxy edge) et embarquent un jeton fournisseur : on force une revalidation
+    // réseau au clic après 60 s (refetch) au lieu des 30 min historiques.
     staleTime: 60_000,
   });
 }

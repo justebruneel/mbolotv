@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiGet } from '../../../shared/api/client';
+import { useSettingsStore } from '../../../shared/stores/settings';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { channelBadge, channelInitials, buildWatchHref, type WatchContext } from '../utils';
 
@@ -34,8 +35,13 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
       void queryClient
         .fetchQuery({
           queryKey: ['play', channel.id],
-          queryFn: () => apiGet<PlayResponse>(`/channels/${channel.id}/play`),
-          // Aligné sur usePlayUrl : les URLs fournisseurs peuvent expirer vite.
+          queryFn: () =>
+            apiGet<PlayResponse>(
+              `/channels/${channel.id}/play`,
+              useSettingsStore.getState().dataSaver ? { eco: 1 } : undefined,
+            ),
+          // Aligné sur usePlayUrl (même clé, même politique) pour que le
+          // survol réchauffe réellement le cache utilisé par la page watch.
           staleTime: 60_000,
         })
         .then((data) => {

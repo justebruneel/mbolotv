@@ -2,7 +2,7 @@
 
 import { Badge, Button, EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChannel, useChannelEpg, useChannelViewers, useInfiniteChannels, usePlayUrl, useActivityHeartbeat } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
 import { useSettingsStore } from '../../../../shared/stores/settings';
@@ -50,18 +50,30 @@ export default function WatchPage() {
   const setLastWatchedChannelId = useSettingsStore((state) => state.setLastWatchedChannelId);
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
-  const playQuery = usePlayUrl(channelId, { eco: dataSaver });
+  const playQuery = usePlayUrl(channelId);
   const channelsQuery = useInfiniteChannels({ category, country, q }, PAGE_SIZE);
   const navChannels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const viewersQuery = useChannelViewers(channelId);
   useActivityHeartbeat(channelId);
   const playUrls = useMemo(() => (playQuery.data?.url ? [playQuery.data.url] : []), [playQuery.data?.url]);
+  const playErrorMessage = playQuery.error instanceof Error ? playQuery.error.message : null;
+  const refetchPlayUrl = useCallback(async (): Promise<boolean> => {
+    try {
+      const result = await playQuery.refetch();
+      return result.isSuccess;
+    } catch {
+      return false;
+    }
+  }, [playQuery]);
 
-  // Chrome du player : visible au survol desktop, permanent sur tactile.
+  // Chrome du player : visible au survol desktop (au-dessus du lecteur
+  // uniquement), permanent sur tactile.
   const [chromeVisible, setChromeVisible] = useState(true);
+  const chromeHoverEnabled = useRef(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (window.matchMedia('(hover: none)').matches) {
+      chromeHoverEnabled.current = false;
       setChromeVisible(true);
       return;
     }
@@ -71,9 +83,7 @@ export default function WatchPage() {
       hideTimer.current = setTimeout(() => setChromeVisible(false), 3000);
     };
     show();
-    window.addEventListener('mousemove', show);
     return () => {
-      window.removeEventListener('mousemove', show);
       if (hideTimer.current) clearTimeout(hideTimer.current);
     };
   }, []);
@@ -127,7 +137,7 @@ export default function WatchPage() {
   return (
     <main className="animate-fade-in pb-16">
       {/* ================= PLAYER PLEIN ÉCRAN ================= */}
-      <div className="relative w-full bg-black">
+      <div className="relative w-full bg-black" onMouseMove={() => { if (chromeHoverEnabled.current) { setChromeVisible(true); if (hideTimer.current) clearTimeout(hideTimer.current); hideTimer.current = setTimeout(() => setChromeVisible(false), 3000); } }}>
         {playQuery.isLoading ? (
           <div className="flex aspect-video max-h-[78vh] w-full items-center justify-center">
             <Spinner />
@@ -142,11 +152,18 @@ export default function WatchPage() {
             onVolumeChange={setVolume}
             onLevelChange={setPreferredLevel}
             onDataSaverChange={setDataSaver}
+            onRefreshSource={refetchPlayUrl}
           />
         ) : (
           <div className="flex aspect-video max-h-[78vh] w-full flex-col items-center justify-center gap-3">
-            <EmptyState title="Lecture indisponible" hint="Impossible de récupérer un flux pour cette chaîne." />
-            <Button variant="primary" onClick={goBack}>← Retour</Button>
+            <EmptyState
+              title="Lecture indisponible"
+              hint={playErrorMessage ?? 'Impossible de récupérer un flux pour cette chaîne.'}
+            />
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={() => void refetchPlayUrl()}>Réessayer</Button>
+              <Button variant="ghost" onClick={goBack}>← Retour</Button>
+            </div>
           </div>
         )}
 

@@ -123,13 +123,21 @@ export default {
           continue;
         }
         const maxHeightParam = Number(url.searchParams.get("maxh")) || null;
-        if (maxHeightParam) text = filterMasterByHeight(text, maxHeightParam);
+        if (maxHeightParam) text = filterMasterByHeight(text, maxh);
       const base = new URL(outcome.finalUrl || target);
         const proxyBase = `${url.origin}${url.pathname}`;
         const rewritten = text
           .split("\n")
           .map((line) => {
-            if (line.startsWith("#") || line.trim() === "") return line;
+            if (line.trim() === "") return line;
+            // Les tags à attributs (#EXT-X-MEDIA, #EXT-X-I-FRAME-STREAM-INF,
+            // #EXT-X-KEY…) embarquent leurs URIs dans URI="…" : sans réécriture,
+            // pistes audio et clés partiraient en direct vers le fournisseur
+            // (CORS/relais contournés).
+            if (line.startsWith("#")) {
+              if (!line.includes('URI="')) return line;
+              return line.replace(/URI="([^"]+)"/g, (_match, uri) => `URI="${proxyBase}?url=${encodeURIComponent(new URL(uri, base).toString())}"`);
+            }
             const absolute = new URL(line, base).toString();
             return `${proxyBase}?url=${encodeURIComponent(absolute)}`;
           })
@@ -157,7 +165,8 @@ export default {
         status: outcome.resp.status,
         headers: responseHeaders,
       });
-      ctx.waitUntil(cache.put(cacheKey, response.clone()));
+      // La Cache API rejette les réponses partielles (206, requêtes Range).
+      if (outcome.resp.status === 200) ctx.waitUntil(cache.put(cacheKey, response.clone()));
       return response;
     }
 
