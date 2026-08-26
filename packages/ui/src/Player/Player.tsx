@@ -104,7 +104,16 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   useEffect(() => { setPipSupported(document.pictureInPictureEnabled); const el = containerRef.current; const hasNativeFs = Boolean(el && ('requestFullscreen' in el || 'webkitRequestFullscreen' in el)); const hasWebkitFs = typeof document !== 'undefined' && 'webkitEnterFullscreen' in HTMLVideoElement.prototype; setFsSupported(hasNativeFs || hasWebkitFs || isMobile); }, [isMobile]);
   const hideDelay = isMobile ? MOBILE_CONTROLS_HIDE_DELAY_MS : CONTROLS_HIDE_DELAY_MS;
   const showControls = useCallback(() => { setControlsVisible(true); if (hideTimerRef.current) clearTimeout(hideTimerRef.current); hideTimerRef.current = setTimeout(() => setControlsVisible(false), hideDelay); }, [hideDelay]);
-  useEffect(() => { if (status !== 'ready') { setControlsVisible(true); if (hideTimerRef.current) clearTimeout(hideTimerRef.current); } }, [status]);
+  useEffect(() => {
+    if (status !== 'ready') {
+      setControlsVisible(true);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      return;
+    }
+    // Dès le passage en lecture, les contrôles se masquent seuls après le
+    // délai — sans attendre un premier mouvement de souris ou de toucher.
+    showControls();
+  }, [status, showControls]);
   useEffect(() => { const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement)); document.addEventListener('fullscreenchange', onFsChange); return () => document.removeEventListener('fullscreenchange', onFsChange); }, []);
   const exitPseudoFullscreen = useCallback(() => { setIsPseudoFullscreen(false); document.body.style.overflow = ''; }, []);
   useEffect(() => { const video = videoRef.current; if (!video) return; const onEnterPiP = () => setIsPip(true); const onLeavePiP = () => setIsPip(false); video.addEventListener('enterpictureinpicture', onEnterPiP); video.addEventListener('leavepictureinpicture', onLeavePiP); return () => { video.removeEventListener('enterpictureinpicture', onEnterPiP); video.removeEventListener('leavepictureinpicture', onLeavePiP); }; }, []);
@@ -286,7 +295,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     <video ref={videoRef} className={styles.video} playsInline preload="auto" onClick={handleVideoClick} aria-label={`Lecteur ${title}`} />
     {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && (autoplayBlocked ? <><h2 className={styles.title}>Lecture automatique bloquée</h2><button type="button" className={styles.retryButton} onClick={startPlayback}>Lancer la lecture</button></> : <><Spinner /><p className={styles.hint}>{retrying ? 'Nouvelle tentative…' : <>Préchargement du direct : <strong>{formatBuffer(stats.bufferAhead)}</strong> / {startBufferRef.current} s en mémoire tampon avant le lancement.</>}</p></>)}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
     {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>{stallPauseRef.current ? `Lissage du flux… reprise à ${RESUME_BUFFER_SECONDS} s de marge` : 'Rattrapage du direct…'}</span></div>}
-    {bandwidth !== null && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
+    {bandwidth !== null && controlsVisible && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && (autoplayBlocked || mutedAutoplay) && <button type="button" className={styles.playPrompt} onClick={startPlayback}>{autoplayBlocked ? 'Lancer la lecture' : 'Activer le son'}</button>}
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}><Icon.Volume2 size={28} /></span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
     {status === 'ready' && <div className={styles.progressBar}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}

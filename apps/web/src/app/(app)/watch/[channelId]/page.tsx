@@ -10,6 +10,7 @@ import { buildWatchHref, formatCategoryName } from '../../../../features/live-tv
 import { NetflixRow } from '../../../../features/live-tv/components/NetflixRow';
 
 const PAGE_SIZE = 48;
+const CHROME_HIDE_DELAY_MS = 3000;
 
 function time(iso: string): string {
   return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -77,27 +78,22 @@ export default function WatchPage() {
   // Chaînes du même dossier que la chaîne en cours (requête filtrée serveur).
   const similarQuery = useChannelRow(similarSlug, 24, Boolean(similarSlug));
 
-  // Chrome du player : visible au survol desktop (au-dessus du lecteur
-  // uniquement), permanent sur tactile.
+  // Chrome du player (Retour, DIRECT, spectateurs) : se masque seul après un
+  // délai sur toutes les plateformes ; réapparaît au survol (desktop) ou au
+  // toucher du lecteur (tactile).
   const [chromeVisible, setChromeVisible] = useState(true);
-  const chromeHoverEnabled = useRef(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bumpChrome = useCallback(() => {
+    setChromeVisible(true);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setChromeVisible(false), CHROME_HIDE_DELAY_MS);
+  }, []);
   useEffect(() => {
-    if (window.matchMedia('(hover: none)').matches) {
-      chromeHoverEnabled.current = false;
-      setChromeVisible(true);
-      return;
-    }
-    const show = () => {
-      setChromeVisible(true);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-      hideTimer.current = setTimeout(() => setChromeVisible(false), 3000);
-    };
-    show();
+    bumpChrome();
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
     };
-  }, []);
+  }, [bumpChrome]);
 
   useEffect(() => {
     setLastWatchedChannelId(channelId);
@@ -157,7 +153,7 @@ export default function WatchPage() {
   return (
     <main className="animate-fade-in pb-16">
       {/* ================= PLAYER PLEIN ÉCRAN ================= */}
-      <div className="relative w-full bg-black" onMouseMove={() => { if (chromeHoverEnabled.current) { setChromeVisible(true); if (hideTimer.current) clearTimeout(hideTimer.current); hideTimer.current = setTimeout(() => setChromeVisible(false), 3000); } }}>
+      <div className="relative w-full bg-black" onMouseMove={bumpChrome} onTouchStart={bumpChrome}>
         {playQuery.isLoading ? (
           <div className="flex aspect-video max-h-[78vh] w-full items-center justify-center">
             <Spinner />
