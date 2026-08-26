@@ -10,12 +10,10 @@ import { HeroBanner } from '../../../features/live-tv/components/HeroBanner';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
-import { categoryLabel, formatCategoryName, isBouquetCategory } from '../../../features/live-tv/utils';
+import { categoryLabel, formatCategoryName } from '../../../features/live-tv/utils';
 
 const PAGE_SIZE = 48;
 const HERO_CANDIDATES = 5;
-const ROW_CATEGORIES = 8;
-const ROW_BOUQUETS = 6;
 
 export default function LivePage() {
   return (
@@ -67,20 +65,12 @@ function HomeView() {
   const nowPlayingRow = useMemo(() => pool.filter((channel) => channel.nowPlaying).slice(0, 24), [pool]);
 
   const categories = categoriesQuery.data ?? [];
-  const bouquets = useMemo(
-    () =>
-      categories
-        .filter((category) => isBouquetCategory(category.name))
-        .sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0))
-        .slice(0, ROW_BOUQUETS),
-    [categories],
-  );
-  const topGenres = useMemo(
-    () =>
-      categories
-        .filter((category) => !isBouquetCategory(category.name))
-        .sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0))
-        .slice(0, ROW_CATEGORIES),
+  // Toutes les rangées de dossiers autorisés, classées par audience. Les
+  // troncatures précédentes (top 6 bouquets / top 8 genres) cachaient la
+  // majorité du catalogue ; NetflixRow chargeant paresseusement à l'entrée
+  // dans le viewport, afficher l'intégralité ne coûte aucune requête upfront.
+  const categoryRows = useMemo(
+    () => [...categories].sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)),
     [categories],
   );
 
@@ -117,23 +107,13 @@ function HomeView() {
           </section>
         )}
 
-        {bouquets.map((bouquet) => (
+        {categoryRows.map((category) => (
           <NetflixRow
-            key={bouquet.id}
-            title={formatCategoryName(bouquet.name)}
-            subtitle={`${bouquet.channelCount ?? 0}`}
-            slug={bouquet.slug}
-            seeAllHref={`/live?category=${bouquet.slug}`}
-          />
-        ))}
-
-        {topGenres.map((genre) => (
-          <NetflixRow
-            key={genre.id}
-            title={formatCategoryName(genre.name)}
-            subtitle={`${genre.channelCount ?? 0}`}
-            slug={genre.slug}
-            seeAllHref={`/live?category=${genre.slug}`}
+            key={category.id}
+            title={formatCategoryName(category.name)}
+            subtitle={`${category.channelCount ?? 0}`}
+            slug={category.slug}
+            seeAllHref={`/live?category=${category.slug}`}
           />
         ))}
 
