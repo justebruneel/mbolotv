@@ -503,13 +503,16 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   }
 
   if (path === '/api/owner/access-codes' && method === 'GET') {
+    // Résidus exclus : révoqués, désactivés ou dont l'appareil lié a expiré.
     const rows = await env.db.query(
       env,
       `SELECT a.*, g."expiresAt" AS grant_expires FROM "AccessCode" a LEFT JOIN "DeviceGrant" g ON g."accessCodeId" = a.id
-       WHERE a."createdById" = $1 ORDER BY a."createdAt" DESC LIMIT 200`,
+       WHERE a."createdById" = $1 AND a.active AND a."revokedAt" IS NULL
+         AND (g.id IS NULL OR g."expiresAt" > now())
+       ORDER BY a."createdAt" DESC LIMIT 200`,
       [owner.userId],
     );
-    return ctx.json(rows.rows.map((row) => ({ id: row.id, code: null, codeLast4: row.codeLast4, kind: row.kind, durationHours: row.durationHours, active: row.active && !row.revokedAt, createdAt: iso(row.createdAt), expiresAt: iso(row.grant_expires), deviceBound: Boolean(row.grant_expires) })));
+    return ctx.json(rows.rows.map((row) => ({ id: row.id, code: null, codeLast4: row.codeLast4, kind: row.kind, durationHours: row.durationHours, active: true, createdAt: iso(row.createdAt), expiresAt: iso(row.grant_expires), deviceBound: Boolean(row.grant_expires) })));
   }
   if (path === '/api/owner/access-codes' && method === 'POST') {
     const body = await ctx.readJson().catch(() => ({}));
@@ -530,7 +533,9 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   }
   const accessRevoke = path.match(/^\/api\/owner\/access-codes\/([^/]+)$/);
   if (accessRevoke && method === 'DELETE') {
-    const rows = await env.db.query(env, `UPDATE "AccessCode" SET active = false, "revokedAt" = now() WHERE id = $1 AND "createdById" = $2 RETURNING id`, [decodeURIComponent(accessRevoke[1]), owner.userId]);
+    // Suppression réelle : le grant lié part en cascade, aucun résidu ne
+    // subsiste en console ni en base.
+    const rows = await env.db.query(env, `DELETE FROM "AccessCode" WHERE id = $1 AND "createdById" = $2 RETURNING id`, [decodeURIComponent(accessRevoke[1]), owner.userId]);
     if (rows.rows.length === 0) return ctx.fail(404, 'Code introuvable');
     await audit(ctx, owner.userId, 'access_code.revoke', 'access_code', accessRevoke[1], {});
     return new Response(null, { status: 204, headers: ctx.corsHeaders() });

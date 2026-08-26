@@ -428,6 +428,14 @@ export async function scheduled(event, env) {
     } else if (cron === "*/15 * * * *") {
       console.log("[cron] matches:", JSON.stringify(await discoverMatches(env)));
     } else if (cron === "0 5 * * *") {
+      // Purge des codes d'accès morts : révoqués, désactivés ou dont le
+      // grant a expiré. Les codes jamais utilisés restent (inventaire valide).
+      const purged = await env.db.query(
+        env,
+        `DELETE FROM "AccessCode" a WHERE a."revokedAt" IS NOT NULL OR a.active = false
+         OR EXISTS (SELECT 1 FROM "DeviceGrant" g WHERE g."accessCodeId" = a.id AND g."expiresAt" <= now())`,
+      );
+      console.log("[cron] codes purgés:", purged.rowCount ?? 0);
       const sources = await env.db.query(env, `SELECT id FROM "Source" WHERE status <> 'DISABLED' AND (kind = 'XTREAM' OR "epgUrl" IS NOT NULL)`);
       for (const source of sources.rows) {
         await runEpgImportForSource(env, source.id).catch((error) => console.error("[cron] epg", error.message));
