@@ -35,14 +35,14 @@ describe('StreamingService', () => {
     expect(await store.getAlias(id, 'master')).toContain('provider.example.com');
   });
 
-  it('renvoie l’URL du Worker vidéo quand VIDEO_PROXY_URL est définie', async () => {
+  it('renvoie l’URL signée du Worker vidéo quand VIDEO_PROXY_URL est définie', async () => {
     const config = { get: (key: string, fallback: number | string) => ({ STREAM_IDLE_TTL_MINUTES: 240, STREAM_ABSOLUTE_TTL_HOURS: 24, STREAM_ALIAS_TTL_HOURS: 6, STREAM_ALLOWED_HOSTS: '', PUBLIC_API_URL: 'http://api.example.com', VIDEO_PROXY_URL: 'https://mbolo-tv-video-proxy.example.workers.dev' } as Record<string, number | string>)[key] ?? fallback } as unknown as ConfigService;
     const proxied = new StreamingService(prisma as never, crypto as never, new InMemoryStreamSessionStore() as unknown as StreamSessionStore, audit as never, health as never, config);
     prisma.streamVariant.findMany.mockResolvedValue([variant]);
     crypto.decrypt.mockReturnValue('https://provider.example.com/live/playlist.m3u8?token=abc');
     const play = await proxied.createPlay('ch-1', undefined);
-    expect(play.url).toMatch(/^https:\/\/mbolo-tv-video-proxy\.example\.workers\.dev\/\?url=https%3A%2F%2Fprovider\.example\.com%2Flive%2Fplaylist\.m3u8%3Ftoken%3Dabc$/);
-    const decoded = decodeURIComponent(play.url.split('?url=')[1]);
+    expect(play.url).toMatch(/^https:\/\/mbolo-tv-video-proxy\.example\.workers\.dev\/\?url=https%3A%2F%2Fprovider\.example\.com%2Flive%2Fplaylist\.m3u8%3Ftoken%3Dabc&x-exp=\d+&x-sig=[0-9a-f]{64}$/);
+    const decoded = decodeURIComponent(play.url.split('?url=')[1].split('&x-exp=')[0]);
     expect(decoded).toBe('https://provider.example.com/live/playlist.m3u8?token=abc');
   });
 

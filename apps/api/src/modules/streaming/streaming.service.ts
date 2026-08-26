@@ -1,6 +1,6 @@
 import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { PlayResponse } from '@mbolo/contracts';
 import { AuditService } from '../../common/audit/audit.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
@@ -44,8 +44,15 @@ export class StreamingService {
     // Proxy vidéo à la marge (Cloudflare Worker) : l'URL source est servie directement
     // par le Worker (cache + réécriture HLS côté edge), plus aucun octet vidéo ne passe
     // par cette API. Sans VIDEO_PROXY_URL, repli sur la session gateway historique.
+    // Le proxy n'accepte que des URL signées (HMAC url|expiry, secret partagé
+    // PROXY_URL_SECRET) : expiry par créneau horaire, même schéma que le worker API.
     const videoProxyUrl = (this.config.get<string>('VIDEO_PROXY_URL') ?? '').trim().replace(/\/+$/, '');
-    if (videoProxyUrl) return { url: `${videoProxyUrl}/?url=${encodeURIComponent(providerUrl)}`, expiresAt: new Date(session.expiresAt).toISOString() };
+    if (videoProxyUrl) {
+      const secret = (this.config.get<string>('PROXY_URL_SECRET') ?? '').trim();
+      const expiry = Math.floor(Date.now() / 3_600_000) * 3_600_000 + 24 * 3_600_000;
+      const signature = createHmac('sha256', secret).update(`${providerUrl}|${expiry}`).digest('hex');
+      return { url: `${videoProxyUrl}/?url=${encodeURIComponent(providerUrl)}&x-exp=${expiry}&x-sig=${signature}`, expiresAt: new Date(session.expiresAt).toISOString() };
+    }
     const publicApiUrl = (this.config.get<string>('PUBLIC_API_URL') ?? this.config.get<string>('API_URL') ?? DEFAULT_PUBLIC_API_URL).replace(/\/+$/, '');
     return { url: `${publicApiUrl}/api/stream/${session.id}/master.m3u8`, expiresAt: new Date(session.expiresAt).toISOString() };
   }
