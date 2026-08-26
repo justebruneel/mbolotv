@@ -3,20 +3,13 @@
 import { Badge, Button, EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChannel, useChannelEpg, useChannelViewers, useInfiniteChannels, usePlayUrl, useActivityHeartbeat } from '../../../../shared/api/queries';
+import { useChannel, useCategories, useChannelEpg, useChannelRow, useChannelViewers, useInfiniteChannels, usePlayUrl, useActivityHeartbeat } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
 import { useSettingsStore } from '../../../../shared/stores/settings';
-import { buildWatchHref } from '../../../../features/live-tv/utils';
+import { buildWatchHref, formatCategoryName } from '../../../../features/live-tv/utils';
 import { NetflixRow } from '../../../../features/live-tv/components/NetflixRow';
 
 const PAGE_SIZE = 48;
-
-function categoryRowTitle(category?: string): string {
-  if (!category) return 'Chaînes similaires';
-  const parts = category.split('|').map((part) => part.trim()).filter(Boolean);
-  const label = parts[parts.length - 1] ?? category;
-  return `Similaires · ${label}`;
-}
 
 function time(iso: string): string {
   return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -51,6 +44,7 @@ export default function WatchPage() {
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
   const playQuery = usePlayUrl(channelId);
+  const categoriesQuery = useCategories();
   const channelsQuery = useInfiniteChannels({ category, country, q }, PAGE_SIZE);
   const navChannels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const viewersQuery = useChannelViewers(channelId);
@@ -65,6 +59,23 @@ export default function WatchPage() {
       return false;
     }
   }, [playQuery]);
+
+  // Index id → {slug, name} de tout l'arbre des dossiers publiés.
+  const categoryIndex = useMemo(() => {
+    const map = new Map<string, { slug: string; name: string }>();
+    const walk = (nodes: typeof categoriesQuery.data): void => {
+      for (const node of nodes ?? []) {
+        map.set(node.id, { slug: node.slug, name: node.name });
+        walk(node.children);
+      }
+    };
+    walk(categoriesQuery.data);
+    return map;
+  }, [categoriesQuery.data]);
+  const currentCategory = channelQuery.data?.categoryId ? categoryIndex.get(channelQuery.data.categoryId) : undefined;
+  const similarSlug = currentCategory?.slug;
+  // Chaînes du même dossier que la chaîne en cours (requête filtrée serveur).
+  const similarQuery = useChannelRow(similarSlug, 24, Boolean(similarSlug));
 
   // Chrome du player : visible au survol desktop (au-dessus du lecteur
   // uniquement), permanent sur tactile.
@@ -122,7 +133,16 @@ export default function WatchPage() {
     router.push(lastNonWatchPath || '/live');
   };
 
-  const similar = navChannels.filter((channel) => channel.id !== channelId);
+  const fallbackSimilar = useMemo(() => navChannels.filter((channel) => channel.id !== channelId), [navChannels, channelId]);
+  const sameCategory = useMemo(
+    () => (similarQuery.data?.items ?? []).filter((channel) => channel.id !== channelId),
+    [similarQuery.data, channelId],
+  );
+  // Si le dossier ne contient que la chaîne en cours, repli sur le pool général.
+  const similar = sameCategory.length > 0 ? sameCategory : fallbackSimilar.slice(0, 24);
+  const similarTitle = currentCategory
+    ? `Similaires · ${formatCategoryName(currentCategory.name)}`
+    : 'Chaînes similaires';
 
   if (channelQuery.isLoading || !channelQuery.data) {
     return (
@@ -248,10 +268,10 @@ export default function WatchPage() {
       {similar.length > 0 && (
         <div className="mt-10">
           <NetflixRow
-            title={categoryRowTitle(category)}
+            title={similarTitle}
             subtitle={`${similar.length}`}
-            channels={similar.slice(0, 24)}
-            seeAllHref={category ? `/live?category=${category}` : undefined}
+            channels={similar}
+            seeAllHref={similarSlug ? `/live?category=${similarSlug}` : category ? `/live?category=${category}` : undefined}
           />
         </div>
       )}
