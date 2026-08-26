@@ -8,7 +8,7 @@ import { RouteTracker } from '../../shared/components/RouteTracker';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
 import { useActiveUsers, useActivityHeartbeat } from '../../shared/api/queries';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
-import { AccessGate } from '../../features/auth/components/access-gate';
+import { AccessGuard } from '../../features/auth/components/access';
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
@@ -26,7 +26,6 @@ function ShellContent({ children }: { children: ReactNode }) {
   const active = NAV_ITEMS.find((item) => pathname?.startsWith(item.href))?.href;
   const { data: activeData } = useActiveUsers();
   useActivityHeartbeat();
-  const requiresAccess = pathname?.startsWith('/live') || pathname?.startsWith('/favorites') || pathname?.startsWith('/watch');
 
   return (
     <>
@@ -45,7 +44,7 @@ function ShellContent({ children }: { children: ReactNode }) {
         pathname={pathname}
         activeUsers={activeData?.global}
       >
-        <AccessGate enabled={Boolean(requiresAccess)}>{children}</AccessGate>
+        <AccessGuard>{children}</AccessGuard>
       </AppShell>
     </>
   );
