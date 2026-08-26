@@ -1,7 +1,7 @@
 'use client';
 
 import type { AccessStatus } from '@mbolo/contracts';
-import { Logo } from '@mbolo/ui';
+import { Icon, Logo } from '@mbolo/ui';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { AccessChecking, AccessForm, useAccessStatus } from '../features/auth/components/access';
@@ -44,11 +44,7 @@ export default function EntryPage() {
       </header>
 
       <div className="relative z-10 mx-auto flex w-full max-w-xl flex-1 flex-col items-center justify-center px-5 py-10 text-center animate-fade-in">
-        <span className="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-4 py-1.5 text-xs font-bold tracking-wide text-accent backdrop-blur-sm animate-slide-up">
-          IPTV MULTI-SOURCES
-        </span>
-
-        <h1 className="mt-6 text-4xl font-extrabold tracking-tight animate-slide-up stagger-1 sm:text-5xl">
+        <h1 className="text-4xl font-extrabold tracking-tight animate-slide-up sm:text-5xl">
           Regardez le direct,
           <br />
           <span className="bg-gradient-to-r from-accent via-accent-hover to-accent bg-clip-text text-transparent">
@@ -56,23 +52,32 @@ export default function EntryPage() {
           </span>
         </h1>
 
-        <p className="mt-4 max-w-md text-base leading-relaxed text-secondary animate-slide-up stagger-2">
+        <p className="mt-4 max-w-md text-base leading-relaxed text-secondary animate-slide-up stagger-1">
           Vos chaînes préférées en streaming adaptatif, sur tous vos appareils.
         </p>
 
-        <div className="mt-8 w-full animate-scale-in stagger-3 flex justify-center">
+        <div className="mt-8 w-full animate-scale-in stagger-2 flex justify-center">
           <AccessForm onRedeemed={handleRedeemed} />
         </div>
 
-        <ul className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted animate-fade-in stagger-4">
-          <li>🔐 Un code = un appareil</li>
-          <li>📺 Téléphone, tablette & TV</li>
-          <li>⏱ Codes 7, 14 ou 30 jours</li>
+        <ul className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs font-medium text-muted animate-fade-in stagger-3">
+          <li className="inline-flex items-center gap-1.5">
+            <Icon.ShieldCheck size={15} aria-hidden className="text-accent" /> Un code = un appareil
+          </li>
+          <li className="inline-flex items-center gap-1.5">
+            <Icon.Tv size={15} aria-hidden className="text-accent" /> Téléphone, tablette &amp; TV
+          </li>
+          <li className="inline-flex items-center gap-1.5">
+            <Icon.Clock size={15} aria-hidden className="text-accent" /> Codes 7, 14 ou 30 jours
+          </li>
         </ul>
       </div>
 
-      <footer className="relative z-10 px-6 pb-6 text-center text-xs text-faint animate-fade-in stagger-5">
-        Streaming adaptatif · Multi-sources · PWA installable
+      <footer className="relative z-10 space-y-1 px-6 pb-6 text-center animate-fade-in stagger-4">
+        <p className="text-xs text-faint">Streaming adaptatif · Multi-sources · PWA installable</p>
+        <p className="text-xs font-semibold text-muted">
+          © {new Date().getFullYear()} Groupe Nzogho — Tous droits réservés.
+        </p>
       </footer>
     </main>
   );

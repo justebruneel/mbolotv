@@ -3,7 +3,7 @@
 import type { AccessStatus } from '@mbolo/contracts';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Logo, Spinner } from '@mbolo/ui';
+import { Icon, Logo, Spinner } from '@mbolo/ui';
 import { apiGet, apiPost } from '../../../shared/api/client';
 
 const WHATSAPP_URL = 'https://wa.me/qr/CPB7IL3GHAGIK1';
@@ -64,7 +64,9 @@ export function AccessForm({ onRedeemed }: { onRedeemed: (status: AccessStatus) 
 
   return (
     <div className="card w-full max-w-md p-7 text-center shadow-2xl backdrop-blur">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/15 text-2xl">🔐</div>
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/15 text-accent">
+        <Icon.Key size={22} aria-hidden />
+      </div>
       <h2 className="text-lg font-bold tracking-tight">Entrer votre code d'accès</h2>
       <p className="mt-2 text-sm leading-6 text-muted">Un code ne fonctionne que sur un seul appareil.</p>
       <form onSubmit={submit} className="mt-5 space-y-3">
