@@ -8,6 +8,50 @@ import { apiGet, apiPost } from '../../../shared/api/client';
 
 const WHATSAPP_URL = 'https://wa.me/qr/CPB7IL3GHAGIK1';
 const WHATSAPP_NUMBER = '+241 60 10 89 84';
+const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+const MINUTE_MS = 60_000;
+
+/**
+ * Pastille « clé + temps restant » de l'accès de l'appareil (page live,
+ * à côté de la recherche). Disparaît si aucun accès actif ; se met à jour
+ * toutes les 30 secondes.
+ */
+export function AccessTimeBadge() {
+  const { status } = useAccessStatus();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!status?.expiresAt) return;
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, [status?.expiresAt]);
+
+  if (!status?.active || !status.expiresAt) return null;
+  const expiresAt = new Date(status.expiresAt);
+  const remaining = expiresAt.getTime() - now;
+  if (remaining <= 0) return null;
+
+  const days = Math.floor(remaining / DAY_MS);
+  const hours = Math.floor((remaining % DAY_MS) / HOUR_MS);
+  const minutes = Math.floor((remaining % HOUR_MS) / MINUTE_MS);
+  let label: string;
+  if (days >= 2) label = `${days} j`;
+  else if (days === 1) label = `1 j ${hours} h`;
+  else if (hours >= 1) label = `${hours} h ${String(minutes).padStart(2, '0')}`;
+  else label = `${minutes} min`;
+
+  return (
+    <span
+      title={`Accès jusqu'au ${expiresAt.toLocaleString('fr-FR')}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold tabular-nums ${
+        remaining < DAY_MS ? 'border-danger/40 bg-danger-muted text-danger' : 'border-border bg-surface text-foreground'
+      }`}
+    >
+      <Icon.Key size={14} aria-hidden className="text-accent" />
+      <span>{label}</span>
+    </span>
+  );
+}
 
 /** Statut d'accès de l'appareil ; `loading` distingue la vérification du verrou. */
 export function useAccessStatus(): { status: AccessStatus | null; loading: boolean } {

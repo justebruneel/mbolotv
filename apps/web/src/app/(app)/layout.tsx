@@ -8,7 +8,7 @@ import { RouteTracker } from '../../shared/components/RouteTracker';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
 import { useActiveUsers, useActivityHeartbeat } from '../../shared/api/queries';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
-import { AccessGuard } from '../../features/auth/components/access';
+import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/access';
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
@@ -36,9 +36,12 @@ function ShellContent({ children }: { children: ReactNode }) {
         utilityItems={UTILITY_ITEMS}
         sidebarActions={<ThemeToggle />}
         searchSlot={pathname?.startsWith('/live') ? (
-          <Suspense fallback={<div className="h-10 w-10" />}>
-            <HeaderSearch />
-          </Suspense>
+          <div className="flex items-center gap-2">
+            <Suspense fallback={<div className="h-10 w-10" />}>
+              <HeaderSearch />
+            </Suspense>
+            <AccessTimeBadge />
+          </div>
         ) : undefined}
         activeHref={active}
         pathname={pathname}
