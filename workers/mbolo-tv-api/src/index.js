@@ -11,6 +11,7 @@ import { handleOwnerRoute, resumeQueuedImports } from "./owner-routes.js";
 import { scanDueVariants } from "./healthcheck.js";
 import { discoverMatches } from "./discovery.js";
 import { runEpgImportForSource } from "./epgimport.js";
+import { geoFeatured } from "./featured.js";
 
 function corsHeaders(request, env) {
   const allowed = (env?.CORS_ALLOWED_ORIGINS ?? "")
@@ -211,6 +212,9 @@ async function route(ctx, url) {
 
   if (path === "/api/categories" && method === "GET")
     return categoriesList(ctx);
+
+  if (path === "/api/geo/featured" && method === "GET")
+    return geoFeatured(ctx, url);
 
   if (path === "/api/channels" && method === "GET") {
     return ctx.json(

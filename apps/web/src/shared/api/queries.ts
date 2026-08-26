@@ -62,6 +62,15 @@ export function useChannelsByCountry(country: string | undefined, limit = 24, en
   });
 }
 
+/** Pays détecté côté Cloudflare + sélection « mis en avant » curée en console. */
+export function useGeoFeatured() {
+  return useQuery({
+    queryKey: ['geo-featured'],
+    queryFn: () => apiGet<{ country: string | null; channels: Channel[] }>('/geo/featured'),
+    staleTime: 10 * 60_000,
+  });
+}
+
 export function useInfiniteChannels(params: ChannelQuery, pageSize = 48) {
   const { category, country, q, offset: _offset, limit: _limit, ...rest } = params;
   return useInfiniteQuery({

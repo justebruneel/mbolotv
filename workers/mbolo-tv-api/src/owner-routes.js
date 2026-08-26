@@ -5,6 +5,7 @@ import { slugify } from './normalize.js';
 import { runSourceImport, ACTIVE_IMPORT_STATES } from './importer.js';
 import { runEpgImportForSource } from './epgimport.js';
 import { checkVariant } from './healthcheck.js';
+import { featuredList, featuredSet, featuredRemove } from './featured.js';
 
 function chunks(values, size) {
   const output = [];
@@ -135,6 +136,14 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   }
 
   if (path === '/api/owner/catalog' && method === 'GET') return ctx.json(await buildOwnerCatalog(ctx, owner));
+
+  if (path === '/api/owner/featured' && method === 'GET') return featuredList(ctx);
+  const featuredCountry = path.match(/^\/api\/owner\/featured\/([^/]+)$/);
+  if (featuredCountry && method === 'PUT')
+    return featuredSet(ctx, owner, audit, decodeURIComponent(featuredCountry[1]), await ctx.readJson().catch(() => ({})));
+  const featuredItem = path.match(/^\/api\/owner\/featured\/([^/]+)\/([^/]+)$/);
+  if (featuredItem && method === 'DELETE')
+    return featuredRemove(ctx, owner, audit, decodeURIComponent(featuredItem[1]), decodeURIComponent(featuredItem[2]));
 
   if (path === '/api/owner/catalog/channels' && method === 'GET') {
     const q = url.searchParams.get('q');

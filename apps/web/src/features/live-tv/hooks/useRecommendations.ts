@@ -2,7 +2,7 @@ import type { Channel, Category } from '@mbolo/contracts';
 import { useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { apiGet } from '../../../shared/api/client';
-import { useCategories, useChannelRow, useChannelsByCountry } from '../../../shared/api/queries';
+import { useCategories, useChannelRow, useChannelsByCountry, useGeoFeatured } from '../../../shared/api/queries';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { useSettingsStore } from '../../../shared/stores/settings';
 
@@ -26,10 +26,12 @@ type CatNode = Category & { children?: CatNode[] };
 
 export interface Recommendations {
   hasHistory: boolean;
-  /** Code pays mis en avant (déduit de l'historique, sinon de la langue). */
+  /** Code pays mis en avant (IP via Cloudflare, sinon historique, sinon langue). */
   countryCode?: string;
   countryRow: Channel[];
   forYou: Channel[];
+  /** 'geo' = sélection curée en console selon l'IP ; sinon heuristique locale. */
+  countrySource: 'geo' | 'affinity' | null;
 }
 
 function watchedWeight(watchedAt: string): number {
@@ -52,6 +54,7 @@ export function useRecommendations(): Recommendations {
   const favoriteIds = useFavoritesStore((state) => state.ids);
   const lastWatched = useSettingsStore((state) => state.lastWatched);
   const categories = useCategories().data ?? [];
+  const geoQuery = useGeoFeatured();
 
   // Index id → {slug, name} de tout l'arbre des dossiers publiés.
   const categoryIndex = useMemo(() => {
@@ -156,13 +159,20 @@ export function useRecommendations(): Recommendations {
   }, [genreRowA.data, genreRowB.data, excludedIds, topCountry]);
 
   const countryRow = useMemo(() => {
+    // Priorité à la sélection curée en console, ciblée par l'IP du visiteur
+    // (Cloudflare). Sinon heuristique d'affinité pays.
+    const geoChannels = geoQuery.data?.channels ?? [];
+    if (geoChannels.length > 0) return geoChannels.slice(0, MAX_ROWS);
     if (!topCountry) return [];
     const seen = new Set(forYou.map((channel) => channel.id));
     return (countryQuery.data?.items ?? [])
       .filter((channel) => !seen.has(channel.id))
       .sort((a, b) => Number(Boolean(b.nowPlaying)) - Number(Boolean(a.nowPlaying)))
       .slice(0, MAX_ROWS);
-  }, [topCountry, countryQuery.data, forYou]);
+  }, [geoQuery.data, topCountry, countryQuery.data, forYou]);
 
-  return { hasHistory, countryCode: topCountry, countryRow, forYou };
+  const geoSource = (geoQuery.data?.channels?.length ?? 0) > 0;
+  const countryCode = geoSource ? (geoQuery.data?.country ?? undefined) : topCountry;
+
+  return { hasHistory, countryCode, countryRow, forYou, countrySource: geoSource ? 'geo' : countryRow.length > 0 ? 'affinity' : null };
 }

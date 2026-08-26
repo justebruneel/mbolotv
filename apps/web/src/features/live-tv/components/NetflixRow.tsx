@@ -54,15 +54,27 @@ export function NetflixRow({
   const isLoading = enabled && !directChannels && rowQuery.isLoading;
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const scrollRafRef = useRef(0);
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
 
   function updateArrows(): void {
     const el = scrollerRef.current;
     if (!el) return;
-    setAtStart(el.scrollLeft <= 8);
-    setAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 8);
+    const nextStart = el.scrollLeft <= 8;
+    const nextEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 8;
+    // Bail-out : sans changement on ne re-rend pas (le swipe re-déclenche
+    // l'événement scroll à chaque pixel — re-render = saccades).
+    setAtStart((prev) => (prev === nextStart ? prev : nextStart));
+    setAtEnd((prev) => (prev === nextEnd ? prev : nextEnd));
   }
+
+  function scheduleArrows(): void {
+    cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(updateArrows);
+  }
+
+  useEffect(() => () => cancelAnimationFrame(scrollRafRef.current), []);
 
   function scrollByPage(direction: -1 | 1): void {
     const el = scrollerRef.current;
@@ -118,8 +130,8 @@ export function NetflixRow({
             scrollerRef.current = element;
             updateArrows();
           }}
-          onScroll={updateArrows}
-          className="flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-4 pb-6 pt-2 md:gap-4 md:px-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onScroll={scheduleArrows}
+          className="flex snap-x gap-3 overflow-x-auto px-4 pb-6 pt-2 md:gap-4 md:px-10 [scroll-snap-type:x_proximity] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {isLoading
             ? Array.from({ length: 7 }).map((_, index) => (

@@ -23,6 +23,10 @@ import type {
   SourceUpdateInput,
 } from '@mbolo/contracts';
 
+export interface FeaturedChannelEntry { id: string; name: string; logoUrl: string | null; }
+export interface FeaturedCountryGroup { country: string; channels: FeaturedChannelEntry[]; }
+export type FeaturedListResponse = { items: FeaturedCountryGroup[] };
+
 export const BASE_URL = '/api';
 export type ApiError = { error: string; message?: string };
 const JSON_HEADERS: Record<string, string> = { 'content-type': 'application/json' };
@@ -72,6 +76,11 @@ export const ownerApi = {
     test: (id: string): Promise<ChannelTestResponse> => fetch(`${BASE_URL}/owner/channels/${id}/test`, { method: 'POST', credentials: 'include' }).then(parseResponse<ChannelTestResponse>),
     removeBatch: (ids: string[]): Promise<{ deleted: number }> => fetch(`${BASE_URL}/owner/channels/delete-batch`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ ids }) }).then(parseResponse<{ deleted: number }>),
     ids: (scope: 'uncategorized'): Promise<{ ids: string[]; total: number }> => fetch(`${BASE_URL}/owner/channels/ids?scope=${scope}`, { credentials: 'include' }).then(parseResponse<{ ids: string[]; total: number }>),
+  },
+  featured: {
+    list: (): Promise<FeaturedListResponse> => fetch(`${BASE_URL}/owner/featured`, { credentials: 'include' }).then(parseResponse<FeaturedListResponse>),
+    set: (country: string, channelIds: string[]): Promise<FeaturedListResponse> => fetch(`${BASE_URL}/owner/featured/${encodeURIComponent(country)}`, { method: 'PUT', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ channelIds }) }).then(parseResponse<FeaturedListResponse>),
+    remove: (country: string, channelId: string): Promise<FeaturedListResponse> => fetch(`${BASE_URL}/owner/featured/${encodeURIComponent(country)}/${encodeURIComponent(channelId)}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<FeaturedListResponse>),
   },
   accessCodes: {
     list: (): Promise<AccessCode[]> => fetch(`${BASE_URL}/owner/access-codes`, { credentials: 'include' }).then(parseResponse<AccessCode[]>),

@@ -102,8 +102,14 @@ function HomeView() {
 
         {recommendations.countryRow.length >= 4 && (
           <NetflixRow
-            title={recommendations.countryCode ? `Chaînes · ${recommendations.countryCode}` : 'Chaînes de chez toi'}
-            subtitle="Votre pays"
+            title={
+              recommendations.countrySource === 'geo'
+                ? 'Chaînes locales'
+                : recommendations.countryCode
+                  ? `Chaînes · ${recommendations.countryCode}`
+                  : 'Chaînes de chez toi'
+            }
+            subtitle={recommendations.countrySource === 'geo' ? 'Mis en avant pour votre pays' : 'Votre pays'}
             channels={recommendations.countryRow}
           />
         )}

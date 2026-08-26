@@ -3,6 +3,7 @@
 import type { OwnerCatalog, OwnerCategory, OwnerChannel } from '@mbolo/contracts';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ownerApi } from '../../../../../features/owner/api/owner-api';
+import { FeaturedByCountryCard } from '../../../../../features/owner/components/featured-by-country';
 
 type Tests = Record<string, string>;
 
@@ -431,6 +432,8 @@ export default function CatalogControlPage() {
         <h1 className="mt-2 text-2xl font-bold">Catalogue public</h1>
         <p className="mt-1 text-sm text-muted">Renommez les dossiers, réorganisez-les (↑/↓), déplacez-les dans un autre dossier, masquez ce qui ne doit pas sortir et testez les chaînes avant publication. Un dossier masqué masque aussi ses sous-dossiers et ses chaînes.</p>
       </header>
+
+      <FeaturedByCountryCard />
 
       {error && <p className="card border-danger/30 bg-danger-muted p-3 text-sm text-danger">{error}</p>}
 
