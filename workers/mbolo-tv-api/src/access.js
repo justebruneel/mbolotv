@@ -91,11 +91,14 @@ export async function redeemCode(env, code, deviceId, userAgent, ip) {
 
   const expiresAt = new Date(Date.now() + accessCode.durationHours * 3_600_000);
   try {
+    // L'id de DeviceGrant n'a pas de défaut en base (défaut Prisma applicatif) :
+    // il doit être fourni explicitement ici.
     await env.db.query(
       env,
-      `INSERT INTO "DeviceGrant" ("accessCodeId", "deviceHash", "userAgent", "ipHash", "expiresAt")
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO "DeviceGrant" ("id", "accessCodeId", "deviceHash", "userAgent", "ipHash", "expiresAt")
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
+        crypto.randomUUID(),
         accessCode.id,
         deviceHash,
         userAgent?.slice(0, 200) ?? null,
@@ -103,10 +106,19 @@ export async function redeemCode(env, code, deviceId, userAgent, ip) {
         expiresAt,
       ],
     );
-  } catch {
+  } catch (error) {
+    // Conflit réel d'unicité (course : deux appareils réclament en même temps)
+    // = 409 ; toute autre erreur SQL ne doit pas être masquée par ce message.
+    if (error?.code === '23505') {
+      return {
+        status: 409,
+        message: "Ce code vient d’être utilisé sur un autre appareil",
+      };
+    }
+    console.error('access.redeem insert:', String(error?.message ?? error));
     return {
-      status: 409,
-      message: "Ce code vient d’être utilisé sur un autre appareil",
+      status: 500,
+      message: "Impossible d'activer ce code pour le moment, réessayez.",
     };
   }
   await env.db.query(
