@@ -53,6 +53,15 @@ export function useChannelRow(category: string | undefined, limit = 24, enabled 
   });
 }
 
+export function useChannelsByCountry(country: string | undefined, limit = 24, enabled = true) {
+  return useQuery({
+    queryKey: ['channels-country', country, limit],
+    queryFn: () => apiGet<ChannelListResponse>('/channels', { country, limit }),
+    enabled: enabled && !!country,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useInfiniteChannels(params: ChannelQuery, pageSize = 48) {
   const { category, country, q, offset: _offset, limit: _limit, ...rest } = params;
   return useInfiniteQuery({

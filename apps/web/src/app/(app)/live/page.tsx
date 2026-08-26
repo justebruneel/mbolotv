@@ -9,6 +9,7 @@ import { useCategories, useInfiniteChannels, useMatches, useWideChannels } from 
 import { HeroBanner } from '../../../features/live-tv/components/HeroBanner';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
+import { useRecommendations } from '../../../features/live-tv/hooks/useRecommendations';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { categoryLabel, formatCategoryName } from '../../../features/live-tv/utils';
 
@@ -77,6 +78,9 @@ function HomeView() {
   // Favoris : une requête large cachée, filtrée par les ids du store.
   const favChannels = useFavoriteChannels(favoritesIds, pool.length > 0);
 
+  // Personnalisation : pays le plus regardé + suggestions par habitudes.
+  const recommendations = useRecommendations();
+
   const liveMatches = (liveMatchesQuery.data?.items ?? []).filter((match) => match.state === 'LIVE').slice(0, 12);
 
   if (channelsQuery.isLoading && pool.length === 0) {
@@ -95,6 +99,16 @@ function HomeView() {
         {nowPlayingRow.length >= 4 && <NetflixRow title="Programmes en cours" channels={nowPlayingRow} />}
 
         {favChannels.length > 0 && <NetflixRow title="Mes favoris" channels={favChannels} seeAllHref="/favorites" />}
+
+        {recommendations.countryRow.length >= 4 && (
+          <NetflixRow
+            title={recommendations.countryCode ? `Chaînes · ${recommendations.countryCode}` : 'Chaînes de chez toi'}
+            subtitle="Votre pays"
+            channels={recommendations.countryRow}
+          />
+        )}
+
+        {recommendations.forYou.length >= 4 && <NetflixRow title="Recommandés pour toi" channels={recommendations.forYou} />}
 
         {liveMatches.length > 0 && (
           <section className="group/row relative">
