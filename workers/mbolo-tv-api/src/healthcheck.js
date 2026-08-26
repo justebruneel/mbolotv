@@ -3,25 +3,14 @@
 // Un manifest valide commence toujours par #EXTM3U. Les panels IPTV répondent
 // sinon avec une « playlist » d'erreur en content-type mpegurl (error code:
 // 1003 = IP datacenter bloquée, 1002 = connexions max…) : à marquer DOWN.
-// Les hôtes configurés dans RELAY_MAP sont rejoints via le relais résidentiel
-// (cloudflared local), redirections suivies manuellement saut par saut.
+// Les fournisseurs sont rejoints via le relais résidentiel (RELAY_MAP /
+// RELAY_DOMAIN_MAP / RELAY_DEFAULT_ORIGIN — voir src/relay.js), redirections
+// suivies manuellement saut par saut.
 import { decryptLocator } from './crypto.js';
+import { resolveRelay } from './relay.js';
 
 const MAX_BYTES = 1024 * 1024;
 const TIMEOUT_MS = Number(process.env.HEALTH_CHECK_TIMEOUT_MS ?? 6000);
-
-function applyRelay(env, targetUrl) {
-  if (!env.RELAY_MAP) return targetUrl;
-  try {
-    const map = JSON.parse(env.RELAY_MAP);
-    const parsed = new URL(targetUrl);
-    const destination = map[parsed.host];
-    if (!destination) return targetUrl;
-    return targetUrl.replace(`${parsed.protocol}//${parsed.host}`, destination.replace(/\/+$/, ''));
-  } catch {
-    return targetUrl;
-  }
-}
 
 async function fetchThroughRelay(env, url, timeoutMs = TIMEOUT_MS) {
   // Le load-balancer du panel peut attribuer un serveur média injoignable :
@@ -33,8 +22,9 @@ async function fetchThroughRelay(env, url, timeoutMs = TIMEOUT_MS) {
     let hops = 0;
     try {
       for (;;) {
-        response = await fetch(applyRelay(env, currentUrl), {
-          headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' },
+        const relayed = resolveRelay(env, currentUrl);
+        response = await fetch(relayed.url, {
+          headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', ...relayed.headers },
           redirect: 'manual',
           signal: AbortSignal.timeout(timeoutMs),
         });

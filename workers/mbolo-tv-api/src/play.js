@@ -1,5 +1,6 @@
 import { sha256Hex } from "./crypto.js";
 import { loadHiddenIds, categoryFilterSql } from "./categories.js";
+import { resolveRelay } from "./relay.js";
 
 // Sélection identique à StreamingService.createPlay / MatchesService.play :
 // variantes actives de sources non DISABLED, tri healthScore desc puis priority asc,
@@ -37,14 +38,36 @@ export async function assertGrantActive(env, deviceId) {
   return result.rows.length > 0;
 }
 
-export function playResponse(env, providerUrl, maxHeight) {
+// Signature des URL de proxy : HMAC-SHA256 sur « url|expiry », même schéma que
+// le proxy vidéo (PROXY_URL_SECRET partagé). L'expiry est calée sur un créneau
+// horaire commun pour garder des URL stables entre utilisateurs (cache segments
+// du proxy mutualisé) ; les playlists réécrites par le proxy re-signent leurs
+// enfants avec le même secret.
+const SIGN_TTL_MS = 24 * 3_600_000;
+const SIGN_BUCKET_MS = 3_600_000;
+
+function nextExpiry(now = Date.now()) {
+  return Math.floor(now / SIGN_BUCKET_MS) * SIGN_BUCKET_MS + SIGN_TTL_MS;
+}
+
+async function hmacHex(secret, payload) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function playResponse(env, providerUrl, maxHeight) {
   const proxyUrl = (env.VIDEO_PROXY_URL ?? "").trim().replace(/\/+$/, "");
   if (!proxyUrl) throw new Error("VIDEO_PROXY_URL non configurée");
-  let url = `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}`;
+  const secret = typeof env.PROXY_URL_SECRET === "string" ? env.PROXY_URL_SECRET.trim() : "";
+  if (!secret) throw new Error("PROXY_URL_SECRET non configurée");
+  const expiry = nextExpiry();
+  const signature = await hmacHex(secret, `${providerUrl}|${expiry}`);
+  let url = `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}&x-exp=${expiry}&x-sig=${signature}`;
   if (maxHeight) url += `&maxh=${maxHeight}`;
   return {
     url,
-    expiresAt: new Date(Date.now() + 24 * 3_600_000).toISOString(),
+    expiresAt: new Date(expiry).toISOString(),
   };
 }
 
@@ -60,4 +83,66 @@ export async function channelIsVisible(env, channelId) {
     [channelId, ...category.params],
   );
   return result.rows.length > 0;
+}
+
+// Résolution dynamique des locataires Stalker MAC : le locator stocké est
+// « {playbackBase}|{mac}|{channelId} » — on fait handshake + create_link à
+// chaque lecture pour obtenir une URL fraîche avec un jeton non expiré.
+export async function resolveStalkerLocator(env, locator) {
+  const separator = locator.indexOf("|");
+  if (separator === -1) return null;
+  const parts = locator.split("|");
+  if (parts.length !== 3) return null;
+  const [base, mac, channelId] = parts;
+
+  const headers = {
+    "MAC": mac,
+    "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`,
+    "Accept": "application/json",
+    "X-User-Agent": "Model: MAG254; Link: Ethernet",
+  };
+
+  // Endpoints candidats pour le portail.
+  let url;
+  try {
+    url = new URL(base);
+  } catch {
+    return null;
+  }
+  const origin = url.origin;
+  const endpoints = [...new Set([base.replace(/\/$/, ""), `${origin}/stalker_portal/server`, `${origin}/stalker_portal`, origin].map((v) => v.replace(/\/$/, "")))];
+
+  let token = "";
+  let endpoint = "";
+  for (const candidate of endpoints) {
+    try {
+      const relayed = resolveRelay(env, `${candidate}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-json`);
+      const response = await fetch(relayed.url, {
+        headers: { ...headers, ...relayed.headers },
+        signal: AbortSignal.timeout(10_000),
+      });
+      const body = await response.text();
+      const payload = JSON.parse(body);
+      if (payload.js?.token) { token = payload.js.token; endpoint = candidate; break; }
+    } catch { continue; }
+  }
+  if (!token) return null;
+
+  const authHeaders = { ...headers, Authorization: `Bearer ${token}` };
+  try {
+    const relayed = resolveRelay(env, `${endpoint}/portal.php?type=itv&action=create_link&cmd=http://45.159.94.49:8080/play/live/${token}/${channelId}.ts&JsHttpRequest=1-json`);
+    const linkResponse = await fetch(
+      relayed.url,
+      { headers: { ...authHeaders, ...relayed.headers }, signal: AbortSignal.timeout(15_000) },
+    );
+    const linkBody = await linkResponse.text();
+    const linkPayload = JSON.parse(linkBody);
+    const cmd = linkPayload.js?.cmd ?? "";
+    // Le cmd contient l'URL de lecture après le préfixe ffmpeg.
+    const match = /ffmpeg\s+(\S+)/.exec(cmd);
+    if (!match) return null;
+    return match[1].replace(/\\\//g, "/");
+  } catch {
+    return null;
+  }
 }

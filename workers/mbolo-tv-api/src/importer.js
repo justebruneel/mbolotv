@@ -3,6 +3,7 @@ import { importKey, encryptLocator, decryptLocator } from './crypto.js';
 import { slugify, detectCountry } from './normalize.js';
 import { parseM3uStream } from './m3u.js';
 import { fetchXtreamEntries } from './xtream.js';
+import { fetchMacPortalEntries } from './macportal.js';
 
 const BATCH = 5000;
 const QUERY_BATCH = 2000;
@@ -96,6 +97,21 @@ export async function runSourceImport(env, sourceId, importRunId) {
       let entries;
       try {
         ({ entries } = await fetchXtreamEntries(connection));
+      } catch (error) {
+        throw new ImportError('CONNECTOR_ERROR', error.message);
+      }
+      metrics.read = entries.length;
+      await persistMetrics();
+      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
+      await ingestEntries(q, key, source, entries, metrics, seenInput, seenChannelIds, persistMetrics);
+    } else if (source.kind === 'MAC_PORTAL') {
+      const url = connection.url ?? connection.portal;
+      const macAddress = connection.macAddress ?? connection.mac ?? connection.mac_address;
+      if (!url || !macAddress) throw new ImportError('MISSING_CREDENTIALS', 'URL ou adresse MAC manquante');
+      await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
+      let entries;
+      try {
+        ({ entries } = await fetchMacPortalEntries(env, { url, macAddress }));
       } catch (error) {
         throw new ImportError('CONNECTOR_ERROR', error.message);
       }

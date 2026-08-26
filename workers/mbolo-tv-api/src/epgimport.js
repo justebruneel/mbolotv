@@ -1,27 +1,16 @@
 import { importKey, decryptLocator } from './crypto.js';
 import { parseXmltvStream } from './xmltv.js';
+import { resolveRelay } from './relay.js';
 
 const MAX_REDIRECTS = 5;
-
-function applyRelay(env, targetUrl) {
-  if (!env.RELAY_MAP) return targetUrl;
-  try {
-    const map = JSON.parse(env.RELAY_MAP);
-    const parsed = new URL(targetUrl);
-    const destination = map[parsed.host];
-    if (!destination) return targetUrl;
-    return targetUrl.replace(`${parsed.protocol}//${parsed.host}`, destination.replace(/\/+$/, ""));
-  } catch {
-    return targetUrl;
-  }
-}
 
 async function fetchThroughRelay(env, url, timeoutMs) {
   let currentUrl = url;
   let hops = 0;
   for (;;) {
-    const response = await fetch(applyRelay(env, currentUrl), {
-      headers: { "user-agent": "MboloTV/0.1 (EPG import)" },
+    const relayed = resolveRelay(env, currentUrl);
+    const response = await fetch(relayed.url, {
+      headers: { "user-agent": "MboloTV/0.1 (EPG import)", ...relayed.headers },
       redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
     });

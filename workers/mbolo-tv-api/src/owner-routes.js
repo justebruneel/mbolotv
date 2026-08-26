@@ -291,13 +291,26 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     try {
       const key = await importKey(env.ENCRYPTION_KEY);
       const connection = JSON.parse(await decryptLocator(key, source.connectionEncrypted));
+      let normalizedBase = connection.url ?? connection.portal ?? '';
+      try { const u = new URL(normalizedBase); u.search = ''; if (/\/c\/?$/i.test(u.pathname)) u.pathname = u.pathname.replace(/\/c\/?$/i, ''); normalizedBase = u.toString().replace(/\/+$/, ''); } catch {}
+      const mac = connection.macAddress ?? connection.mac ?? connection.mac_address ?? '';
       const probe = source.kind === 'M3U'
         ? connection.url ?? connection.playlistUrl
         : source.kind === 'XTREAM'
           ? `${connection.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(connection.username)}&password=${encodeURIComponent(connection.password)}&action=get_live_categories`
-          : null;
+          : source.kind === 'MAC_PORTAL' && normalizedBase
+            ? `${normalizedBase}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-json`
+            : null;
       if (!probe) return ctx.json({ ok: false, latencyMs: null, error: 'Connexion incomplète : paramètres manquants' });
-      const response = await fetch(probe, { signal: AbortSignal.timeout(10_000), headers: { 'user-agent': 'Mozilla/5.0' } });
+      const probeHeaders = { 'user-agent': 'Mozilla/5.0' };
+      if (source.kind === 'MAC_PORTAL') {
+        Object.assign(probeHeaders, {
+          'MAC': mac,
+          'Cookie': `mac=${mac};stb_lang=en;timezone=UTC`,
+          'X-User-Agent': 'Model: MAG254; Link: Ethernet',
+        });
+      }
+      const response = await fetch(probe, { signal: AbortSignal.timeout(10_000), headers: probeHeaders });
       return ctx.json({ ok: response.ok, latencyMs: Date.now() - started, error: response.ok ? null : `HTTP ${response.status}` });
     } catch (error) {
       return ctx.json({ ok: false, latencyMs: Date.now() - started, error: String(error.message).replace(/https?:\/\/[^\s]+/g, '[url masquée]') });

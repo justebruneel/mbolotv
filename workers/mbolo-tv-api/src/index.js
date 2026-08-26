@@ -85,11 +85,18 @@ async function respondWithPlay(ctx, locatorPromise, maxHeight) {
     return ctx.fail(403, "Un code d’accès actif est requis");
   let providerUrl;
   try {
-    providerUrl = await locatorPromise;
+    const raw = await locatorPromise;
+    // Locator Stalker MAC (format : base|mac|channelId) → résolution à la volée.
+    if (raw.includes("|")) {
+      const { resolveStalkerLocator } = await import("./play.js");
+      providerUrl = (await resolveStalkerLocator(ctx.env, raw)) ?? (() => { throw new Error("Résolution échouée"); })();
+    } else {
+      providerUrl = raw;
+    }
   } catch {
     return ctx.fail(404, "Flux indisponible pour cette chaîne");
   }
-  return ctx.json(playResponse(ctx.env, providerUrl, maxHeight));
+  return ctx.json(await playResponse(ctx.env, providerUrl, maxHeight));
 }
 
 async function categoriesList(ctx) {
