@@ -5,12 +5,38 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon, Logo, Spinner } from '@mbolo/ui';
 import { apiGet, apiPost } from '../../../shared/api/client';
+import { DAY_MS, formatExpiresAt, formatRemaining } from '../../../shared/utils/formatDuration';
 
 const WHATSAPP_URL = 'https://wa.me/qr/CPB7IL3GHAGIK1';
 const WHATSAPP_NUMBER = '+241 60 10 89 84';
-const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
-const MINUTE_MS = 60_000;
+
+/**
+ * Bandeau d'expiration/renouvellement affiché au-dessus du formulaire
+ * quand l'accès n'est plus actif mais qu'on a un `expiresAt` (ex-promo/standard).
+ */
+export function AccessExpiredBanner({ status, onRenew }: { status: AccessStatus; onRenew: () => void }) {
+  if (status.active || !status.expiresAt) return null;
+  const expiresAt = new Date(status.expiresAt);
+  const isPromo = status.kind === 'PROMO';
+  return (
+    <div className="mb-5 p-4 rounded-xl border border-danger/30 bg-danger-muted text-center animate-slide-up">
+      <div className="flex items-center justify-center gap-2 text-sm font-semibold text-danger">
+        <Icon.AlertTriangle size={18} aria-hidden />
+        <span>
+          {isPromo ? 'Accès promotionnel expiré' : 'Votre accès a expiré'}
+          {status.expiresAt && <span className="ml-1 font-mono"> — {expiresAt.toLocaleString('fr-FR')}</span>}
+        </span>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        {isPromo ? 'Les codes promo durent 24 h.' : 'Renouvelez votre code pour reprendre le direct.'}
+      </p>
+      <button type="button" onClick={onRenew} className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-danger/30 bg-danger/10 px-4 py-2 text-sm font-semibold text-danger hover:bg-danger/20 transition">
+        <Icon.RefreshCw size={14} aria-hidden />
+        Renouveler mon accès
+      </button>
+    </div>
+  );
+}
 
 /**
  * Pastille « clé + temps restant » de l'accès de l'appareil (page live,
@@ -31,18 +57,11 @@ export function AccessTimeBadge() {
   const remaining = expiresAt.getTime() - now;
   if (remaining <= 0) return null;
 
-  const days = Math.floor(remaining / DAY_MS);
-  const hours = Math.floor((remaining % DAY_MS) / HOUR_MS);
-  const minutes = Math.floor((remaining % HOUR_MS) / MINUTE_MS);
-  let label: string;
-  if (days >= 2) label = `${days} j`;
-  else if (days === 1) label = `1 j ${hours} h`;
-  else if (hours >= 1) label = `${hours} h ${String(minutes).padStart(2, '0')}`;
-  else label = `${minutes} min`;
+  const label = formatRemaining(remaining);
 
   return (
     <span
-      title={`Accès jusqu'au ${expiresAt.toLocaleString('fr-FR')}`}
+      title={`Accès jusqu'au ${formatExpiresAt(status.expiresAt)}`}
       className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold tabular-nums ${
         remaining < DAY_MS ? 'border-danger/40 bg-danger-muted text-danger' : 'border-border bg-surface text-foreground'
       }`}
@@ -119,6 +138,7 @@ export function AccessForm({ onRedeemed }: { onRedeemed: (status: AccessStatus) 
           onChange={(event) => setCode(event.target.value)}
           placeholder="Ex. MBLO-AB12CD34EF"
           autoComplete="one-time-code"
+          data-testid="access-code-input"
           className="w-full rounded-xl border border-border bg-surface-2 px-4 py-3 text-center font-mono text-sm uppercase tracking-wider focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
         />
         <button

@@ -3,8 +3,8 @@
 import type { AccessStatus } from '@mbolo/contracts';
 import { Icon, Logo } from '@mbolo/ui';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { AccessChecking, AccessForm, useAccessStatus } from '../features/auth/components/access';
+import { useCallback, useEffect, useState } from 'react';
+import { AccessChecking, AccessExpiredBanner, AccessForm, useAccessStatus } from '../features/auth/components/access';
 import { ThemeToggle } from '../shared/components/ThemeToggle';
 
 /**
@@ -26,6 +26,14 @@ export default function EntryPage() {
   function handleRedeemed(next: AccessStatus): void {
     if (next.active) setGranted(true);
   }
+
+  const handleRenew = useCallback(() => {
+    const input = document.querySelector<HTMLInputElement>('[data-testid="access-code-input"]');
+    if (input) {
+      input.focus();
+      input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, []);
 
   // Vérification en cours, ou bascule vers /live : écran de marque.
   if (loading || active) {
@@ -56,7 +64,12 @@ export default function EntryPage() {
           Vos chaînes préférées en streaming adaptatif, sur tous vos appareils.
         </p>
 
-        <div className="mt-8 w-full animate-scale-in stagger-2 flex justify-center">
+        <div className="mt-8 w-full max-w-md animate-scale-in stagger-2 flex flex-col items-center">
+          {status && !status.active && status.expiresAt && (
+            <div className="w-full">
+              <AccessExpiredBanner status={status} onRenew={handleRenew} />
+            </div>
+          )}
           <AccessForm onRedeemed={handleRedeemed} />
         </div>
 
