@@ -428,7 +428,6 @@ export default function EntryPage() {
             </ul>
           </div>
         </div>
-        <div className="border-t border-border px-5 py-4 text-center text-xs text-faint">Streaming adaptatif · Multi-sources · PWA installable · Thème clair/sombre</div>
       </footer>
     </main>
   );
