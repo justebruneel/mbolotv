@@ -10,10 +10,6 @@ import { useSettingsStore } from '../../../shared/stores/settings';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { channelBadge, channelInitials, buildWatchHref, type WatchContext } from '../utils';
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-}
-
 export function ChannelTile({ channel, watchContext, highlight }: { channel: Channel; watchContext?: WatchContext; highlight?: boolean }) {
   const queryClient = useQueryClient();
   const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
@@ -86,8 +82,8 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
             {channelInitials(channel.name)}
           </div>
         )}
-        {/* Gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+        {/* Gradient renforcé : le nom de chaîne (sous la carte) doit rester l'élément dominant */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-transparent" />
       </div>
 
       {/* Top badges */}
@@ -137,16 +133,15 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
               <span className="text-xs font-bold text-muted">{channelInitials(channel.name)}</span>
             )}
           </div>
-          {/* Programme info */}
+          {/* Programme info : 1 ligne discrète + barre, pour ne pas concurrencer le nom de la chaîne */}
           <div className="min-w-0 flex-1">
             {isLive ? (
               <>
-                <p className="truncate text-xs font-semibold text-white drop-shadow-md">{isLive.title}</p>
-                <p className="text-[10px] text-white/70">{formatTime(isLive.startsAt)} – {formatTime(isLive.endsAt)}</p>
-                <ProgrammeProgress startsAt={isLive.startsAt} endsAt={isLive.endsAt} className="mt-1" />
+                <p className="truncate text-[11px] font-medium text-white/75">{isLive.title}</p>
+                <ProgrammeProgress startsAt={isLive.startsAt} endsAt={isLive.endsAt} className="mt-0.5" showLabel={false} />
               </>
             ) : (
-              <p className="truncate text-xs font-semibold text-white/60">Pas de programme</p>
+              <p className="truncate text-[11px] font-medium text-white/50">Pas de programme</p>
             )}
           </div>
         </div>

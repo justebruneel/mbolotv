@@ -209,13 +209,12 @@ function RowCard({ channel }: { channel: Channel }) {
             </span>
           )}
 
-          {/* Bandeau info au survol */}
+          {/* Bandeau info au survol : le nom de chaîne reste visible en permanence sous la carte */}
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-2 pt-6 opacity-0 transition-opacity duration-200 group-hover/card:opacity-100">
             <p className="truncate text-xs font-bold text-white">{programme?.title ?? channel.name}</p>
             {programme && (
-              <p className="mt-0.5 flex items-center justify-between text-[10px] text-white/70">
-                <span>{channel.name}</span>
-                <span>{new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+              <p className="mt-0.5 text-right text-[10px] text-white/70">
+                fin {new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
               </p>
             )}
           </div>
@@ -223,15 +222,16 @@ function RowCard({ channel }: { channel: Channel }) {
           {/* Progression du programme en cours */}
           {programme && (
             <div className="absolute inset-x-0 bottom-0 h-[3px] bg-black/40 opacity-100 group-hover/card:opacity-0">
-              <ProgrammeProgress startsAt={programme.startsAt} endsAt={programme.endsAt} />
+              <ProgrammeProgress startsAt={programme.startsAt} endsAt={programme.endsAt} showLabel={false} />
             </div>
           )}
         </div>
 
         <div className="min-w-0 px-2.5 py-2">
-          <p className="truncate text-xs font-bold text-foreground/90">{programme?.title ?? channel.name}</p>
-          <p className="mt-0.5 truncate text-[10px] font-medium uppercase tracking-wide text-muted">
-            {programme ? `${channel.name} · fin ${new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : channel.country ?? ''}
+          {/* Nom de chaîne dominant ; l'EPG (titre + fin) reste une ligne secondaire discrète */}
+          <p className="truncate text-xs font-bold text-foreground/90">{channel.name}</p>
+          <p className="mt-0.5 truncate text-[11px] text-muted">
+            {programme ? `${programme.title} · fin ${new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : channel.country ?? 'Live'}
           </p>
         </div>
       </Link>

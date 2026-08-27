@@ -12,8 +12,13 @@ const SHELL_CACHE = `mbolo-tv-shell-${VERSION}`;
 const RUNTIME_CACHE = `mbolo-tv-runtime-${VERSION}`;
 const PRECACHE = ['/', '/icon.svg', '/apple-icon.svg'];
 
+// En dev, /_next/static/* n'est pas immuable : les chunks gardent la même URL
+// avec un contenu recompilé, donc le cache-first servirait du JS périmé après
+// chaque édition. Le SW se désactive lui-même et purge tous les caches.
+const IS_DEV = ['localhost', '127.0.0.1'].includes(self.location.hostname);
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(PRECACHE)));
+  if (!IS_DEV) event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(PRECACHE)));
   self.skipWaiting();
 });
 
@@ -22,14 +27,20 @@ self.addEventListener('activate', (event) => {
     (async () => {
       const names = await caches.keys();
       await Promise.all(
-        names.filter((name) => name !== SHELL_CACHE && name !== RUNTIME_CACHE).map((name) => caches.delete(name)),
+        names
+          .filter((name) => IS_DEV || (name !== SHELL_CACHE && name !== RUNTIME_CACHE))
+          .map((name) => caches.delete(name)),
       );
       await self.clients.claim();
+      // En dev, désinscription après purge : le rechargement suivant ne passe
+      // plus par le SW (PwaRegister ne le réenregistre pas hors production).
+      if (IS_DEV) await self.registration.unregister();
     })(),
   );
 });
 
 self.addEventListener('fetch', (event) => {
+  if (IS_DEV) return;
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);

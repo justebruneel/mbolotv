@@ -14,9 +14,11 @@ export interface ProgrammeProgressProps {
   startsAt: string;
   endsAt: string;
   className?: string;
+  /** Libellé « Fin à HH:MM · reste Xm » : utile dans les listes, à masquer dans les cartes compactes où il déborde. */
+  showLabel?: boolean;
 }
 
-export function ProgrammeProgress({ startsAt, endsAt, className }: ProgrammeProgressProps) {
+export function ProgrammeProgress({ startsAt, endsAt, className, showLabel = true }: ProgrammeProgressProps) {
   const [now, setNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
@@ -49,9 +51,11 @@ export function ProgrammeProgress({ startsAt, endsAt, className }: ProgrammeProg
           style={{ width: `${progress}%` }}
         />
       </div>
-      <p className="mt-1 text-[10px] text-white/70">
-        Fin à {endLabel} · reste {remaining}
-      </p>
+      {showLabel && (
+        <p className="mt-1 text-[10px] text-white/70">
+          Fin à {endLabel} · reste {remaining}
+        </p>
+      )}
     </div>
   );
 }

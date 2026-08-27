@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { useCategories, useInfiniteChannels, useMatches, useWideChannels } from '../../../shared/api/queries';
-import { HeroBanner } from '../../../features/live-tv/components/HeroBanner';
 import { FeaturedAuto } from '../../../features/live-tv/components/FeaturedAuto';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
@@ -18,7 +17,6 @@ import { useQueries } from '@tanstack/react-query';
 import { apiGet } from '../../../shared/api/client';
 
 const PAGE_SIZE = 48;
-const HERO_CANDIDATES = 5;
 
 export default function LivePage() {
   return (
@@ -61,12 +59,6 @@ function HomeView() {
     }
   }, [channelsQuery, pool.length]);
 
-  const featured = useMemo(() => {
-    const withVisual = pool.filter((channel) => channel.nowPlaying?.imageUrl || channel.logoUrl);
-    if (withVisual.length >= 1) return withVisual.slice(0, HERO_CANDIDATES);
-    return pool.slice(0, HERO_CANDIDATES);
-  }, [pool]);
-
   const nowPlayingRow = useMemo(() => pool.filter((channel) => channel.nowPlaying).slice(0, 24), [pool]);
 
   const categories = categoriesQuery.data ?? [];
@@ -100,9 +92,7 @@ function HomeView() {
 
   return (
     <main className="pb-16">
-      <HeroBanner channels={featured} />
-
-      <div className="relative z-10 -mt-6 space-y-9 md:-mt-10">
+      <div className="space-y-9 pt-6 md:pt-8">
         <FeaturedAuto />
 
         {continueChannels.length > 0 && <NetflixRow title="Reprendre" subtitle="Continuer à regarder" channels={continueChannels} />}

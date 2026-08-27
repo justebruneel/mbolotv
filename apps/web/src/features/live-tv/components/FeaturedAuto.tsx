@@ -1,9 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '../../../shared/api/client';
 import { Icon } from '@mbolo/ui';
+
+const ROTATE_MS = 6_000;
 
 interface FeaturedItem {
   channelId: string;
@@ -32,31 +35,101 @@ export function FeaturedAuto() {
     staleTime: 5 * 60_000,
   });
 
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const startXRef = useRef<number | null>(null);
+  const items = query.data ?? [];
+
+  useEffect(() => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (items.length <= 1 || paused || reduced) return;
+    const timer = window.setInterval(() => setIndex((value) => (value + 1) % items.length), ROTATE_MS);
+    return () => window.clearInterval(timer);
+  }, [items.length, paused]);
+
+  useEffect(() => {
+    const onVis = () => setPaused(document.hidden);
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  function onTouchStart(event: React.TouchEvent) {
+    startXRef.current = event.touches[0].clientX;
+  }
+  function onTouchEnd(event: React.TouchEvent) {
+    const start = startXRef.current;
+    startXRef.current = null;
+    if (start == null || items.length <= 1) return;
+    const delta = event.changedTouches[0].clientX - start;
+    if (Math.abs(delta) < 40) return;
+    setIndex((value) => (delta < 0 ? (value + 1) % items.length : (value - 1 + items.length) % items.length));
+    setPaused(true);
+    window.setTimeout(() => setPaused(false), 3000);
+  }
+
   if (query.isLoading) {
     return (
       <div className="mx-4 md:mx-10 h-64 animate-pulse rounded-2xl bg-surface" />
     );
   }
-  if (!query.data || query.data.length === 0) return null;
-  const item = query.data[0];
+  if (items.length === 0) {
+    // Reprise de l'ancien hero : un accueil correct même sans programme mis en avant.
+    return (
+      <div className="mx-4 py-10 md:mx-10 md:py-14">
+        <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent">Mbolo TV</p>
+        <h1 className="mt-3 max-w-xl text-3xl font-black leading-tight md:text-5xl">Le direct, façon cinéma.</h1>
+        <p className="mt-3 max-w-md text-sm text-muted">Des milliers de chaînes en direct. Choisissez une catégorie ci-dessous pour commencer.</p>
+      </div>
+    );
+  }
+
+  const item = items[index % items.length];
   const prog = item.programme;
-  const backdrop = (prog as unknown as { backdropUrl?: string | null })?.backdropUrl ?? prog.imageUrl ?? null;
-  const poster = (prog as unknown as { posterUrl?: string | null })?.posterUrl ?? null;
-  const trailer = (prog as unknown as { trailerUrl?: string | null })?.trailerUrl ?? null;
   const channelName = item.channel?.name ?? 'Mbolo TV';
+  const multiple = items.length > 1;
+  const backdropOf = (p: FeaturedItem['programme']) =>
+    (p as unknown as { backdropUrl?: string | null })?.backdropUrl ??
+    (p as unknown as { posterUrl?: string | null })?.posterUrl ??
+    p.imageUrl ??
+    null;
+  const hasAnyVisual = items.some((it) => backdropOf(it.programme));
+  const trailer = (prog as unknown as { trailerUrl?: string | null })?.trailerUrl ?? null;
 
   return (
-    <section className="relative mx-4 md:mx-10 overflow-hidden rounded-2xl border border-border bg-black">
-      {backdrop ? (
-        <img src={backdrop} alt="" className="absolute inset-0 h-full w-full object-cover opacity-60" loading="lazy" decoding="async" />
-      ) : poster ? (
-        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" loading="lazy" decoding="async" />
+    <section
+      className="relative mx-4 touch-pan-y overflow-hidden rounded-2xl border border-border bg-black md:mx-10"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
+      {/* Fonds empilés : fondu enchaîné sans flash de chargement à chaque rotation */}
+      {hasAnyVisual ? (
+        items.map((it, position) => {
+          const visual = backdropOf(it.programme);
+          if (!visual) return null;
+          const isPoster = !(it.programme as unknown as { backdropUrl?: string | null }).backdropUrl;
+          return (
+            <img
+              key={`${it.channelId}-${it.programme.id ?? position}`}
+              src={visual}
+              alt=""
+              loading={position === 0 ? 'eager' : 'lazy'}
+              decoding="async"
+              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${position === index ? (isPoster ? 'opacity-40' : 'opacity-60') : 'opacity-0'}`}
+            />
+          );
+        })
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-surface-3 to-bg" />
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
       <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-transparent to-transparent" />
-      <div className="relative p-6 md:p-10 md:pr-[40%]">
+
+      <div
+        key={`${item.channelId}-${prog.id ?? index}`}
+        className={`featured-fade relative p-6 ${multiple ? 'pb-14' : ''} md:p-10 md:pr-[40%]`}
+      >
         <p className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest text-accent">
           <span className="h-2 w-2 animate-pulse rounded-full bg-accent" /> À la une · Ce soir à {new Date(prog.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
           {prog.type && <span className="rounded bg-white/20 px-1.5 py-0.5 text-[10px] text-white">{prog.type}</span>}
@@ -82,6 +155,37 @@ export function FeaturedAuto() {
         </div>
         <p className="mt-4 text-[10px] text-white/40">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
       </div>
+
+      {/* Pastilles de rotation (avec progression), comme sur l'accueil Netflix */}
+      {multiple && (
+        <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
+          <div className="flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-2 backdrop-blur-md shadow-lg">
+            {items.map((it, position) => (
+              <button
+                key={`${it.channelId}-${it.programme.id ?? position}-dot`}
+                type="button"
+                aria-label={`Afficher ${it.programme.title}`}
+                onClick={() => setIndex(position)}
+                className={`relative h-[3px] overflow-hidden rounded-full transition-all duration-300 ${
+                  position === index ? 'w-8 bg-white/30' : 'w-5 bg-white/20 hover:bg-white/40'
+                }`}
+              >
+                {position === index && (
+                  <span
+                    key={`${index}-${paused ? 'p' : 'a'}`}
+                    className="absolute inset-y-0 left-0 bg-white"
+                    style={{
+                      animation: `heroFill ${ROTATE_MS}ms linear forwards`,
+                      animationPlayState: paused ? 'paused' : 'running',
+                    }}
+                  />
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <style>{`@keyframes heroFill { from { width: 0% } to { width: 100% } } @keyframes featuredFade { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } } .featured-fade { animation: featuredFade 500ms ease-out } @media (prefers-reduced-motion: reduce) { .featured-fade { animation: none !important } }`}</style>
     </section>
   );
 }
