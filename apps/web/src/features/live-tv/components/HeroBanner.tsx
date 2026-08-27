@@ -109,7 +109,7 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
   const programme = channel.nowPlaying;
   const [imgError, setImgError] = useState(false);
   useEffect(() => setImgError(false), [channel.id]);
-  const rawBackdrop = programme?.imageUrl ?? channel.logoUrl ?? null;
+  const rawBackdrop = (programme as unknown as { backdropUrl?: string | null; posterUrl?: string | null })?.backdropUrl ?? (programme as unknown as { posterUrl?: string | null })?.posterUrl ?? programme?.imageUrl ?? channel.logoUrl ?? null;
   const backdrop = rawBackdrop && !imgError ? rawBackdrop : null;
   const isLogoBackdrop = backdrop === channel.logoUrl;
 

@@ -7,7 +7,18 @@ import { StreamingService } from '../streaming/streaming.service';
 
 type ListedChannel = { id: string; name: string; canonicalName: string; country: string | null; categoryId: string | null; logoKey: string | null };
 type CountryRow = { country: string | null; _count: { country: number } };
-type ChannelProgramme = { id: string; channelId: string; startsAt: Date; endsAt: Date; title: string; description: string | null; imageUrl: string | null };
+type ChannelProgramme = { id: string; channelId: string; startsAt: Date; endsAt: Date; title: string; description: string | null; imageUrl: string | null; metadata?: unknown | null };
+
+function extractNowPlayingEnriched(metadata: unknown): Partial<NowPlaying> {
+  if (!metadata || typeof metadata !== 'object') return {};
+  const m = metadata as Record<string, unknown>;
+  const tmdb = (m.tmdb as Record<string, unknown> | null) ?? null;
+  return {
+    type: (m.type as NowPlaying['type']) ?? null,
+    posterUrl: (tmdb?.posterUrl as string | null) ?? null,
+    backdropUrl: (tmdb?.backdropUrl as string | null) ?? null,
+  };
+}
 
 @Injectable()
 export class ChannelsService {
@@ -42,9 +53,30 @@ export class ChannelsService {
     const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
     const channel = await this.prisma.channel.findFirst({ where: { id, isVisible: true, ...categoryClause } });
     if (!channel) throw new NotFoundException('Channel not found');
-    const from = new Date(Date.now() - 3 * 3_600_000); const to = new Date(Date.now() + 12 * 3_600_000);
+    const from = new Date(Date.now() - 3 * 3_600_000);
+    const to = new Date(Date.now() + 12 * 3_600_000);
     const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: id, startsAt: { lte: to }, endsAt: { gte: from } }, orderBy: { startsAt: 'asc' } });
-    return programmes.map((programme: ChannelProgramme) => ({ id: programme.id, channelId: programme.channelId, startsAt: programme.startsAt.toISOString(), endsAt: programme.endsAt.toISOString(), title: programme.title, description: programme.description, imageUrl: programme.imageUrl }));
+    return programmes.map((programme: ChannelProgramme) => {
+      const enriched = extractNowPlayingEnriched((programme as unknown as { metadata: unknown }).metadata);
+      const trailer = (programme as unknown as { metadata: unknown }).metadata
+        ? (((programme as unknown as { metadata: Record<string, unknown> }).metadata.tmdb as Record<string, unknown> | null)?.trailerUrl as string | null) ?? null
+        : null;
+      return {
+        id: programme.id,
+        channelId: programme.channelId,
+        startsAt: programme.startsAt.toISOString(),
+        endsAt: programme.endsAt.toISOString(),
+        title: programme.title,
+        description: programme.description,
+        imageUrl: programme.imageUrl,
+        type: enriched.type ?? null,
+        posterUrl: enriched.posterUrl ?? null,
+        backdropUrl: enriched.backdropUrl ?? null,
+        trailerUrl: trailer,
+        genres: ((programme as unknown as { metadata: Record<string, unknown> }).metadata?.tmdb as Record<string, unknown> | null)?.genres as string[] | null ?? null,
+        year: ((programme as unknown as { metadata: Record<string, unknown> }).metadata?.tmdb as Record<string, unknown> | null)?.year as number | null ?? null,
+      } as Programme;
+    });
   }
   async play(id: string, deviceId: string | undefined): Promise<PlayResponse> {
     const hiddenIds = await this.hiddenCategoryIds();
@@ -73,7 +105,26 @@ export class ChannelsService {
     cats.forEach((category) => compute(category.id));
     return new Set(cats.filter((category) => !effective.get(category.id)).map((category) => category.id));
   }
-  private async findNowPlaying(channelIds: string[]): Promise<Map<string, NowPlaying>> { if (channelIds.length === 0) return new Map(); const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: { in: channelIds }, startsAt: { lte: new Date() }, endsAt: { gt: new Date() } } }); const map = new Map<string, NowPlaying>(); for (const programme of programmes) if (!map.has(programme.channelId)) map.set(programme.channelId, { startsAt: programme.startsAt.toISOString(), endsAt: programme.endsAt.toISOString(), title: programme.title, imageUrl: programme.imageUrl ?? null }); return map; }
+  private async findNowPlaying(channelIds: string[]): Promise<Map<string, NowPlaying>> {
+    if (channelIds.length === 0) return new Map();
+    const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: { in: channelIds }, startsAt: { lte: new Date() }, endsAt: { gt: new Date() } } });
+    const map = new Map<string, NowPlaying>();
+    for (const programme of programmes as unknown as Array<ChannelProgramme & { metadata?: unknown }>) {
+      if (!map.has(programme.channelId)) {
+        const enriched = extractNowPlayingEnriched((programme as unknown as { metadata: unknown }).metadata);
+        map.set(programme.channelId, {
+          startsAt: programme.startsAt.toISOString(),
+          endsAt: programme.endsAt.toISOString(),
+          title: programme.title,
+          imageUrl: programme.imageUrl ?? null,
+          type: enriched.type ?? null,
+          posterUrl: enriched.posterUrl ?? null,
+          backdropUrl: enriched.backdropUrl ?? null,
+        });
+      }
+    }
+    return map;
+  }
   private async findHealthStatus(channelIds: string[]): Promise<Map<string, 'OK' | 'DOWN'>> { if (channelIds.length === 0) return new Map(); const variants = await this.prisma.streamVariant.findMany({ where: { channelId: { in: channelIds }, isActive: true }, select: { channelId: true, healthStatus: true } }); const map = new Map<string, 'OK' | 'DOWN'>(); for (const variant of variants) if (variant.healthStatus !== null && (map.get(variant.channelId) === undefined || variant.healthStatus === 'OK')) map.set(variant.channelId, variant.healthStatus as 'OK' | 'DOWN'); return map; }
   private async serialize(channel: ListedChannel, nowPlaying: NowPlaying | null, healthStatus: 'OK' | 'DOWN' | null): Promise<Channel> { return { id: channel.id, name: channel.name, canonicalName: channel.canonicalName, country: channel.country, categoryId: channel.categoryId, logoUrl: await this.resolveLogoUrl(channel.logoKey), healthStatus, nowPlaying }; }
   private async resolveLogoUrl(logoKey: string | null): Promise<string | null> { if (!logoKey) return null; if (/^https?:\/\//i.test(logoKey)) { try { const url = new URL(logoKey); if (url.protocol === 'http:') url.protocol = 'https:'; return url.toString(); } catch { return logoKey; } } try { return this.storageDriver === 'local' ? `${this.publicApiUrl}/uploads/${logoKey}` : await this.storage.signedUrl(logoKey, this.logoUrlTtlSeconds); } catch { return null; } }

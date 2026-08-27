@@ -176,3 +176,11 @@ export function useWideChannels(limit = 200, enabled = true) {
     staleTime: 60_000,
   });
 }
+
+export function useFeatured(limit = 5) {
+  return useQuery({
+    queryKey: ['featured', limit],
+    queryFn: () => apiGet<{ channelId: string; programme: { title: string; description: string | null; startsAt: string; endsAt: string; imageUrl: string | null; posterUrl: string | null; backdropUrl: string | null; trailerUrl: string | null; type: string | null } }[]>(`/epg/featured?limit=${limit}`),
+    staleTime: 5 * 60_000,
+  });
+}

@@ -154,7 +154,11 @@ function RowCard({ channel }: { channel: Channel }) {
   const toggle = useFavoritesStore((state) => state.toggle);
   const badge = channelBadge(channel.name);
   const programme = channel.nowPlaying;
-  const thumb = programme?.imageUrl ?? null;
+  const thumb =
+    (programme as unknown as { backdropUrl?: string | null; posterUrl?: string | null })?.backdropUrl ??
+    (programme as unknown as { posterUrl?: string | null })?.posterUrl ??
+    programme?.imageUrl ??
+    null;
   const down = channel.healthStatus === 'DOWN';
 
   return (

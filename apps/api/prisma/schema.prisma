@@ -87,6 +87,7 @@ model Channel {
   variants StreamVariant[]
   programmes EpgProgramme[]
   favorites Favorite[]
+  epgMappings ChannelEpgMapping[]
   @@index([categoryId, isVisible])
   @@index([tvgId])
 }
@@ -197,4 +198,26 @@ model DeviceGrant {
   lastSeenAt DateTime @default(now())
   accessCode AccessCode @relation(fields:[accessCodeId], references:[id], onDelete:Cascade)
   @@index([deviceHash, expiresAt])
+}
+model TmdbCache {
+  id String @id @default(cuid())
+  cacheKey String @unique
+  title String
+  year Int?
+  payload Json
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  @@index([expiresAt])
+  @@index([title])
+}
+model ChannelEpgMapping {
+  id String @id @default(cuid())
+  channelId String
+  provider String
+  externalId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
+  @@unique([channelId, provider])
+  @@index([provider, externalId])
 }

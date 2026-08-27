@@ -23,7 +23,10 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
   const href = buildWatchHref(channel.id, watchContext);
   const down = channel.healthStatus === 'DOWN';
   const isLive = channel.nowPlaying;
-  const thumbUrl = isLive?.imageUrl;
+  const thumbUrl =
+    (isLive as unknown as { backdropUrl?: string | null; posterUrl?: string | null })?.backdropUrl ??
+    (isLive as unknown as { posterUrl?: string | null })?.posterUrl ??
+    isLive?.imageUrl;
 
   const prefetch = (): void => {
     if (!down) {

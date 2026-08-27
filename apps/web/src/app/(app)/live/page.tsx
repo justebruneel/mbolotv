@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { useCategories, useInfiniteChannels, useMatches, useWideChannels } from '../../../shared/api/queries';
 import { HeroBanner } from '../../../features/live-tv/components/HeroBanner';
+import { FeaturedAuto } from '../../../features/live-tv/components/FeaturedAuto';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
 import { useRecommendations } from '../../../features/live-tv/hooks/useRecommendations';
@@ -102,6 +103,8 @@ function HomeView() {
       <HeroBanner channels={featured} />
 
       <div className="relative z-10 -mt-6 space-y-9 md:-mt-10">
+        <FeaturedAuto />
+
         {continueChannels.length > 0 && <NetflixRow title="Reprendre" subtitle="Continuer à regarder" channels={continueChannels} />}
 
         {nowPlayingRow.length >= 4 && <NetflixRow title="Programmes en cours" channels={nowPlayingRow} />}

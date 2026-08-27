@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { SafeFetcher } from '../sources/safe-fetcher';
 import { parseXmltvStream, type XmltvProgramme } from './xmltv.parser';
+import { EpgOrchestrator } from './epg-orchestrator.service';
 
 export interface EpgImportResult { sources: number; channels: number; programmes: number; stored: number; durationMs: number; }
 type EpgSource = { id: string; name: string; kind: string; status: string; priority: number; connectionEncrypted: Uint8Array; epgUrl?: string | null };
@@ -21,7 +22,12 @@ export class EpgImportService {
   private readonly logger = new Logger(EpgImportService.name);
   private fullRunInProgress = false;
   private readonly runningSources = new Set<string>();
-  constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService, private readonly config: ConfigService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly crypto: CryptoService,
+    private readonly config: ConfigService,
+    @Optional() private readonly orchestrator?: EpgOrchestrator,
+  ) {}
   @Cron(CronExpression.EVERY_DAY_AT_5AM)
   async run(): Promise<EpgImportResult> {
     const startedAt = Date.now();
@@ -44,6 +50,21 @@ export class EpgImportService {
           if (rows.length > 0) await this.prisma.epgProgramme.createMany({ data: rows as never });
           channels += matched.size; programmes += collected.count; stored += rows.length; sourcesDone += 1; await this.prisma.source.update({ where: { id: source.id }, data: { lastSyncedAt: new Date() } }); this.logger.log(`EPG ${source.name}: ${matched.size} chaînes, ${rows.length} programmes sur ${collected.count}`);
         } catch (error) { this.logger.error(`Échec EPG ${source.name}: ${String(error)}`); }
+      }
+      // Providers gratuits complémentaires (Afrique + Europe) — n'écrase pas les programmes Xtream déjà présents, remplit les trous
+      if (this.orchestrator) {
+        try {
+          const mapping = await this.buildChannelEpgMapping();
+          const extra = await this.orchestrator.importExtraEpg(tvgMap, nameMap, mapping);
+          if (extra.stored > 0) {
+            this.logger.log(`EPG extra: ${extra.providers.join(',')} → ${extra.stored} programmes (${extra.totalPrograms} dédupliqués)`);
+            stored += extra.stored;
+            channels += extra.providers.length;
+          }
+          if (extra.unmatchedSample.length > 0) this.logger.warn(`EPG extra non mappés: ${extra.unmatchedSample.join(' | ')}`);
+        } catch (error) {
+          this.logger.warn(`EPG extra échoué: ${String((error as Error).message ?? error)}`);
+        }
       }
       return { sources: sourcesDone, channels, programmes, stored, durationMs: Date.now() - startedAt };
     } finally {
@@ -117,4 +138,14 @@ export class EpgImportService {
     return { rows, matched };
   }
   private buildXmltvUrl(connection: Record<string, string>): string | null { const host = connection['host'] ?? connection['url']; const username = connection['username']; const password = connection['password']; if (!host || !username || !password) return null; const base = host.replace(/\/+$/, ''); return `${base}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`; }
+  private async buildChannelEpgMapping(): Promise<Map<string, string>> {
+    try {
+      const rows = await (this.prisma as unknown as { channelEpgMapping: { findMany: () => Promise<Array<{ channelId: string; provider: string; externalId: string }>> } }).channelEpgMapping.findMany();
+      const map = new Map<string, string>();
+      for (const r of rows) map.set(`${r.externalId}::${r.provider}`, r.channelId);
+      return map;
+    } catch {
+      return new Map();
+    }
+  }
 }

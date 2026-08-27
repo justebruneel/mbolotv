@@ -332,14 +332,27 @@ export default function WatchPage() {
 
             {now ? (
               <div className="mt-2 min-w-0">
-                <p className="truncate text-sm font-semibold text-foreground">
-                  <span className="mr-2 inline-flex items-center gap-1 rounded-sm bg-danger px-1.5 py-0.5 text-[9px] font-black tracking-widest text-white">EN COURS</span>
-                  {now.title}
+                <p className="flex flex-wrap items-center gap-1.5 truncate text-sm font-semibold text-foreground">
+                  <span className="inline-flex items-center gap-1 rounded-sm bg-danger px-1.5 py-0.5 text-[9px] font-black tracking-widest text-white">EN COURS</span>
+                  {(now as unknown as { type?: string | null })?.type && (
+                    <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">{(now as unknown as { type: string }).type}</span>
+                  )}
+                  <span className="truncate">{now.title}</span>
+                  {(now as unknown as { year?: number | null })?.year && <span className="text-xs font-normal text-muted">· {(now as unknown as { year: number }).year}</span>}
                 </p>
                 <p className="mt-0.5 text-xs text-muted">
                   {time(now.startsAt)} – {time(now.endsAt)} · {channel.name}
+                  {(now as unknown as { genres?: string[] | null })?.genres && ` · ${(now as unknown as { genres: string[] }).genres.slice(0, 2).join(', ')}`}
                 </p>
-                {next && <p className="mt-1 truncate text-xs text-muted">À suivre : {next.title} · {time(next.startsAt)}</p>}
+                {(now as unknown as { description?: string | null })?.description && (
+                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{(now as unknown as { description: string }).description}</p>
+                )}
+                {(now as unknown as { trailerUrl?: string | null })?.trailerUrl && (
+                  <a href={(now as unknown as { trailerUrl: string }).trailerUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger-muted px-2.5 py-1 text-xs font-bold text-danger hover:bg-danger/20">
+                    <Icon.Play size={12} aria-hidden /> Bande-annonce
+                  </a>
+                )}
+                {next && <p className="mt-2 truncate text-xs text-muted">À suivre : {next.title} · {time(next.startsAt)}</p>}
               </div>
             ) : next ? (
               <p className="mt-2 truncate text-sm text-muted">À suivre : {next.title} · {time(next.startsAt)}</p>
@@ -375,25 +388,60 @@ export default function WatchPage() {
           </div>
         )}
 
-        {/* EPG strip 6 programmes */}
+        {/* EPG strip 6 programmes enrichis TMDB */}
         {strip.length > 0 && (
-          <div className="mt-4 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="mt-4 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {strip.map((prog) => {
               const isNow = prog.id === now?.id;
+              const enriched = prog as unknown as {
+                type?: string | null;
+                posterUrl?: string | null;
+                backdropUrl?: string | null;
+                trailerUrl?: string | null;
+                genres?: string[] | null;
+                year?: number | null;
+                seasonNumber?: number | null;
+                episodeNumber?: number | null;
+              };
+              const thumb = enriched.backdropUrl ?? enriched.posterUrl ?? prog.imageUrl ?? null;
               return (
                 <div
                   key={prog.id}
-                  className={`shrink-0 rounded-xl border px-3 py-2 text-left ${isNow ? 'border-accent bg-accent-muted min-w-[220px]' : 'border-border bg-surface min-w-[180px]'}`}
+                  className={`group relative shrink-0 overflow-hidden rounded-xl border text-left transition hover:shadow-md ${isNow ? 'border-accent bg-accent-muted min-w-[260px]' : 'border-border bg-surface min-w-[220px]'}`}
                 >
-                  <p className={`truncate text-xs font-bold ${isNow ? 'text-foreground' : 'text-muted'}`}>{prog.title}</p>
-                  <p className="text-[11px] text-muted">
-                    {time(prog.startsAt)} – {time(prog.endsAt)} {isNow && '· EN COURS'}
-                  </p>
-                  {isNow && (
-                    <div className="mt-1 h-1 overflow-hidden rounded-full bg-surface-2">
-                      <ProgrammeProgressInline startsAt={prog.startsAt} endsAt={prog.endsAt} />
+                  {thumb && (
+                    <div className="h-20 w-full overflow-hidden bg-surface-2">
+                      <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
                     </div>
                   )}
+                  <div className="p-3">
+                    <div className="flex items-center gap-1.5">
+                      {enriched.type && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">{enriched.type}</span>}
+                      {enriched.year && <span className="text-[11px] text-muted">{enriched.year}</span>}
+                      {enriched.seasonNumber && <span className="text-[11px] text-muted">S{enriched.seasonNumber} E{enriched.episodeNumber ?? ''}</span>}
+                    </div>
+                    <p className={`mt-1 truncate text-xs font-bold ${isNow ? 'text-foreground' : 'text-muted'}`}>{prog.title}</p>
+                    {enriched.genres && enriched.genres.length > 0 && <p className="truncate text-[11px] text-muted">{enriched.genres.slice(0, 2).join(' · ')}</p>}
+                    <p className="text-[11px] text-muted">
+                      {time(prog.startsAt)} – {time(prog.endsAt)} {isNow && '· EN COURS'}
+                    </p>
+                    {prog.description && <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">{prog.description}</p>}
+                    {enriched.trailerUrl && (
+                      <a
+                        href={enriched.trailerUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-bold text-white hover:bg-danger/90"
+                      >
+                        <Icon.Play size={12} aria-hidden /> Bande-annonce
+                      </a>
+                    )}
+                    {isNow && (
+                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface-2">
+                        <ProgrammeProgressInline startsAt={prog.startsAt} endsAt={prog.endsAt} />
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
