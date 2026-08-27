@@ -33,11 +33,13 @@ export class EpgOrchestrator {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    // Par défaut : Europe + Afrique gratuits
+    // Par défaut : Europe gratuite. xmltvfr.fr est mort (404) : opt-in via
+    // EPG_XMLTVFR_URL uniquement, pour un éventuel miroir futur.
     const defaults: Array<{ name: string; url: string }> = [
-      { name: 'xmltvfr', url: this.config.get<string>('EPG_XMLTVFR_URL', 'https://xmltvfr.fr/xmltv.xml.gz') },
       { name: 'iptv-epg-fr', url: this.config.get<string>('EPG_IPTV_EPG_FR_URL', 'https://iptv-epg.org/files/epg-fr.xml.gz') },
     ];
+    const xmltvfr = this.config.get<string>('EPG_XMLTVFR_URL', '');
+    if (xmltvfr) defaults.push({ name: 'xmltvfr', url: xmltvfr });
     // Afrique : via env EPG_AFRICA_URLS (ex: NG,ZA,CI ...)
     const africaExtra = this.config.get<string>('EPG_AFRICA_URLS', '');
     for (const u of africaExtra.split(',').map((s) => s.trim()).filter(Boolean)) {
