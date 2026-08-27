@@ -1,17 +1,20 @@
 'use client';
 
 import type { Channel, Match } from '@mbolo/contracts';
-import { Button, MatchCard, Spinner } from '@mbolo/ui';
+import { MatchCard, Spinner } from '@mbolo/ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Suspense, useDeferredValue, useEffect, useMemo } from 'react';
+import { Suspense, useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { useCategories, useInfiniteChannels, useMatches, useWideChannels } from '../../../shared/api/queries';
 import { HeroBanner } from '../../../features/live-tv/components/HeroBanner';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
 import { useRecommendations } from '../../../features/live-tv/hooks/useRecommendations';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
+import { useSettingsStore } from '../../../shared/stores/settings';
 import { categoryLabel, formatCategoryName } from '../../../features/live-tv/utils';
+import { useQueries } from '@tanstack/react-query';
+import { apiGet } from '../../../shared/api/client';
 
 const PAGE_SIZE = 48;
 const HERO_CANDIDATES = 5;
@@ -45,14 +48,14 @@ function HomeView() {
   const liveMatchesQuery = useMatches('LIVE');
   const favoritesIds = useFavoritesStore((state) => state.ids);
 
-  // Pool de chaînes : première page + remplissage jusqu'à ~96 pour alimenter
-  // hero et rangées sans requêtes supplémentaires.
+  // Pool de chaînes : première page (48) suffit pour hero + rangées ;
+  // NetflixRow charge chaque dossier en lazy, pas besoin de précharger 96.
   const pool = useMemo(
     () => channelsQuery.data?.pages.flatMap((page) => page.items) ?? [],
     [channelsQuery.data],
   );
   useEffect(() => {
-    if (channelsQuery.hasNextPage && pool.length < 96 && !channelsQuery.isFetchingNextPage) {
+    if (channelsQuery.hasNextPage && pool.length < 48 && !channelsQuery.isFetchingNextPage) {
       void channelsQuery.fetchNextPage();
     }
   }, [channelsQuery, pool.length]);
@@ -78,6 +81,9 @@ function HomeView() {
   // Favoris : une requête large cachée, filtrée par les ids du store.
   const favChannels = useFavoriteChannels(favoritesIds, pool.length > 0);
 
+  // Reprendre : même si 0 favoris, affiche les dernières chaînes vues (lastWatched)
+  const continueChannels = useContinueChannels();
+
   // Personnalisation : pays le plus regardé + suggestions par habitudes.
   const recommendations = useRecommendations();
 
@@ -96,6 +102,8 @@ function HomeView() {
       <HeroBanner channels={featured} />
 
       <div className="relative z-10 -mt-6 space-y-9 md:-mt-10">
+        {continueChannels.length > 0 && <NetflixRow title="Reprendre" subtitle="Continuer à regarder" channels={continueChannels} />}
+
         {nowPlayingRow.length >= 4 && <NetflixRow title="Programmes en cours" channels={nowPlayingRow} />}
 
         {favChannels.length > 0 && <NetflixRow title="Mes favoris" channels={favChannels} seeAllHref="/favorites" />}
@@ -174,6 +182,29 @@ function useFavoriteChannels(favoriteIds: string[], enabled: boolean): Channel[]
   }, [favoriteIds, wideQuery.data]);
 }
 
+function useContinueChannels(): Channel[] {
+  const lastWatched = useSettingsStore((state) => state.lastWatched);
+  const ids = useMemo(() => lastWatched.map((entry) => entry.channelId).slice(0, 12), [lastWatched]);
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['channel', id],
+      queryFn: () => apiGet<Channel>(`/channels/${id}`),
+      staleTime: 5 * 60_000,
+      enabled: ids.length > 0,
+    })),
+  });
+  return useMemo(() => {
+    if (ids.length === 0) return [];
+    const map = new Map<string, Channel>();
+    results.forEach((result) => {
+      const ch = result.data;
+      if (ch) map.set(ch.id, ch);
+    });
+    // Conserve l'ordre de lastWatched
+    return ids.map((id) => map.get(id)).filter((ch): ch is Channel => Boolean(ch));
+  }, [ids, results.map((r) => r.dataUpdatedAt).join(',')]);
+}
+
 /* ============================ VUE TOUT PARCOURIR ============================ */
 
 function BrowseView() {
@@ -191,6 +222,23 @@ function BrowseView() {
   const channelsQuery = useInfiniteChannels({ category, q: deferredQuery.trim() || undefined }, PAGE_SIZE);
   const channels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const total = channelsQuery.data?.pages[0]?.total ?? 0;
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    if (!channelsQuery.hasNextPage || channelsQuery.isFetchingNextPage) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && channelsQuery.hasNextPage && !channelsQuery.isFetchingNextPage) {
+          void channelsQuery.fetchNextPage();
+        }
+      },
+      { rootMargin: '600px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [channelsQuery.hasNextPage, channelsQuery.isFetchingNextPage, channelsQuery.fetchNextPage, channels.length]);
 
   const clearSearch = (): void => {
     const params = new URLSearchParams(searchParams);
@@ -223,13 +271,19 @@ function BrowseView() {
         ) : channels.length > 0 ? (
           <>
             <ResultsGrid channels={channels} total={total} watchContext={{ category, q: deferredQuery.trim() || undefined }} />
-            {channelsQuery.hasNextPage && (
-              <div className="mt-8 flex justify-center">
-                <Button variant="primary" onClick={() => channelsQuery.fetchNextPage()} disabled={channelsQuery.isFetchingNextPage} className="!px-8">
-                  {channelsQuery.isFetchingNextPage ? 'Chargement…' : 'Charger plus'}
-                </Button>
-              </div>
-            )}
+            <div ref={sentinelRef} className="mt-8 flex justify-center py-4">
+              {channelsQuery.hasNextPage ? (
+                channelsQuery.isFetchingNextPage ? (
+                  <span className="inline-flex items-center gap-2 text-sm text-muted">
+                    <Spinner /> Chargement…
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted">Défilez pour charger plus</span>
+                )
+              ) : (
+                <span className="text-xs text-faint">{total > 0 ? `— Fin du catalogue (${total.toLocaleString('fr-FR')} chaînes) —` : ''}</span>
+              )}
+            </div>
           </>
         ) : (
           <div className="py-20 text-center animate-fade-in">

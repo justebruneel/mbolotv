@@ -97,7 +97,7 @@ export function HeroBanner({ channels }: { channels: Channel[] }) {
           ))}
         </div>
       </div>
-      <style>{`@keyframes heroFill { from { width: 0% } to { width: 100% } }`}</style>
+      <style>{`@keyframes heroFill { from { width: 0% } to { width: 100% } } @keyframes kenBurns { from { transform: scale(1) } to { transform: scale(1.08) } } @media (prefers-reduced-motion: reduce) { .animate-[kenBurns_6s_ease-out_forwards] { animation: none !important; } }`}</style>
     </div>
   );
 }
@@ -123,7 +123,7 @@ function HeroSlide({ channel, active }: { channel: Channel; active: boolean }) {
           src={backdrop}
           alt=""
           onError={() => setImgError(true)}
-          className={`h-full w-full object-cover ${isLogoBackdrop ? 'object-contain !h-[42%] !w-auto !max-w-[44%] !p-0 mx-auto my-auto !top-[44%] !left-1/2 !-translate-x-1/2 !-translate-y-1/2 absolute opacity-90 drop-shadow-[0_8px_32px_rgba(0,0,0,0.6)]' : ''}`}
+          className={`h-full w-full object-cover ${isLogoBackdrop ? 'object-contain !h-[42%] !w-auto !max-w-[44%] !p-0 mx-auto my-auto !top-[44%] !left-1/2 !-translate-x-1/2 !-translate-y-1/2 absolute opacity-90 drop-shadow-[0_8px_32px_rgba(0,0,0,0.6)]' : active ? 'animate-[kenBurns_6s_ease-out_forwards]' : ''}`}
           loading={active ? 'eager' : 'lazy'}
           decoding="async"
         />

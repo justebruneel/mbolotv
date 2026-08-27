@@ -5,7 +5,7 @@ import { VirtualChannelGrid } from './VirtualChannelGrid';
 import { ChannelTile } from './ChannelTile';
 import type { WatchContext } from '../utils';
 
-const VIRTUALIZE_THRESHOLD = 500;
+const VIRTUALIZE_THRESHOLD = 200;
 
 export function ResultsGrid({ channels, total, watchContext, highlightId }: { channels: Channel[]; total?: number; watchContext?: WatchContext; highlightId?: string }) {
   if (channels.length > VIRTUALIZE_THRESHOLD) {
