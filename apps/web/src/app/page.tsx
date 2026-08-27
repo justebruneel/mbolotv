@@ -16,25 +16,6 @@ import { apiGet } from '../shared/api/client';
  */
 
 const WHATSAPP_BASE = 'https://wa.me/24160108984';
-const PREVIEW_CHANNELS = [
-  { id: '1', name: 'TF1', country: 'FR', color: 'from-[#0a58ff]/30 to-[#001845]/30' },
-  { id: '2', name: 'France 24', country: 'FR', color: 'from-[#c1121f]/30 to-[#780000]/30' },
-  { id: '3', name: 'Canal+ Sport', country: 'FR', color: 'from-[#03045e]/30 to-[#0077b6]/30' },
-  { id: '4', name: 'RTG1', country: 'GA', color: 'from-[#008000]/30 to-[#007f5f]/30' },
-  { id: '5', name: 'Gabon 24', country: 'GA', color: 'from-[#ffd60a]/30 to-[#003566]/30' },
-  { id: '6', name: 'Trace Africa', country: 'AF', color: 'from-[#ff006e]/30 to-[#3a0ca3]/30' },
-  { id: '7', name: 'Novelas TV', country: 'AF', color: 'from-[#ffbe0b]/30 to-[#fb5607]/30' },
-  { id: '8', name: 'beIN Sports', country: 'QA', color: 'from-[#9d0208]/30 to-[#370617]/30' },
-  { id: '9', name: 'National Geo', country: 'US', color: 'from-[#283618]/30 to-[#606c38]/30' },
-  { id: '10', name: 'France 2', country: 'FR', color: 'from-[#d90429]/30 to-[#2b2d42]/30' },
-  { id: '11', name: 'Canal+ Cinéma', country: 'FR', color: 'from-[#000000]/30 to-[#14213d]/30' },
-  { id: '12', name: 'Africa 24', country: 'AF', color: 'from-[#f77f00]/30 to-[#003049]/30' },
-];
-
-const PREVIEW_ROWS = [
-  { title: 'Sport en direct', items: PREVIEW_CHANNELS.slice(0, 6) },
-  { title: 'Divertissement & Cinéma', items: PREVIEW_CHANNELS.slice(6, 12) },
-];
 
 function scrollToId(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -86,15 +67,6 @@ export default function EntryPage() {
     }
   }, []);
 
-  // Parallaxe légère pour le hero (désactivée si reduced-motion)
-  const [scrollY, setScrollY] = useState(0);
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const onScroll = () => setScrollY(window.scrollY * 0.15);
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
   // Vérification en cours, ou bascule vers /live : écran de marque.
   if (loading || active) {
     return <AccessChecking label={active ? 'Accès validé — ouverture du direct…' : 'Vérification de votre accès…'} />;
@@ -102,33 +74,11 @@ export default function EntryPage() {
 
   return (
     <main className="relative flex min-h-dvh flex-col overflow-hidden bg-bg">
-      {/* ===== BACKDROP CINÉ — grille floutée + gradients ===== */}
+      {/* ===== BACKDROP — halos + gradients (épuré, sans mosaïque) ===== */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-bg" />
-        {/* Grille de posters floutés */}
-        <div
-          className="absolute inset-0 opacity-[0.07] dark:opacity-[0.09]"
-          style={{ transform: `translateY(${scrollY}px)` }}
-        >
-          <div className="grid h-[120%] w-[120%] -rotate-3 grid-cols-4 gap-3 p-6 md:grid-cols-6 md:gap-4">
-            {Array.from({ length: 24 }).map((_, i) => {
-              const ch = PREVIEW_CHANNELS[i % PREVIEW_CHANNELS.length];
-              return (
-                <div
-                  key={i}
-                  className={`relative aspect-[2/3] overflow-hidden rounded-xl bg-gradient-to-br ${ch.color} border border-white/[0.06]`}
-                >
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                  <span className="absolute bottom-2 left-2 text-[10px] font-black tracking-widest text-white/40">{ch.name.slice(0, 6).toUpperCase()}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        {/* Halos teal — un seul radial plus intense */}
         <div className="absolute -left-32 -top-40 h-[560px] w-[560px] rounded-full bg-accent/12 blur-[120px]" />
         <div className="absolute -bottom-48 -right-24 h-[560px] w-[560px] rounded-full bg-accent/10 blur-[120px]" />
-        {/* Gradients Netflix-like pour lisibilité */}
         <div className="absolute inset-0 bg-gradient-to-b from-bg via-bg/70 to-bg" />
         <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-bg to-transparent" />
       </div>
@@ -311,41 +261,6 @@ export default function EntryPage() {
           >
             Demander promo 24h
           </a>
-        </div>
-      </section>
-
-      {/* ===== PREVIEW RANGÉES ===== */}
-      <section className="relative z-10 mx-auto w-full max-w-6xl px-5 py-10">
-        <div className="flex items-end justify-between">
-          <div>
-            <h2 className="text-xl font-black tracking-tight md:text-2xl">Un aperçu du direct</h2>
-            <p className="mt-1 text-sm text-muted">Logos à titre illustratif — le catalogue complet s’ouvre après activation.</p>
-          </div>
-          <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-muted">
-            <Icon.Eye size={14} aria-hidden /> Survolez pour prévisualiser
-          </span>
-        </div>
-
-        <div className="mt-6 space-y-6">
-          {PREVIEW_ROWS.map((row) => (
-            <div key={row.title}>
-              <h3 className="mb-3 text-sm font-bold uppercase tracking-wide">{row.title}</h3>
-              <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-thin">
-                {row.items.map((ch) => (
-                  <div
-                    key={ch.id}
-                    className="group relative flex h-28 w-44 shrink-0 snap-start flex-col justify-end overflow-hidden rounded-xl border border-border bg-surface p-3 transition hover:scale-[1.03] hover:shadow-lg hover:border-accent/30"
-                  >
-                    <div className={`absolute inset-0 bg-gradient-to-br ${ch.color} opacity-40 group-hover:opacity-60 transition`} />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
-                    <span className="relative text-xs font-black uppercase tracking-widest text-white drop-shadow">{ch.name}</span>
-                    <span className="relative text-[11px] font-semibold text-white/70">{ch.country} • Live</span>
-                    <span className="absolute right-2 top-2 inline-flex h-5 items-center rounded-full bg-black/60 px-2 text-[10px] font-bold text-white backdrop-blur">HD</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
         </div>
       </section>
 
