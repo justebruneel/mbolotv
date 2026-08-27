@@ -66,18 +66,20 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
           />
         ) : channel.logoUrl && !logoError ? (
-          <img
-            src={channel.logoUrl}
-            alt=""
-            width={96}
-            height={96}
-            loading="lazy"
-            decoding="async"
-            onError={() => setLogoError(true)}
-            className="absolute inset-0 m-auto h-16 w-16 object-contain opacity-30"
-          />
+          <div className="absolute inset-0 flex items-center justify-center bg-surface">
+            <img
+              src={channel.logoUrl}
+              alt=""
+              width={112}
+              height={80}
+              loading="lazy"
+              decoding="async"
+              onError={() => setLogoError(true)}
+              className="h-20 w-28 object-contain drop-shadow-sm"
+            />
+          </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-4xl font-bold text-muted/30">
+          <div className="flex h-full items-center justify-center bg-gradient-to-br from-surface-2 to-surface text-4xl font-bold text-muted/30">
             {channelInitials(channel.name)}
           </div>
         )}
@@ -116,13 +118,13 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
       <div className="absolute bottom-0 left-0 right-0 z-10 p-2.5">
         <div className="flex items-end gap-2">
           {/* Channel logo */}
-          <div className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface/80 backdrop-blur-sm">
+          <div className="mb-1 flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white shadow-sm">
             {channel.logoUrl && !logoError ? (
               <img
                 src={channel.logoUrl}
                 alt=""
-                width={32}
-                height={32}
+                width={36}
+                height={36}
                 loading="lazy"
                 decoding="async"
                 onError={() => setLogoError(true)}

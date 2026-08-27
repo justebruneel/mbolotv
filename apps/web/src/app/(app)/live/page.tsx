@@ -1,7 +1,7 @@
 'use client';
 
 import type { Channel, Match } from '@mbolo/contracts';
-import { MatchCard, Spinner } from '@mbolo/ui';
+import { Icon, MatchCard, Spinner } from '@mbolo/ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef } from 'react';
@@ -221,8 +221,21 @@ function BrowseView() {
   const isFiltering = Boolean(deferredQuery.trim());
   const channelsQuery = useInfiniteChannels({ category, q: deferredQuery.trim() || undefined }, PAGE_SIZE);
   const channels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
-  const total = channelsQuery.data?.pages[0]?.total ?? 0;
+  const total = channelsQuery.data ? (channelsQuery.data.pages[channelsQuery.data.pages.length - 1]?.total ?? channelsQuery.data.pages[0]?.total ?? 0) : 0;
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const topCategories = useMemo(
+    () => [...categories].sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)).slice(0, 12),
+    [categories],
+  );
+  const viewMode = useSettingsStore((state) => state.browseViewMode);
+  const setViewMode = useSettingsStore((state) => state.setBrowseViewMode);
+
+  const setCategory = (slug?: string): void => {
+    const params = new URLSearchParams(searchParams);
+    if (slug) params.set('category', slug);
+    else params.delete('category');
+    router.replace(params.toString() ? `/live?${params}` : '/live', { scroll: false });
+  };
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -239,6 +252,8 @@ function BrowseView() {
     observer.observe(el);
     return () => observer.disconnect();
   }, [channelsQuery.hasNextPage, channelsQuery.isFetchingNextPage, channelsQuery.fetchNextPage, channels.length]);
+
+  const isSwitching = channelsQuery.isFetching && !channelsQuery.isLoading;
 
   const clearSearch = (): void => {
     const params = new URLSearchParams(searchParams);
@@ -257,20 +272,68 @@ function BrowseView() {
             {selectedCategoryName ? formatCategoryName(selectedCategoryName) : 'Tout le catalogue'}
             <span className="ml-2 text-sm font-normal text-muted">{total.toLocaleString('fr-FR')} chaîne{total > 1 ? 's' : ''}</span>
           </h1>
-          {isFiltering && (
-            <button type="button" onClick={clearSearch} className="text-xs font-semibold text-muted hover:text-accent">
-              Effacer « {deferredQuery.trim()} » ✕
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {isFiltering && (
+              <button type="button" onClick={clearSearch} className="text-xs font-semibold text-muted hover:text-accent">
+                Effacer « {deferredQuery.trim()} » ✕
+              </button>
+            )}
+            <div className="flex items-center gap-1 rounded-full border border-border bg-surface p-1">
+              <button
+                type="button"
+                aria-label="Vue grille"
+                aria-pressed={viewMode === 'grid'}
+                onClick={() => setViewMode('grid')}
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-full transition ${viewMode === 'grid' ? 'bg-foreground text-bg' : 'text-muted hover:text-foreground'}`}
+              >
+                <Icon.LayoutDashboard size={14} aria-hidden />
+              </button>
+              <button
+                type="button"
+                aria-label="Vue liste"
+                aria-pressed={viewMode === 'list'}
+                onClick={() => setViewMode('list')}
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-full transition ${viewMode === 'list' ? 'bg-foreground text-bg' : 'text-muted hover:text-foreground'}`}
+              >
+                <Icon.ListFilter size={14} aria-hidden />
+              </button>
+            </div>
+          </div>
         </div>
+        {topCategories.length > 0 && (
+          <div className="mt-4 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button
+              type="button"
+              onClick={() => setCategory(undefined)}
+              className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-bold transition ${!category ? 'border-accent bg-accent text-on-accent' : 'border-border bg-surface hover:bg-surface-2'}`}
+            >
+              Toutes
+            </button>
+            {topCategories.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setCategory(cat.slug)}
+                className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-bold transition ${category === cat.slug ? 'border-accent bg-accent text-on-accent' : 'border-border bg-surface hover:bg-surface-2'}`}
+              >
+                {formatCategoryName(cat.name)} · {cat.channelCount ?? 0}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <main className="mx-auto max-w-[1600px] px-4 py-6 md:px-10">
-        {channelsQuery.isLoading ? (
+        {channelsQuery.isLoading && channels.length === 0 ? (
           <div className="flex justify-center py-20"><Spinner /></div>
         ) : channels.length > 0 ? (
-          <>
-            <ResultsGrid channels={channels} total={total} watchContext={{ category, q: deferredQuery.trim() || undefined }} />
+          <div className={isSwitching ? 'opacity-60 transition-opacity' : ''} aria-live="polite" aria-busy={isSwitching}>
+            <ResultsGrid
+              channels={channels}
+              total={total}
+              watchContext={{ category, q: deferredQuery.trim() || undefined }}
+              viewMode={viewMode}
+            />
             <div ref={sentinelRef} className="mt-8 flex justify-center py-4">
               {channelsQuery.hasNextPage ? (
                 channelsQuery.isFetchingNextPage ? (
@@ -284,12 +347,31 @@ function BrowseView() {
                 <span className="text-xs text-faint">{total > 0 ? `— Fin du catalogue (${total.toLocaleString('fr-FR')} chaînes) —` : ''}</span>
               )}
             </div>
-          </>
+          </div>
         ) : (
           <div className="py-20 text-center animate-fade-in">
             <p className="font-semibold text-foreground">{isFiltering ? `Aucun résultat pour « ${deferredQuery.trim()} ».` : 'Aucune chaîne disponible.'}</p>
-            {isFiltering && (
-              <button type="button" onClick={clearSearch} className="mt-3 text-accent text-sm font-semibold hover:underline">Effacer la recherche</button>
+            {isFiltering ? (
+              <button type="button" onClick={clearSearch} className="mt-3 text-accent text-sm font-semibold hover:underline">
+                Effacer la recherche
+              </button>
+            ) : null}
+            {topCategories.length > 0 && (
+              <div className="mx-auto mt-6 max-w-md">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">Essayez ces dossiers populaires</p>
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  {topCategories.slice(0, 3).map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setCategory(cat.slug)}
+                      className="rounded-full border border-border bg-surface px-3.5 py-1.5 text-xs font-bold hover:bg-surface-2 transition"
+                    >
+                      {formatCategoryName(cat.name)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         )}

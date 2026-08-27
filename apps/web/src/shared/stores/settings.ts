@@ -16,6 +16,7 @@ interface SettingsState {
   lastWatched: LastWatchedEntry[];
   lastNonWatchPath: string | null;
   lastWatchedChannelId: string | null;
+  browseViewMode: 'grid' | 'list';
   setVolume: (volume: number) => void;
   setPreferredLevel: (level: number) => void;
   setDataSaver: (dataSaver: boolean) => void;
@@ -23,6 +24,7 @@ interface SettingsState {
   clearLastWatched: () => void;
   setLastNonWatchPath: (path: string) => void;
   setLastWatchedChannelId: (id: string | null) => void;
+  setBrowseViewMode: (mode: 'grid' | 'list') => void;
 }
 
 const MAX_LAST_WATCHED = 5;
@@ -36,8 +38,10 @@ export const useSettingsStore = create<SettingsState>()(
       lastWatched: [],
       lastNonWatchPath: null,
       lastWatchedChannelId: null,
+      browseViewMode: 'grid',
       setLastNonWatchPath: (path) => set({ lastNonWatchPath: path }),
       setLastWatchedChannelId: (id) => set({ lastWatchedChannelId: id }),
+      setBrowseViewMode: (mode) => set({ browseViewMode: mode }),
       setVolume: (volume) => set({ volume }),
       setPreferredLevel: (preferredLevel) => set({ preferredLevel }),
       setDataSaver: (dataSaver) => set({ dataSaver }),

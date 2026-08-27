@@ -11,7 +11,7 @@ import type {
   Programme,
   ProgrammeSearchResponse,
 } from '@mbolo/contracts';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { apiGet, apiPost } from './client';
 import { useSettingsStore } from '../stores/settings';
@@ -87,6 +87,7 @@ export function useInfiniteChannels(params: ChannelQuery, pageSize = 48) {
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) =>
       lastPage.hasMore ? allPages.reduce((count, page) => count + page.items.length, 0) : undefined,
+    placeholderData: keepPreviousData,
   });
 }
 
