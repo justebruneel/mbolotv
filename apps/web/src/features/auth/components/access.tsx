@@ -126,8 +126,8 @@ export function AccessForm({ onRedeemed }: { onRedeemed: (status: AccessStatus) 
   }
 
   return (
-    <div className="card w-full max-w-md p-7 text-center shadow-2xl backdrop-blur">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/15 text-accent">
+    <div className="card w-full max-w-md p-7 text-center shadow-2xl backdrop-blur-xl bg-surface/80 border border-white/10 supports-[backdrop-filter]:bg-surface/60">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/15 text-accent ring-1 ring-accent/20 shadow-glow animate-glow-pulse">
         <Icon.Key size={22} aria-hidden />
       </div>
       <h2 className="text-lg font-bold tracking-tight">Entrer votre code d'accès</h2>
@@ -135,18 +135,24 @@ export function AccessForm({ onRedeemed }: { onRedeemed: (status: AccessStatus) 
       <form onSubmit={submit} className="mt-5 space-y-3">
         <input
           value={code}
-          onChange={(event) => setCode(event.target.value)}
+          onChange={(event) => {
+            // Formatage léger : uppercase + retire espaces, garde tiret
+            const raw = event.target.value.toUpperCase().replace(/\s+/g, '');
+            setCode(raw);
+          }}
           placeholder="Ex. MBLO-AB12CD34EF"
           autoComplete="one-time-code"
           data-testid="access-code-input"
-          className="w-full rounded-xl border border-border bg-surface-2 px-4 py-3 text-center font-mono text-sm uppercase tracking-wider focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
+          spellCheck={false}
+          className="w-full rounded-xl border border-border bg-surface-2 px-4 py-3 text-center font-mono text-sm uppercase tracking-wider focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 transition"
         />
         <button
           type="submit"
           disabled={busy || !code.trim()}
-          className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-bold uppercase tracking-wide text-on-accent transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          className="group relative w-full overflow-hidden rounded-xl bg-accent px-4 py-3 text-sm font-bold uppercase tracking-wide text-on-accent transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {busy ? 'Vérification…' : 'Activer mon accès'}
+          <span className="relative z-10">{busy ? 'Vérification…' : 'Activer mon accès'}</span>
+          <span aria-hidden className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent group-hover:animate-shimmer" />
         </button>
       </form>
       {message && <p className="mt-3 text-sm text-danger">{message}</p>}
