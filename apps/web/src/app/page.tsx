@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { AccessChecking, AccessExpiredBanner, AccessForm, useAccessStatus } from '../features/auth/components/access';
 import { ThemeToggle } from '../shared/components/ThemeToggle';
-import { useActiveUsers } from '../shared/api/queries';
+import { apiGet } from '../shared/api/client';
 
 /**
  * Portail d'entrée de l'application (style Netflix) :
@@ -44,7 +44,28 @@ export default function EntryPage() {
   const router = useRouter();
   const { status, loading } = useAccessStatus();
   const [granted, setGranted] = useState(false);
-  const { data: activeData } = useActiveUsers();
+  const [liveCount, setLiveCount] = useState<number | null>(null);
+
+  // Compteur public sans QueryClient (évite prerender error sur Vercel)
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ global: number }>('/activity/counts')
+      .then((res) => {
+        if (!cancelled) setLiveCount(res.global);
+      })
+      .catch(() => {});
+    const id = setInterval(() => {
+      apiGet<{ global: number }>('/activity/counts')
+        .then((res) => {
+          if (!cancelled) setLiveCount(res.global);
+        })
+        .catch(() => {});
+    }, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const active = granted || Boolean(status?.active);
   useEffect(() => {
@@ -78,8 +99,6 @@ export default function EntryPage() {
   if (loading || active) {
     return <AccessChecking label={active ? 'Accès validé — ouverture du direct…' : 'Vérification de votre accès…'} />;
   }
-
-  const liveCount = activeData?.global ?? null;
 
   return (
     <main className="relative flex min-h-dvh flex-col overflow-hidden bg-bg">
