@@ -86,6 +86,13 @@ export default function EntryPage() {
       <header className="relative z-10 flex items-center justify-between px-5 py-5 sm:px-8">
         <Logo />
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => scrollToId('telechargement')}
+            className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-xs font-bold text-on-accent shadow transition hover:bg-accent-hover"
+          >
+            <Icon.Download size={14} aria-hidden /> Télécharger
+          </button>
           <a
             href={WHATSAPP_BASE}
             target="_blank"
@@ -262,7 +269,7 @@ export default function EntryPage() {
       </section>
 
       {/* ===== DEVICE STORY ===== */}
-      <section className="relative z-10 mx-auto w-full max-w-5xl px-5 py-10">
+      <section id="telechargement" className="relative z-10 mx-auto w-full max-w-5xl px-5 py-10 scroll-mt-8">
         <div className="grid gap-6 md:grid-cols-2 md:items-center">
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-accent">Partout avec vous</p>
