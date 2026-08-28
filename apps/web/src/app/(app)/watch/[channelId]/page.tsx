@@ -157,17 +157,16 @@ export default function WatchPage() {
     }
   }, [navChannels, channelId, channelsQuery]);
 
-  const { now, next, strip } = useMemo(() => {
+  const { now, strip } = useMemo(() => {
     const programmes = epgQuery.data ?? [];
     const nowTime = Date.now();
     const current = programmes.find((p) => new Date(p.startsAt).getTime() <= nowTime && new Date(p.endsAt).getTime() > nowTime);
-    const following = programmes.find((p) => new Date(p.startsAt).getTime() > nowTime) ?? null;
     const idx = current ? programmes.indexOf(current) : programmes.findIndex((p) => new Date(p.startsAt).getTime() > nowTime);
     // Le programme en cours est déjà détaillé dans le bloc d'infos : la bande
     // n'affiche que les suivants, sinon il apparaît en double sur mobile.
     const start = current ? idx + 1 : Math.max(0, idx);
     const slice = programmes.slice(start, start + 6);
-    return { now: current ?? null, next: following, strip: slice };
+    return { now: current ?? null, strip: slice };
   }, [epgQuery.data]);
 
   const navigate = useCallback(
@@ -331,36 +330,6 @@ export default function WatchPage() {
               {currentCategory && <Badge tone="accent" className="shrink-0 hidden sm:inline-flex">{formatCategoryName(currentCategory.name)}</Badge>}
               {isDown && <Badge tone="accent" className="shrink-0 bg-danger text-white">Hors ligne</Badge>}
             </div>
-
-            {now ? (
-              <div className="mt-2 min-w-0">
-                <p className="flex flex-wrap items-center gap-1.5 truncate text-sm font-semibold text-foreground">
-                  <span className="inline-flex items-center gap-1 rounded-sm bg-danger px-1.5 py-0.5 text-[9px] font-black tracking-widest text-white">EN COURS</span>
-                  {(now as unknown as { type?: string | null })?.type && (
-                    <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">{(now as unknown as { type: string }).type}</span>
-                  )}
-                  <span className="truncate">{now.title}</span>
-                  {(now as unknown as { year?: number | null })?.year && <span className="text-xs font-normal text-muted">· {(now as unknown as { year: number }).year}</span>}
-                </p>
-                <p className="mt-0.5 text-xs text-muted">
-                  {time(now.startsAt)} – {time(now.endsAt)} · {channel.name}
-                  {(now as unknown as { genres?: string[] | null })?.genres && ` · ${(now as unknown as { genres: string[] }).genres.slice(0, 2).join(', ')}`}
-                </p>
-                {(now as unknown as { description?: string | null })?.description && (
-                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{(now as unknown as { description: string }).description}</p>
-                )}
-                {(now as unknown as { trailerUrl?: string | null })?.trailerUrl && (
-                  <a href={(now as unknown as { trailerUrl: string }).trailerUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger-muted px-2.5 py-1 text-xs font-bold text-danger hover:bg-danger/20">
-                    <Icon.Play size={12} aria-hidden /> Bande-annonce
-                  </a>
-                )}
-                {next && <p className="mt-2 truncate text-xs text-muted">À suivre : {next.title} · {time(next.startsAt)}</p>}
-              </div>
-            ) : next ? (
-              <p className="mt-2 truncate text-sm text-muted">À suivre : {next.title} · {time(next.startsAt)}</p>
-            ) : (
-              <p className="mt-2 text-sm text-muted">Aucune programmation pour cette chaîne.</p>
-            )}
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center gap-2">
