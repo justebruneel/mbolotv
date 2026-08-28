@@ -328,6 +328,11 @@ async function route(ctx, url) {
     return ctx.json(matches.serializeMatch(env, found.match, found.variants));
   }
 
+  if (path === "/api/epg/featured" && method === "GET")
+    return ctx.json(
+      await epg.epgFeatured(env, intParam(url.searchParams.get("limit"), 5, 1, 10)),
+    );
+
   if (path === "/api/epg/range" && method === "GET") {
     return ctx.json(
       await epg.epgRange(env, {

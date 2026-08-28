@@ -10,6 +10,8 @@ crons = ["*/2 * * * *", "*/10 * * * *", "*/15 * * * *", "0 5 * * *"]
 VIDEO_PROXY_URL = "https://mbolo-tv-video-proxy.mbolo-tv-video-proxy.workers.dev"
 PUBLIC_API_URL = "https://mbolo-tv-api.mbolo-tv-video-proxy.workers.dev"
 CORS_ALLOWED_ORIGINS = "https://mbolotv-web.vercel.app,http://localhost:3000"
+# Fuseau de la fenêtre prime time « À la une » (20:00–22:30)
+EPG_PRIME_TZ = "Europe/Paris"
 MATCH_DETECTION_ENABLED = "true"
 # Sortie résidentielle (tunnel cloudflared local) pour les fournisseurs qui
 # bloquent les IP datacenter. Même carte que le proxy vidéo : le health-check
