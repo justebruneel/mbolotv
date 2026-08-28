@@ -2,6 +2,7 @@
 
 import type { AccessStatus } from '@mbolo/contracts';
 import { Icon, Logo } from '@mbolo/ui';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { AccessChecking, AccessExpiredBanner, AccessForm, useAccessStatus } from '../features/auth/components/access';
@@ -391,14 +392,14 @@ export default function EntryPage() {
             <h4 className="text-sm font-black uppercase tracking-wide">Produit</h4>
             <ul className="mt-3 space-y-2 text-sm text-muted">
               <li>
-                <a href="/live" className="hover:text-foreground hover:underline">
+                <Link href="/live" className="hover:text-foreground hover:underline">
                   Live TV
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="/favorites" className="hover:text-foreground hover:underline">
+                <Link href="/favorites" className="hover:text-foreground hover:underline">
                   Favoris
-                </a>
+                </Link>
               </li>
               <li>
                 <button type="button" onClick={() => scrollToId('offres')} className="hover:text-foreground hover:underline">
@@ -406,9 +407,9 @@ export default function EntryPage() {
                 </button>
               </li>
               <li>
-                <a href="/docs" className="hover:text-foreground hover:underline">
+                <Link href="/docs" className="hover:text-foreground hover:underline">
                   Documentation
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
@@ -421,19 +422,19 @@ export default function EntryPage() {
                 </a>
               </li>
               <li>
-                <a href="/help" className="hover:text-foreground hover:underline">
+                <Link href="/help" className="hover:text-foreground hover:underline">
                   Centre d’aide
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="/contact" className="hover:text-foreground hover:underline">
+                <Link href="/contact" className="hover:text-foreground hover:underline">
                   Contact
-                </a>
+                </Link>
               </li>
               <li>
-                <a href="/about" className="hover:text-foreground hover:underline">
+                <Link href="/about" className="hover:text-foreground hover:underline">
                   À propos
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
@@ -442,9 +443,9 @@ export default function EntryPage() {
             <ul className="mt-3 space-y-2 text-sm text-muted">
               <li className="text-xs leading-relaxed">Mbolo TV n’héberge ni ne fournit de flux — agrégation de sources autorisées uniquement.</li>
               <li>
-                <a href="/about" className="hover:text-foreground hover:underline">
+                <Link href="/about" className="hover:text-foreground hover:underline">
                   Mentions légales
-                </a>
+                </Link>
               </li>
               <li className="text-xs text-faint">© {new Date().getFullYear()} Groupe Nzogho — Tous droits réservés.</li>
             </ul>

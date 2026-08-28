@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { Icon } from '@mbolo/ui';
 
 export function PageHeader({
@@ -23,12 +24,12 @@ export function PageHeader({
 
 export function BackLink({ href, label }: { href: string; label: string }) {
   return (
-    <a
+    <Link
       href={href}
       className="mb-6 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-muted transition-all duration-200 hover:bg-surface-2 hover:text-accent"
     >
       <Icon.ChevronLeft size={16} aria-hidden />
       {label}
-    </a>
+    </Link>
   );
 }
