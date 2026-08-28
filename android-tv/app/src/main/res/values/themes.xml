@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Thème plateforme (pas d'AppCompat/Material) : APK minimal, la WebView
+     et l'overlay hors ligne n'ont besoin de rien de plus. -->
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
+    <style name="Theme.Mbolo" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/mbolo_bg</item>
+        <item name="android:statusBarColor">@color/mbolo_bg</item>
+        <item name="android:navigationBarColor">@color/mbolo_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">@color/mbolo_accent</item>
+    </style>
+</resources>

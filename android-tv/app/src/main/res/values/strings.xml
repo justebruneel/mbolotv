@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mbolo TV</string>
+    <string name="offline_title">Pas de connexion</string>
+    <string name="offline_message">Vérifie ta connexion internet, puis réessaie. Ta session et tes favoris sont conservés.</string>
+    <string name="retry">Réessayer</string>
+    <string name="still_offline">Toujours hors ligne — vérifie ta connexion.</string>
+    <string name="back_to_exit">Appuie encore sur retour pour quitter</string>
+    <string name="no_app_for_link">Aucune application pour ouvrir ce lien</string>
+</resources>

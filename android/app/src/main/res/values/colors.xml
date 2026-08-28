@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Palette du site (apps/web/src/app/layout.tsx, thème sombre). -->
+    <color name="mbolo_bg">#0f1419</color>
+    <color name="mbolo_accent">#8ee8cf</color>
+    <color name="mbolo_text">#f8f9fa</color>
+    <color name="mbolo_text_muted">#9aa7b3</color>
+    <color name="mbolo_text_on_accent">#101823</color>
+    <color name="mbolo_launcher_bg">#8ee8cf</color>
+</resources>

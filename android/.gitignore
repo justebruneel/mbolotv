@@ -1,0 +1,9 @@
+# Build local
+build/
+.gradle/
+local.properties
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+.DS_Store

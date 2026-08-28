@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tout le trafic de l'app passe en HTTPS (site Vercel + worker Cloudflare) :
+     on interdit explicitement le clair plutôt que de dépendre du défaut. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
