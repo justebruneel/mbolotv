@@ -9,7 +9,10 @@ name: APK Android (mobile + TV)
 #   ANDROID_KEY_ALIAS         : alias (mbolo)
 #   ANDROID_KEY_PASSWORD      : mot de passe de la clé (identique au store)
 # Sans secrets, la release est créée mais les APK ne sont PAS signés
-# (non installables) : la CI le signale dans la sortie du job.
+# (non installables) : un warning l'indique pendant le build.
+#
+# NB : les contextes `secrets`/`env` ne sont PAS utilisés dans des `if:`
+# (validation GitHub stricte) — les gardes sont faites en bash dans les run:.
 on:
   push:
     tags:
@@ -31,16 +34,19 @@ jobs:
           java-version: "17"
 
       - name: Restaurer le keystore (secrets)
-        if: ${{ secrets.ANDROID_KEYSTORE != '' }}
         run: |
-          mkdir -p "$HOME/keys"
-          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > "$HOME/keys/mbolo-release.jks"
-          {
-            echo "MBOLO_KEYSTORE=$HOME/keys/mbolo-release.jks"
-            echo "MBOLO_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-            echo "MBOLO_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}"
-            echo "MBOLO_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}"
-          } >> "$GITHUB_ENV"
+          if [ -n "${{ secrets.ANDROID_KEYSTORE }}" ]; then
+            mkdir -p "$HOME/keys"
+            echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > "$HOME/keys/mbolo-release.jks"
+            {
+              echo "MBOLO_KEYSTORE=$HOME/keys/mbolo-release.jks"
+              echo "MBOLO_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+              echo "MBOLO_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}"
+              echo "MBOLO_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::warning::Secret ANDROID_KEYSTORE absent — les APK seront NON signés (non installables)."
+          fi
 
       - name: Build APK mobile
         run: |
@@ -60,10 +66,9 @@ jobs:
           ls -la mbolo-tv-android*.apk
 
       - name: Vérifier la signature
-        id: verify
-        if: ${{ env.MBOLO_KEYSTORE != '' }}
         run: |
-          keytool -printcert -jarfile mbolo-tv-android.apk | grep -E "CN=|Valid from" | head -3
+          keytool -printcert -jarfile mbolo-tv-android.apk 2>/dev/null | grep -E "CN=|Valid from" | head -3 \
+            || echo "::warning::APK non signé (secrets absents)."
 
       - name: Publier la Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -76,8 +81,3 @@ jobs:
             - `mbolo-tv-android-tv.apk` — box Android TV
           files: mbolo-tv-android*.apk
           fail_on_unmatched_files: false
-
-      - name: Alerte APK non signés
-        if: ${{ env.MBOLO_KEYSTORE == '' && startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          echo "::warning::Secrets ANDROID_KEYSTORE absents : APK publiés NON signés (non installables)."
