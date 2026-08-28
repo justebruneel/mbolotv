@@ -3,7 +3,8 @@
 import { Icon } from '@mbolo/ui';
 import { useTheme } from './ThemeProvider';
 
-// Bouton compact icône-seule : le libellé complet est dans le tooltip.
+// Ligne de menu pleine largeur (utilisée dans « Plus d'options ») : l'icône
+// reflète le thème courant, le clic fait tourner Sombre → Clair → Système.
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
 
@@ -22,11 +23,12 @@ export function ThemeToggle() {
       onClick={cycle}
       title={`Thème : ${label}`}
       aria-label={`Thème actuel : ${label}. Cliquer pour changer.`}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--mbolo-text-muted)] hover:bg-[var(--mbolo-surface-2)] hover:text-[var(--mbolo-text)] transition-colors"
+      className="flex w-full items-center gap-3 text-left"
     >
-      <span className="flex w-5 items-center justify-center">
+      <span className="flex w-[18px] items-center justify-center">
         <IconComponent size={18} />
       </span>
+      <span>Thème : {label}</span>
     </button>
   );
 }

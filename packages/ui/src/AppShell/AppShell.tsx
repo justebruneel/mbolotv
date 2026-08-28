@@ -10,7 +10,8 @@ export interface AppShellProps {
   brand: ReactNode;
   navItems: NavItem[];
   utilityItems?: NavItem[];
-  sidebarActions?: ReactNode;
+  /** Action (ex. bascule de thème) rendue dans les « Plus d'options ». */
+  menuActions?: ReactNode;
   activeHref?: string;
   pathname?: string;
   activeUsers?: number;
@@ -26,10 +27,11 @@ interface BeforeInstallPromptEvent extends Event {
 
 // Deux barres de navigation INDÉPENDANTES, chacune masquée hors de son
 // breakpoint par le CSS — aucun héritage ni partage de structure :
-//   .desktopBar : ≥ 768 px   → logo · liens inline · badge · thème · ⋮
-//   .mobileBar  : < 768 px   → logo + « Mbolo TV » · badge · thème · ⋮
+//   .desktopBar : ≥ 768 px   → logo · liens inline · badge · ⋮
+//   .mobileBar  : < 768 px   → logo + « Mbolo TV » · badge · ⋮
 //   .bottomTabs : < 768 px   → onglets bas Accueil / Favoris / Plus
-export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, activeHref, pathname: _pathname, activeUsers, children, searchSlot }: AppShellProps) {
+// Le menu ⋮ / Plus partagé contient aussi les préférences (menuActions).
+export function AppShell({ brand, navItems, utilityItems = [], menuActions, activeHref, pathname: _pathname, activeUsers, children, searchSlot }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
 
@@ -84,7 +86,6 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
 
         <div className={styles.barRight}>
           {usersBadge}
-          {sidebarActions}
           <button
             type="button"
             className={[styles.iconButton, styles.desktopOnly].join(' ')}
@@ -104,7 +105,6 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
 
           <div className={styles.barRight}>
             {usersBadge}
-            {sidebarActions}
           </div>
 
           {searchSlot && <div className={styles.searchSlot}>{searchSlot}</div>}
@@ -152,6 +152,12 @@ export function AppShell({ brand, navItems, utilityItems = [], sidebarActions, a
                 <Download size={17} aria-hidden />
                 Installer l’application
               </button>
+            )}
+            {menuActions && (
+              <>
+                <p className={styles.menuSection}>Préférences</p>
+                <div className={styles.menuItem}>{menuActions}</div>
+              </>
             )}
           </div>
         </>

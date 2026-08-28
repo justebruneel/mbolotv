@@ -34,7 +34,7 @@ function ShellContent({ children }: { children: ReactNode }) {
         brand={<Logo />}
         navItems={NAV_ITEMS}
         utilityItems={UTILITY_ITEMS}
-        sidebarActions={<ThemeToggle />}
+        menuActions={<ThemeToggle />}
         searchSlot={pathname?.startsWith('/live') ? (
           <div className="flex items-center gap-2">
             <Suspense fallback={<div className="h-10 w-10" />}>
