@@ -163,7 +163,9 @@ export default function WatchPage() {
     const current = programmes.find((p) => new Date(p.startsAt).getTime() <= nowTime && new Date(p.endsAt).getTime() > nowTime);
     const following = programmes.find((p) => new Date(p.startsAt).getTime() > nowTime) ?? null;
     const idx = current ? programmes.indexOf(current) : programmes.findIndex((p) => new Date(p.startsAt).getTime() > nowTime);
-    const start = idx >= 0 ? idx : 0;
+    // Le programme en cours est déjà détaillé dans le bloc d'infos : la bande
+    // n'affiche que les suivants, sinon il apparaît en double sur mobile.
+    const start = current ? idx + 1 : Math.max(0, idx);
     const slice = programmes.slice(start, start + 6);
     return { now: current ?? null, next: following, strip: slice };
   }, [epgQuery.data]);
@@ -388,11 +390,10 @@ export default function WatchPage() {
           </div>
         )}
 
-        {/* EPG strip 6 programmes enrichis TMDB */}
+        {/* EPG strip : 6 prochains programmes enrichis TMDB */}
         {strip.length > 0 && (
           <div className="mt-4 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {strip.map((prog) => {
-              const isNow = prog.id === now?.id;
               const enriched = prog as unknown as {
                 type?: string | null;
                 posterUrl?: string | null;
@@ -407,7 +408,7 @@ export default function WatchPage() {
               return (
                 <div
                   key={prog.id}
-                  className={`group relative w-[240px] shrink-0 overflow-hidden rounded-xl border text-left transition hover:shadow-md sm:w-[260px] ${isNow ? 'border-accent bg-accent-muted' : 'border-border bg-surface'}`}
+                  className="group relative w-[240px] shrink-0 overflow-hidden rounded-xl border border-border bg-surface text-left transition hover:shadow-md sm:w-[260px]"
                 >
                   {thumb && (
                     <div className="h-20 w-full overflow-hidden bg-surface-2">
@@ -420,10 +421,10 @@ export default function WatchPage() {
                       {enriched.year && <span className="text-[11px] text-muted">{enriched.year}</span>}
                       {enriched.seasonNumber && <span className="text-[11px] text-muted">S{enriched.seasonNumber} E{enriched.episodeNumber ?? ''}</span>}
                     </div>
-                    <p className={`mt-1 truncate text-xs font-bold ${isNow ? 'text-foreground' : 'text-muted'}`}>{prog.title}</p>
+                    <p className="mt-1 truncate text-xs font-bold text-foreground">{prog.title}</p>
                     {enriched.genres && enriched.genres.length > 0 && <p className="truncate text-[11px] text-muted">{enriched.genres.slice(0, 2).join(' · ')}</p>}
                     <p className="text-[11px] text-muted">
-                      {time(prog.startsAt)} – {time(prog.endsAt)} {isNow && '· EN COURS'}
+                      {time(prog.startsAt)} – {time(prog.endsAt)}
                     </p>
                     {prog.description && <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">{prog.description}</p>}
                     {enriched.trailerUrl && (
@@ -435,11 +436,6 @@ export default function WatchPage() {
                       >
                         <Icon.Play size={12} aria-hidden /> Bande-annonce
                       </a>
-                    )}
-                    {isNow && (
-                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface-2">
-                        <ProgrammeProgressInline startsAt={prog.startsAt} endsAt={prog.endsAt} />
-                      </div>
                     )}
                   </div>
                 </div>
