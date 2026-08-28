@@ -118,16 +118,17 @@ export function FeaturedAuto() {
               alt=""
               loading={position === 0 ? 'eager' : 'lazy'}
               decoding="async"
-              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${position === index ? (isPoster ? 'opacity-60' : 'opacity-80') : 'opacity-0'}`}
+              className={`absolute inset-0 h-full w-full object-cover brightness-110 transition-opacity duration-700 ${position === index ? `opacity-100 ${isPoster ? 'md:opacity-65' : 'md:opacity-85'}` : 'opacity-0'}`}
             />
           );
         })
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-surface-3 to-bg" />
       )}
-      {/* Dégradés allégés : l'image reste visible, le texte garde son contraste */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/35 to-transparent" />
-      <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-transparent to-transparent" />
+      {/* Dégradés uniquement sur desktop, où le texte passe par-dessus l'image :
+          sur mobile le texte est sous le visuel, on l'affiche à pleine clarté */}
+      <div className="absolute inset-0 hidden bg-gradient-to-t from-black/70 via-black/35 to-transparent md:block" />
+      <div className="absolute inset-0 hidden bg-gradient-to-r from-black/50 via-transparent to-transparent md:block" />
 
         {/* Pastilles de rotation (avec progression), comme sur l'accueil Netflix */}
         {multiple && (
