@@ -112,21 +112,22 @@ export function FeaturedAuto() {
             if (!visual) return null;
             const isPoster = !(it.programme as unknown as { backdropUrl?: string | null }).backdropUrl;
             return (
-              <img
-                key={`${it.channelId}-${it.programme.id ?? position}`}
-                src={visual}
-                alt=""
-                loading={position === 0 ? 'eager' : 'lazy'}
-                decoding="async"
-                className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${position === index ? (isPoster ? 'opacity-40' : 'opacity-60') : 'opacity-0'}`}
-              />
-            );
-          })
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-surface-3 to-bg" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-transparent to-transparent" />
+            <img
+              key={`${it.channelId}-${it.programme.id ?? position}`}
+              src={visual}
+              alt=""
+              loading={position === 0 ? 'eager' : 'lazy'}
+              decoding="async"
+              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${position === index ? (isPoster ? 'opacity-60' : 'opacity-80') : 'opacity-0'}`}
+            />
+          );
+        })
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-surface-3 to-bg" />
+      )}
+      {/* Dégradés allégés : l'image reste visible, le texte garde son contraste */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/35 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-transparent to-transparent" />
 
         {/* Pastilles de rotation (avec progression), comme sur l'accueil Netflix */}
         {multiple && (
