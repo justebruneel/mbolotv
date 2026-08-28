@@ -16,7 +16,6 @@ export interface TmdbEnriched {
 }
 
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
-const CACHE_TTL_DAYS = 30;
 
 export class TmdbProvider {
   private readonly apiKey: string | null;
