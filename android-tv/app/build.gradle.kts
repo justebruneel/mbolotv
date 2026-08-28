@@ -18,9 +18,21 @@ android {
         buildConfigField("String", "MBOLTV_URL", "\"https://mbolotv-web.vercel.app\"")
     }
 
+    // Keystore injecté par la CI (secret ANDROID_KEYSTORE via env) — sans ces
+    // variables, builds locaux non signés. Le mot de passe ne traverse jamais
+    // le build s'il n'est pas présent.
+    if (System.getenv("MBOLO_KEYSTORE") != null) {
+        signingConfigs.create("release") {
+            storeFile = file(System.getenv("MBOLO_KEYSTORE")!!)
+            storePassword = System.getenv("MBOLO_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("MBOLO_KEY_ALIAS")
+            keyPassword = System.getenv("MBOLO_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
-            // R8 + resource shrinking : APK minimal (~2 Mo), l'app n'embarque
+            // R8 + resource shrinking : APK minimal (~80 Ko), l'app n'embarque
             // qu'un WebView wrapper et ses deux écrans natifs.
             isMinifyEnabled = true
             isShrinkResources = true
@@ -28,6 +40,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (System.getenv("MBOLO_KEYSTORE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
