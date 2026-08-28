@@ -11,8 +11,8 @@ android {
         applicationId = "tv.mbolo.tv"
         minSdk = 23
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         // Site embarqué à la compilation : modifiable ici sans toucher au code.
         buildConfigField("String", "MBOLTV_URL", "\"https://mbolotv-web.vercel.app\"")

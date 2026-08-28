@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -79,7 +80,21 @@ class MainActivity : Activity() {
         offlineOverlay = findViewById(R.id.offline_overlay)
         progressBar = findViewById(R.id.progress)
 
-        configureWebView()
+        // Beaucoup de box Android TV (AOSP, sans Play Store) n'ont AUCUN
+        // provider WebView : l'écran de chargement serait à jamais blanc.
+        // On détecte le composant avant de créer la WebView et on oriente
+        // l'utilisateur, plutôt que de planter ou d'afficher du vide.
+        if (!webViewProviderAvailable()) {
+            showWebViewMissing()
+            return
+        }
+        try {
+            configureWebView()
+        } catch (_: RuntimeException) {
+            // Provider corrompu/verrouillé : même issue, expliquée à l'écran.
+            showWebViewMissing()
+            return
+        }
 
         findViewById<Button>(R.id.retry_button).setOnClickListener {
             if (networkMonitor.isOnline()) {
@@ -278,6 +293,37 @@ class MainActivity : Activity() {
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    // ------------------------------- webview systeme -------------------------------
+
+    /** Un provider WebView est-il installé (Google webview, AOSP, Microsoft, …) ? */
+    private fun webViewProviderAvailable(): Boolean {
+        val pm = packageManager
+        val providers = listOf(
+            "com.google.android.webview",
+            "com.android.webview",
+            "com.google.android.webview.wbd",
+            "com.microsoft.android.webview",
+        )
+        return providers.any { pkg ->
+            try {
+                pm.getPackageInfo(pkg, 0)
+                true
+            } catch (_: PackageManager.NameNotFoundException) {
+                false
+            }
+        }
+    }
+
+    private fun showWebViewMissing() {
+        findViewById<View>(R.id.webview_missing_overlay)?.visibility = View.VISIBLE
+        findViewById<Button>(R.id.install_webview_button)?.setOnClickListener {
+            openExternal("https://play.google.com/store/apps/details?id=com.google.android.webview")
+        }
+        findViewById<Button>(R.id.webview_retry_button)?.setOnClickListener {
+            recreate()
+        }
     }
 
     fun openExternal(url: String) {

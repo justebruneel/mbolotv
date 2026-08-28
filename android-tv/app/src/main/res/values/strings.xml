@@ -7,4 +7,8 @@
     <string name="still_offline">Toujours hors ligne — vérifie ta connexion.</string>
     <string name="back_to_exit">Appuie encore sur retour pour quitter</string>
     <string name="no_app_for_link">Aucune application pour ouvrir ce lien</string>
+    <string name="webview_title">Composant WebView manquant</string>
+    <string name="webview_message">Cette box ne fournit pas « Android System WebView », indispensable pour afficher le site. Installez-le depuis le Play Store (même compte que la box), puis « Réessayer ». Sans Play Store : installez l’APK \"WebView\" depuis un ordinateur ou demandez-nous sur WhatsApp.</string>
+    <string name="install_webview">Installer WebView</string>
+    <string name="webview_retry">Réessayer</string>
 </resources>

@@ -72,6 +72,74 @@
             android:textStyle="bold" />
     </LinearLayout>
 
+    <!-- Provider WebView absent (box AOSP sans Android System WebView) :
+         on explique et on oriente au lieu d'un écran à jamais blanc. -->
+    <LinearLayout
+        android:id="@+id/webview_missing_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/mbolo_bg"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_webview" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/webview_title"
+            android:textColor="@color/mbolo_text"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="@string/webview_message"
+            android:textColor="@color/mbolo_text_muted"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/install_webview_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:background="@drawable/bg_button"
+            android:focusable="true"
+            android:minWidth="220dp"
+            android:paddingStart="32dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="32dp"
+            android:paddingBottom="14dp"
+            android:text="@string/install_webview"
+            android:textColor="@color/mbolo_text_on_accent"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/webview_retry_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/bg_button_ghost"
+            android:focusable="true"
+            android:minWidth="220dp"
+            android:paddingStart="32dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="32dp"
+            android:paddingBottom="10dp"
+            android:text="@string/webview_retry"
+            android:textColor="@color/mbolo_text" />
+    </LinearLayout>
+
     <FrameLayout
         android:id="@+id/fullscreen_container"
         android:layout_width="match_parent"
