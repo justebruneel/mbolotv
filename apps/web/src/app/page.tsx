@@ -100,9 +100,6 @@ export default function EntryPage() {
 
       {/* ===== HERO ===== */}
       <section className="relative z-10 mx-auto flex w-full max-w-5xl flex-col items-center px-5 py-10 text-center md:py-16">
-        <p className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-accent-muted px-3 py-1 text-xs font-bold uppercase tracking-widest text-accent animate-fade-in">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-accent" /> Groupe Nzogho • Depuis 2024
-        </p>
         <h1 className="mt-4 max-w-4xl text-4xl font-black tracking-tight animate-slide-up sm:text-5xl md:text-[56px] md:leading-[0.95]">
           Regardez le direct,
           <br />
