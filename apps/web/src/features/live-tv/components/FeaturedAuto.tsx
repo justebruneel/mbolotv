@@ -97,54 +97,89 @@ export function FeaturedAuto() {
 
   return (
     <section
-      className="relative mx-4 touch-pan-y overflow-hidden rounded-2xl border border-border bg-black md:mx-10"
+      className="relative mx-4 touch-pan-y overflow-hidden rounded-2xl border border-border bg-surface md:mx-10 md:bg-black"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
-      {/* Fonds empilés : fondu enchaîné sans flash de chargement à chaque rotation */}
-      {hasAnyVisual ? (
-        items.map((it, position) => {
-          const visual = backdropOf(it.programme);
-          if (!visual) return null;
-          const isPoster = !(it.programme as unknown as { backdropUrl?: string | null }).backdropUrl;
-          return (
-            <img
-              key={`${it.channelId}-${it.programme.id ?? position}`}
-              src={visual}
-              alt=""
-              loading={position === 0 ? 'eager' : 'lazy'}
-              decoding="async"
-              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${position === index ? (isPoster ? 'opacity-40' : 'opacity-60') : 'opacity-0'}`}
-            />
-          );
-        })
-      ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-surface-3 to-bg" />
-      )}
-      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
-      <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-transparent to-transparent" />
+      {/* Visuel : bande fixe sur mobile (les icônes EPG zoomées y restent
+          cantonnées, texte lisible dessous), plein fond derrière le texte sur md+ */}
+      <div className="relative h-44 w-full overflow-hidden md:absolute md:inset-0 md:h-full">
+        {hasAnyVisual ? (
+          items.map((it, position) => {
+            const visual = backdropOf(it.programme);
+            if (!visual) return null;
+            const isPoster = !(it.programme as unknown as { backdropUrl?: string | null }).backdropUrl;
+            return (
+              <img
+                key={`${it.channelId}-${it.programme.id ?? position}`}
+                src={visual}
+                alt=""
+                loading={position === 0 ? 'eager' : 'lazy'}
+                decoding="async"
+                className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${position === index ? (isPoster ? 'opacity-40' : 'opacity-60') : 'opacity-0'}`}
+              />
+            );
+          })
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-surface-3 to-bg" />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-transparent to-transparent" />
+
+        {/* Pastilles de rotation (avec progression), comme sur l'accueil Netflix */}
+        {multiple && (
+          <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
+            <div className="flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-2 backdrop-blur-md shadow-lg">
+              {items.map((it, position) => (
+                <button
+                  key={`${it.channelId}-${it.programme.id ?? position}-dot`}
+                  type="button"
+                  aria-label={`Afficher ${it.programme.title}`}
+                  onClick={() => setIndex(position)}
+                  className={`relative h-[3px] overflow-hidden rounded-full transition-all duration-300 ${
+                    position === index ? 'w-8 bg-white/30' : 'w-5 bg-white/20 hover:bg-white/40'
+                  }`}
+                >
+                  {position === index && (
+                    <span
+                      key={`${index}-${paused ? 'p' : 'a'}`}
+                      className="absolute inset-y-0 left-0 bg-white"
+                      style={{
+                        animation: `heroFill ${ROTATE_MS}ms linear forwards`,
+                        animationPlayState: paused ? 'paused' : 'running',
+                      }}
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div
         key={`${item.channelId}-${prog.id ?? index}`}
-        className={`featured-fade relative p-6 ${multiple ? 'pb-14' : ''} md:p-10 md:pr-[40%]`}
+        className="featured-fade relative bg-surface p-4 pb-5 md:bg-transparent md:p-10 md:pr-[40%]"
       >
-        <p className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest text-accent">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-accent" /> À la une · Ce soir à {new Date(prog.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-          {prog.type && <span className="rounded bg-white/20 px-1.5 py-0.5 text-[10px] text-white">{prog.type}</span>}
+        <p className="flex max-w-full flex-wrap items-center gap-2 text-xs font-black uppercase tracking-widest text-accent">
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-accent" /> À la une · Ce soir à {new Date(prog.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+          {prog.type && <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent md:bg-white/20 md:text-white">{prog.type}</span>}
         </p>
-        <h2 className="mt-3 line-clamp-2 text-2xl font-black leading-tight text-white md:text-4xl">{prog.title}</h2>
-        {prog.description && <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-white/80 md:text-base">{prog.description}</p>}
+        <h2 className="mt-3 line-clamp-2 text-2xl font-black leading-tight text-foreground md:text-4xl md:text-white">{prog.title}</h2>
+        {prog.description && <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted md:text-base md:text-white/80">{prog.description}</p>}
         {(prog as unknown as { genres?: string[] })?.genres && (
-          <p className="mt-1 text-xs text-white/60">{(prog as unknown as { genres: string[] }).genres.slice(0, 3).join(' · ')}</p>
+          <p className="mt-1 text-xs text-muted md:text-white/60">{(prog as unknown as { genres: string[] }).genres.slice(0, 3).join(' · ')}</p>
         )}
-        <p className="mt-1 text-xs text-white/60">{channelName} · {new Date(prog.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} – {new Date(prog.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
-        <div className="mt-5 flex flex-wrap gap-3">
+        <p className="mt-1 text-xs text-muted md:text-white/60">{channelName} · {new Date(prog.startsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} – {new Date(prog.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+        <div className="mt-4 flex flex-wrap gap-3 md:mt-5">
           <Link href={`/watch/${item.channelId}`} className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-black text-black shadow-lg hover:bg-white/90">
             <Icon.Play size={16} aria-hidden /> Voir
           </Link>
-          <Link href={`/watch/${item.channelId}`} className="inline-flex items-center gap-2 rounded-full bg-white/15 px-6 py-3 text-sm font-bold text-white backdrop-blur hover:bg-white/25">
+          <Link href={`/watch/${item.channelId}`} className="inline-flex items-center gap-2 rounded-full bg-foreground/10 px-6 py-3 text-sm font-bold text-foreground hover:bg-foreground/20 md:bg-white/15 md:text-white md:hover:bg-white/25">
             Plus d'infos
           </Link>
           {trailer && (
@@ -153,38 +188,8 @@ export function FeaturedAuto() {
             </a>
           )}
         </div>
-        <p className="mt-4 text-[10px] text-white/40">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+        <p className="mt-4 text-[10px] text-muted md:text-white/40">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
       </div>
-
-      {/* Pastilles de rotation (avec progression), comme sur l'accueil Netflix */}
-      {multiple && (
-        <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
-          <div className="flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-2 backdrop-blur-md shadow-lg">
-            {items.map((it, position) => (
-              <button
-                key={`${it.channelId}-${it.programme.id ?? position}-dot`}
-                type="button"
-                aria-label={`Afficher ${it.programme.title}`}
-                onClick={() => setIndex(position)}
-                className={`relative h-[3px] overflow-hidden rounded-full transition-all duration-300 ${
-                  position === index ? 'w-8 bg-white/30' : 'w-5 bg-white/20 hover:bg-white/40'
-                }`}
-              >
-                {position === index && (
-                  <span
-                    key={`${index}-${paused ? 'p' : 'a'}`}
-                    className="absolute inset-y-0 left-0 bg-white"
-                    style={{
-                      animation: `heroFill ${ROTATE_MS}ms linear forwards`,
-                      animationPlayState: paused ? 'paused' : 'running',
-                    }}
-                  />
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <style>{`@keyframes heroFill { from { width: 0% } to { width: 100% } } @keyframes featuredFade { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } } .featured-fade { animation: featuredFade 500ms ease-out } @media (prefers-reduced-motion: reduce) { .featured-fade { animation: none !important } }`}</style>
     </section>
   );

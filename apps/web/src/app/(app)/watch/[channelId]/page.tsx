@@ -407,7 +407,7 @@ export default function WatchPage() {
               return (
                 <div
                   key={prog.id}
-                  className={`group relative shrink-0 overflow-hidden rounded-xl border text-left transition hover:shadow-md ${isNow ? 'border-accent bg-accent-muted min-w-[260px]' : 'border-border bg-surface min-w-[220px]'}`}
+                  className={`group relative w-[240px] shrink-0 overflow-hidden rounded-xl border text-left transition hover:shadow-md sm:w-[260px] ${isNow ? 'border-accent bg-accent-muted' : 'border-border bg-surface'}`}
                 >
                   {thumb && (
                     <div className="h-20 w-full overflow-hidden bg-surface-2">
