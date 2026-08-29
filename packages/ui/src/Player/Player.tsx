@@ -23,6 +23,13 @@ const STALL_PAUSE_THRESHOLD_SECONDS = 1.5;
 const CONTROLS_HIDE_DELAY_MS = 3_000;
 const MOBILE_CONTROLS_HIDE_DELAY_MS = 4_000;
 const GESTURE_THRESHOLD = 40;
+// Fenêtre de la jauge de latence : au-delà de 60 s derrière le direct, la
+// barre est considérée vide (valeur d'affichage, pas un seuil de correction).
+const LIVE_LATENCY_WINDOW_SECONDS = 60;
+// Les valeurs < 10 dans le store hérité sont d'anciens INDEX de niveau (pas
+// des hauteurs) : interprétées comme « Auto ». Les nouvelles valeurs sont
+// des hauteurs cibles en pixels (ex. 1080).
+const LEGACY_LEVEL_INDEX_MAX = 10;
 
 function exponentialDelay(attempt: number): number { return Math.min(1000 * 2 ** attempt, 8000); }
 function formatBitrate(bps: number | undefined): string { if (!bps) return ''; if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`; return `${Math.round(bps / 1000)} kbps`; }
@@ -30,13 +37,23 @@ function heightFromBitrate(bps: number | undefined): number { if (!bps) return 0
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
+/** Index du niveau le plus haut ≤ hauteur demandée (le plus bas si la demande est sous le min) ; -1 = Auto. */
+function resolveHeightIndex(levels: QualityLevel[], height: number): number {
+  if (height < 0 || levels.length === 0) return -1;
+  const sorted = [...levels].sort((a, b) => a.height - b.height);
+  const below = sorted.filter((l) => l.height <= height);
+  return below.length > 0 ? below[below.length - 1].index : sorted[0].index;
+}
 function networkProfile(): { estimate: number; capHeight: number | null; buffer: number; liveSyncCount: number; startBuffer: number } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   const type = conn?.effectiveType;
   const downlink = conn?.downlink ?? 0;
-  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 28, liveSyncCount: 7, startBuffer: 3 };
-  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 40, liveSyncCount: 8, startBuffer: 3 };
-  return { estimate: 1_200_000, capHeight: null, buffer: 40, liveSyncCount: 5, startBuffer: 2 };
+  // Buffer max < fenêtre live (liveSync+7 segments) : au-delà, hls.js charge
+  // des segments que le manifest retire déjà → expulsion du live edge, gaps,
+  // saccades. 22-28 s reste sous la fenêtre sur toutes les gammes.
+  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 22, liveSyncCount: 7, startBuffer: 3 };
+  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 28, liveSyncCount: 8, startBuffer: 3 };
+  return { estimate: 1_200_000, capHeight: null, buffer: 28, liveSyncCount: 5, startBuffer: 2 };
 }
 function getNetworkInfo(): { effectiveType: string; downlink: number; saveData: boolean } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
@@ -66,7 +83,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [buffering, setBuffering] = useState(false);
   const [levels, setLevels] = useState<QualityLevel[]>([]);
   const [activeLevel, setActiveLevel] = useState(-1);
-  const [selectedLevel, setSelectedLevel] = useState(initialLevel ?? -1);
+  // Qualité persistée en HAUTEUR cible (ex. 1080) résolue par flux au
+  // manifest — l'ancien stockage par index suivait le mauvais niveau d'une
+  // chaîne à l'autre (les index ne sont pas stables entre playlists).
+  const [selectedHeight, setSelectedHeight] = useState<number>(() => (initialLevel !== undefined && initialLevel >= LEGACY_LEVEL_INDEX_MAX ? initialLevel : -1));
+  const preferredHeight = initialLevel !== undefined && initialLevel >= LEGACY_LEVEL_INDEX_MAX ? initialLevel : -1;
+  const resolvedIndex = useMemo(() => resolveHeightIndex(levels, selectedHeight), [levels, selectedHeight]);
   const [dataSaver, setDataSaver] = useState(initialDataSaver ?? false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   // Lecture démarrée en muet après un refus d'autoplay (politique navigateur) :
@@ -94,6 +116,8 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const startBufferRef = useRef(2);
   const stallPauseRef = useRef(false);
   const liveEdgeRef = useRef(0);
+  const urlsRef = useRef(urls);
+  urlsRef.current = urls;
   const urlsKey = useMemo(() => urls.join('\n'), [urls]);
 
   useEffect(() => {
@@ -133,12 +157,29 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       const ahead = Math.max(0, bufferedEnd - video.currentTime);
       const edge = Math.max(liveEdgeRef.current, bufferedEnd);
       liveEdgeRef.current = edge;
-      setLiveProgress(edge > 0 ? clamp((video.currentTime / edge) * 100, 0, 100) : 0);
-      setStats((c) => (c.bufferAhead === ahead ? c : { ...c, bufferAhead: ahead }));
+      // Jauge de latence au direct : pleine = collé au edge, se vide quand on
+      // prend du retard (la pseudo-progression currentTime/edge restait
+      // figée ~100 % sur des flux sans DVR).
+      const latency = Math.max(0, edge - video.currentTime);
+      setLiveProgress(clamp((1 - latency / LIVE_LATENCY_WINDOW_SECONDS) * 100, 0, 100));
+      setStats((c) => (c.bufferAhead === ahead && c.latency === latency ? c : { ...c, bufferAhead: ahead, latency }));
     };
     const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
   }, [status]);
+  // Onglet/appareil en arrière-plan : on stoppe le chargement des segments
+  // (le buffer se fige, zéro bande passante gaspillée) et on reprend au
+  // retour — hls.js se resynchronise au live edge de lui-même.
+  useEffect(() => {
+    const onVisibility = (): void => {
+      const hls = hlsRef.current;
+      if (!hls) return;
+      if (document.hidden) hls.pauseBuffering();
+      else hls.resumeBuffering();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
   const toggleMute = useCallback(() => { const video = videoRef.current; if (!video) return; video.muted = !video.muted; setMuted(video.muted); }, []);
   const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => { const video = videoRef.current; if (!video) return; const v = Number(e.target.value); video.volume = v; video.muted = v === 0; setVolume(v); setMuted(v === 0); onVolumeChange?.(v); }, [onVolumeChange]);
   const toggleFullscreen = useCallback(() => { const video = videoRef.current; const el = containerRef.current; if (!video || !el) return; if (document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement) { const exitFn = document.exitFullscreen || (document as Document & { webkitExitFullscreen?: () => Promise<void> }).webkitExitFullscreen; if (exitFn) void exitFn.call(document); return; } if (isPseudoFullscreen) { exitPseudoFullscreen(); return; } if (isIosRef.current && 'webkitEnterFullscreen' in video) { void (video as HTMLVideoElement & { webkitEnterFullscreen: () => void }).webkitEnterFullscreen(); return; } const fsFn = el.requestFullscreen || (el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen; if (fsFn) void fsFn.call(el).catch(() => { setIsPseudoFullscreen(true); document.body.style.overflow = 'hidden'; }); else { setIsPseudoFullscreen(true); document.body.style.overflow = 'hidden'; } }, [isPseudoFullscreen, exitPseudoFullscreen]);
@@ -227,7 +268,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) attemptPlayback(); else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
       startBufferRef.current = profile.startBuffer;
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 60, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: 0, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
+      // startLevel -1 : l'ABR choisit le niveau de départ selon l'estimation
+      // réseau (plus de démarrage forcé en 360p sur bonne connexion).
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 45, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: -1, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
       hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
@@ -249,7 +292,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         networkCapRef.current = profile.capHeight === null ? -1 : Math.max(0, ...discovered.filter((l) => l.height <= profile.capHeight!).map((l) => l.index));
         const dataCap = Math.max(0, ...discovered.filter((l) => l.height <= DATA_SAVER_MAX_HEIGHT).map((l) => l.index));
         hls.autoLevelCapping = initialDataSaver ? Math.min(networkCapRef.current < 0 ? dataCap : networkCapRef.current, dataCap) : networkCapRef.current;
-        hls.currentLevel = initialLevel !== undefined && initialLevel >= 0 ? initialLevel : -1;
+        hls.currentLevel = resolveHeightIndex(discovered, preferredHeight);
         if (bufferAhead() >= startBufferRef.current) attemptPlayback();
       });
       hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); } });
@@ -271,19 +314,30 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (bufferAhead() >= RESUME_BUFFER_SECONDS) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
     };
     const onPlayingReset = (): void => { if (started && !stallPauseRef.current) { setBuffering(false); updateStats(); } };
-    const onError = (): void => advance();
+    const onError = (): void => { if (Hls.isSupported()) return; advance(); };
     el.addEventListener('playing', onPlaying); el.addEventListener('canplay', onCanPlay); el.addEventListener('waiting', onWaiting); el.addEventListener('playing', onPlayingReset); el.addEventListener('error', onError);
     if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else setStatus('error');
     return () => { cancelled = true; retryRef.current = null; clearTimers(); destroy(); el.removeEventListener('playing', onPlaying); el.removeEventListener('canplay', onCanPlay); el.removeEventListener('waiting', onWaiting); el.removeEventListener('playing', onPlayingReset); el.removeEventListener('error', onError); };
   }, [urlsKey]);
 
   const activeHeight = levels.find((l) => l.index === activeLevel)?.height;
-  const qualityLabel = selectedLevel === -1 ? `Auto${activeHeight ? ` · ${activeHeight}p` : ''}` : `${levels.find((l) => l.index === selectedLevel)?.height ?? 'Auto'}p`;
-  // « Réessayer » : on rafraîchit l'URL côté page (jeton possiblement expiré)
-  // et on relance localement ; si l'URL change, l'effet principal repart de
-  // lui-même et annule la tentative locale.
-  const retry = (): void => { void Promise.resolve(onRefreshSource?.()).catch(() => false); retryRef.current?.(); };
-  useEffect(() => { const hls = hlsRef.current; if (!hls || levels.length === 0) return; const dataCap = Math.max(0, ...levels.filter((l) => l.height <= DATA_SAVER_MAX_HEIGHT).map((l) => l.index)); hls.autoLevelCapping = dataSaver ? Math.min(networkCapRef.current < 0 ? dataCap : networkCapRef.current, dataCap) : networkCapRef.current; hls.currentLevel = dataSaver ? -1 : selectedLevel; }, [dataSaver, selectedLevel, levels]);
+  const qualityLabel = dataSaver
+    ? `Éco${activeHeight ? ` · ${activeHeight}p` : ''}`
+    : selectedHeight === -1
+      ? `Auto${activeHeight ? ` · ${activeHeight}p` : ''}`
+      : `${selectedHeight}p`;
+  // « Réessayer » : on rafraîchit d'abord l'URL côté page (jeton possiblement
+  // expiré). Reload local UNIQUEMENT si l'URL est identique — sinon l'effet
+  // [urlsKey] repart de lui-même et un reload local doublerait le chargement.
+  const retry = (): void => {
+    const urlBefore = urlsRef.current[0];
+    void Promise.resolve(onRefreshSource?.())
+      .catch(() => false)
+      .then(() => {
+        if (urlsRef.current[0] === urlBefore) retryRef.current?.();
+      });
+  };
+  useEffect(() => { const hls = hlsRef.current; if (!hls || levels.length === 0) return; const dataCap = Math.max(0, ...levels.filter((l) => l.height <= DATA_SAVER_MAX_HEIGHT).map((l) => l.index)); hls.autoLevelCapping = dataSaver ? Math.min(networkCapRef.current < 0 ? dataCap : networkCapRef.current, dataCap) : networkCapRef.current; hls.currentLevel = dataSaver ? -1 : resolvedIndex; }, [dataSaver, resolvedIndex, levels]);
   useEffect(() => { const video = videoRef.current; if (!video || initialVolume === undefined) return; video.volume = initialVolume; setVolume(initialVolume); const onVol = (): void => { setVolume(video.volume); onVolumeChange?.(video.volume); }; video.addEventListener('volumechange', onVol); return () => video.removeEventListener('volumechange', onVol); }, [initialVolume, onVolumeChange]);
 
   const VolumeIcon = muted || volume === 0 ? Icon.VolumeX : volume < 0.5 ? Icon.Volume1 : Icon.Volume2;
@@ -298,12 +352,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     {bandwidth !== null && controlsVisible && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && (autoplayBlocked || mutedAutoplay) && <button type="button" className={styles.playPrompt} onClick={startPlayback}>{autoplayBlocked ? 'Lancer la lecture' : 'Activer le son'}</button>}
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}><Icon.Volume2 size={28} /></span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
-    {status === 'ready' && <div className={styles.progressBar}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}
-    {status === 'ready' && !isMobile && <div className={styles.controlRail} aria-label="Contrôles du lecteur"><button type="button" className={styles.iconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={16} /> : <Icon.Pause size={16} />}</button><span className={styles.liveBadge}>DIRECT</span><span className={styles.stat}>Qualité {qualityLabel}</span><span className={styles.statWrap}><span className={styles.statHint}>Buffer {formatBuffer(stats.bufferAhead)}</span><span className={styles.statTooltip}>Secondes de vidéo en mémoire tampon</span></span><span className={styles.statWrap}><span className={styles.statHint}>Démarrage {formatDuration(stats.startupMs)}</span><span className={styles.statTooltip}>Temps de chargement initial</span></span>{stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}<div className={styles.volumeControl}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={16} /></button><input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /></div><select className={styles.qualitySelect} value={dataSaver ? -1 : selectedLevel} aria-label="Qualité vidéo" onChange={(e) => { const level = Number(e.target.value); setSelectedLevel(level); onLevelChange?.(level); }}><option value={-1}>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</option>{levels.map((level) => <option key={level.index} value={level.index}>{level.height}p — {formatBitrate(level.bitrate)}</option>)}</select><label className={styles.dataSaverToggle}><input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} />Éco</label>{pipSupported && <button type="button" className={styles.iconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={16} /></button>}{fsSupported && <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}</button>}</div>}
+    {status === 'ready' && <div className={styles.progressBar} title={stats.latency !== null ? `Latence au direct : ${formatBuffer(stats.latency)}` : undefined}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}
+    {status === 'ready' && !isMobile && <div className={styles.controlRail} aria-label="Contrôles du lecteur"><button type="button" className={styles.iconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={16} /> : <Icon.Pause size={16} />}</button><span className={styles.liveBadge}>DIRECT</span><span className={styles.stat}>Qualité {qualityLabel}</span><span className={styles.statWrap}><span className={styles.statHint}>Buffer {formatBuffer(stats.bufferAhead)}</span><span className={styles.statTooltip}>Secondes de vidéo en mémoire tampon</span></span><span className={styles.statWrap}><span className={styles.statHint}>Démarrage {formatDuration(stats.startupMs)}</span><span className={styles.statTooltip}>Temps de chargement initial</span></span>{stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}<div className={styles.volumeControl}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={16} /></button><input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /></div><select className={styles.qualitySelect} value={dataSaver ? -1 : resolvedIndex} aria-label="Qualité vidéo" onChange={(e) => { const idx = Number(e.target.value); const height = idx === -1 ? -1 : (levels.find((l) => l.index === idx)?.height ?? -1); setSelectedHeight(height); onLevelChange?.(height); }}><option value={-1}>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</option>{levels.map((level) => <option key={level.index} value={level.index}>{level.height}p — {formatBitrate(level.bitrate)}</option>)}</select><label className={styles.dataSaverToggle}><input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} />Éco</label>{pipSupported && <button type="button" className={styles.iconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={16} /></button>}{fsSupported && <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}</button>}</div>}
     {status === 'ready' && isMobile && <div className={styles.mobileTopBar}><span className={styles.liveBadge}>DIRECT</span><span className={styles.mobileQualityLabel}>{qualityLabel}</span></div>}
     {status === 'ready' && isMobile && <div className={styles.mobileBottomBar} aria-label="Contrôles du lecteur"><button type="button" className={styles.mobileIconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={20} /> : <Icon.Pause size={20} />}</button><button type="button" className={styles.mobileIconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={20} /></button><button type="button" className={`${styles.mobileIconBtn} ${activePopup === 'quality' ? styles.mobileIconBtnActive : ''}`} onClick={() => setActivePopup(activePopup === 'quality' ? null : 'quality')} aria-label="Qualité vidéo"><Icon.Settings2 size={20} /></button><label className={styles.mobileIconBtn}><input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} className={styles.mobileCheckbox} /><span className={dataSaver ? styles.mobileEcoActive : ''}>Éco</span></label>{pipSupported && <button type="button" className={styles.mobileIconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={20} /></button>}{fsSupported && <button type="button" className={styles.mobileIconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={20} /> : <Icon.Maximize size={20} />}</button>}</div>}
     {isMobile && activePopup && <div className={styles.popupBackdrop} onClick={closePopup} />}
-    {isMobile && activePopup === 'quality' && <div className={styles.mobilePopup} role="dialog" aria-label="Choisir la qualité"><div className={styles.popupHeader}><span className={styles.popupTitle}>Qualité vidéo</span><button type="button" className={styles.popupClose} onClick={closePopup} aria-label="Fermer"><Icon.X size={18} /></button></div><div className={styles.popupOptions}><button type="button" className={`${styles.popupOption} ${selectedLevel === -1 && !dataSaver ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedLevel(-1); onLevelChange?.(-1); closePopup(); }}><span>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</span>{selectedLevel === -1 && !dataSaver && <Icon.Check size={16} />}</button>{levels.map((level) => <button key={level.index} type="button" className={`${styles.popupOption} ${selectedLevel === level.index ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedLevel(level.index); onLevelChange?.(level.index); closePopup(); }}><span className={styles.popupOptionLeft}><span>{level.height}p</span>{level.bitrate && <span className={styles.bitrateBadge}>{formatBitrate(level.bitrate)}</span>}</span>{selectedLevel === level.index && <Icon.Check size={16} />}</button>)}</div></div>}
+    {isMobile && activePopup === 'quality' && <div className={styles.mobilePopup} role="dialog" aria-label="Choisir la qualité"><div className={styles.popupHeader}><span className={styles.popupTitle}>Qualité vidéo</span><button type="button" className={styles.popupClose} onClick={closePopup} aria-label="Fermer"><Icon.X size={18} /></button></div><div className={styles.popupOptions}><button type="button" className={`${styles.popupOption} ${selectedHeight === -1 && !dataSaver ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedHeight(-1); onLevelChange?.(-1); closePopup(); }}><span>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</span>{selectedHeight === -1 && !dataSaver && <Icon.Check size={16} />}</button>{levels.map((level) => <button key={level.index} type="button" className={`${styles.popupOption} ${resolvedIndex === level.index && !dataSaver ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedHeight(level.height); onLevelChange?.(level.height); closePopup(); }}><span className={styles.popupOptionLeft}><span>{level.height}p</span>{level.bitrate && <span className={styles.bitrateBadge}>{formatBitrate(level.bitrate)}</span>}</span>{resolvedIndex === level.index && !dataSaver && <Icon.Check size={16} />}</button>)}</div></div>}
     {isMobile && activePopup === 'volume' && <div className={styles.mobilePopup} role="dialog" aria-label="Volume"><div className={styles.popupHeader}><span className={styles.popupTitle}>Volume</span><button type="button" className={styles.popupClose} onClick={closePopup} aria-label="Fermer"><Icon.X size={18} /></button></div><div className={styles.popupVolumeContent}>{isIos ? <p className={styles.popupVolumeHint}>Sur iOS, le volume se contrôle via les boutons physiques de l'appareil.</p> : <div className={styles.popupVolumeSlider}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={20} /></button><input type="range" className={styles.volumeSliderLarge} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /><span className={styles.volumePercent}>{muted ? 0 : Math.round(volume * 100)}%</span></div>}</div></div>}
   </div>;
 }
