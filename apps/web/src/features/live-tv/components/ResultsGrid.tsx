@@ -1,9 +1,10 @@
 'use client';
 
 import type { Channel } from '@mbolo/contracts';
+import Link from 'next/link';
 import { VirtualChannelGrid } from './VirtualChannelGrid';
 import { ChannelTile } from './ChannelTile';
-import type { WatchContext } from '../utils';
+import { buildWatchHref, type WatchContext } from '../utils';
 
 const VIRTUALIZE_THRESHOLD = 100;
 
@@ -30,9 +31,9 @@ export function ResultsGrid({
         </div>
         <div className="space-y-2">
           {channels.map((channel) => (
-            <a
+            <Link
               key={channel.id}
-              href={`/watch/${channel.id}`}
+              href={buildWatchHref(channel.id, watchContext)}
               className={`flex items-center gap-3 rounded-xl border bg-surface p-3 transition hover:border-accent/50 hover:shadow-sm ${channel.id === highlightId ? 'border-accent' : 'border-border'}`}
             >
               <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-2">
@@ -50,7 +51,7 @@ export function ResultsGrid({
               </div>
               {channel.nowPlaying && <span className="hidden shrink-0 rounded-full bg-danger/10 px-2 py-1 text-[10px] font-bold text-danger sm:inline-flex">DIRECT</span>}
               <span className="shrink-0 text-muted">›</span>
-            </a>
+            </Link>
           ))}
         </div>
       </section>

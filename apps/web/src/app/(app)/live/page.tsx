@@ -222,6 +222,9 @@ function BrowseView() {
   );
   const viewMode = useSettingsStore((state) => state.browseViewMode);
   const setViewMode = useSettingsStore((state) => state.setBrowseViewMode);
+  // Dernière chaîne vue : surlignée au retour pour se reperer dans la liste.
+  const lastWatched = useSettingsStore((state) => state.lastWatched);
+  const highlightId = lastWatched[0]?.channelId;
 
   const setCategory = (slug?: string): void => {
     const params = new URLSearchParams(searchParams);
@@ -326,6 +329,7 @@ function BrowseView() {
               total={total}
               watchContext={{ category, q: deferredQuery.trim() || undefined }}
               viewMode={viewMode}
+              highlightId={highlightId}
             />
             <div ref={sentinelRef} className="mt-8 flex justify-center py-4">
               {channelsQuery.hasNextPage ? (
