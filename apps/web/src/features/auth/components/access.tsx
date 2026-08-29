@@ -72,18 +72,26 @@ export function AccessTimeBadge() {
   );
 }
 
-/** Statut d'accès de l'appareil ; `loading` distingue la vérification du verrou. */
-export function useAccessStatus(): { status: AccessStatus | null; loading: boolean } {
+/**
+ * Statut d'accès de l'appareil ; `loading` distingue la vérification du verrou.
+ * `pollMs > 0` : re-vérification périodique (garde des pages internes) pour
+ * détecter une expiration en cours de session.
+ */
+export function useAccessStatus(pollMs = 0): { status: AccessStatus | null; loading: boolean } {
   const [status, setStatus] = useState<AccessStatus | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let mounted = true;
-    apiGet<AccessStatus>('/access/status')
-      .then((next) => { if (mounted) setStatus(next); })
-      .catch(() => { if (mounted) setStatus({ active: false, expiresAt: null, kind: null, whatsappUrl: WHATSAPP_URL }); })
-      .finally(() => { if (mounted) setLoading(false); });
-    return () => { mounted = false; };
-  }, []);
+    let timer: number | undefined;
+    const refresh = (): Promise<void> =>
+      apiGet<AccessStatus>('/access/status')
+        .then((next) => { if (mounted) setStatus(next); })
+        .catch(() => { if (mounted) setStatus({ active: false, expiresAt: null, kind: null, whatsappUrl: WHATSAPP_URL }); })
+        .finally(() => { if (mounted) setLoading(false); });
+    void refresh();
+    if (pollMs > 0) timer = window.setInterval(() => void refresh(), pollMs);
+    return () => { mounted = false; if (timer !== undefined) window.clearInterval(timer); };
+  }, [pollMs]);
   return { status, loading };
 }
 
@@ -166,17 +174,41 @@ export function AccessForm({ onRedeemed }: { onRedeemed: (status: AccessStatus) 
 
 /**
  * Garde silencieux des pages internes : si l'appareil n'a pas d'accès actif,
- * renvoie vers le portail d'entrée (/). Pendant la vérification, un écran
- * de marque évite tout flash de contenu.
+ * renvoie vers le portail d'entrée (/). Trois déclencheurs :
+ *  1. statut inactif au chargement ou au sondage périodique (60 s) ;
+ *  2. expiration locale (`expiresAt` dépassé) — redirection sans attendre
+ *     le prochain sondage réseau ;
+ *  3. événement `mbolo:access-lost` émis par le client API à chaque 403 :
+ *     n'importe quel appel refusé renvoie aussitôt au portail.
+ * Pendant la vérification/expiration, un écran de marque évite tout flash
+ * de contenu : les pages internes ne sont jamais rendues sans accès actif.
  */
 export function AccessGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const { status, loading } = useAccessStatus();
+  const { status, loading } = useAccessStatus(60_000);
+  const [now, setNow] = useState(() => Date.now());
+
   useEffect(() => {
-    if (!loading && status && !status.active) router.replace('/');
-  }, [loading, status, router]);
-  if (loading || !status?.active) {
-    return <AccessChecking label={loading ? 'Vérification de votre accès…' : 'Accès requis — ouverture du portail…'} />;
+    if (!status?.expiresAt) return;
+    const interval = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(interval);
+  }, [status?.expiresAt]);
+
+  const expired = status !== null && (!status.active || (status.expiresAt !== null && now > new Date(status.expiresAt).getTime()));
+
+  useEffect(() => {
+    if (loading || !expired) return;
+    router.replace('/');
+  }, [loading, expired, router]);
+
+  useEffect(() => {
+    const onLost = (): void => router.replace('/');
+    window.addEventListener('mbolo:access-lost', onLost);
+    return () => window.removeEventListener('mbolo:access-lost', onLost);
+  }, [router]);
+
+  if (loading || expired) {
+    return <AccessChecking label={loading ? 'Vérification de votre accès…' : 'Accès expiré — retour au portail…'} />;
   }
   return <>{children}</>;
 }

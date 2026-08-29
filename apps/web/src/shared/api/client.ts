@@ -48,6 +48,12 @@ async function request<T>(path: string, init: RequestInit, retryGet: boolean): P
       const response = await fetch(`${API_URL}${path}`, { ...init, headers: { ...(init.headers ?? {}), 'x-device-id': deviceId() }, cache: 'no-store' });
       if (response.ok) return (await response.json()) as T;
       const details = await readError(response);
+      // 403 = accès expiré/révoqué (AccessGuard côté API) : événement global
+      // pour que la garde renvoie immédiatement au portail, quelle que soit
+      // la page qui a déclenché l'appel.
+      if (response.status === 403 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('mbolo:access-lost'));
+      }
       if (retryGet && response.status >= 500 && attempt + 1 < attempts) {
         await delay(250 * 2 ** attempt);
         continue;
