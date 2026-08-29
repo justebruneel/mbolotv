@@ -55,6 +55,10 @@ export function NetflixRow({
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const scrollRafRef = useRef(0);
+  // Position horizontale persistée par rangée : au retour (historique ou
+  // re-mount), la rangée se replace sur la même colonne au lieu de reprendre
+  // à zéro. sessionStorage = vivant le temps de la session d'app.
+  const rowStorageKey = `mbolo:row:${slug ?? title}`;
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
 
@@ -67,6 +71,9 @@ export function NetflixRow({
     // l'événement scroll à chaque pixel — re-render = saccades).
     setAtStart((prev) => (prev === nextStart ? prev : nextStart));
     setAtEnd((prev) => (prev === nextEnd ? prev : nextEnd));
+    try {
+      window.sessionStorage.setItem(rowStorageKey, String(Math.round(el.scrollLeft)));
+    } catch { /* stockage indisponible (navigation privée) : silencieux */ }
   }
 
   function scheduleArrows(): void {
@@ -75,6 +82,21 @@ export function NetflixRow({
   }
 
   useEffect(() => () => cancelAnimationFrame(scrollRafRef.current), []);
+
+  // Une fois le contenu chargé (les squelettes ont une largeur plus courte),
+  // on ré-applique la colonne mémorisée : sinon le navigateur clamp la
+  // position au mount et la rangée reprend au début.
+  const channelsReady = !isLoading;
+  useEffect(() => {
+    if (!channelsReady) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    try {
+      const saved = window.sessionStorage.getItem(rowStorageKey);
+      if (saved) el.scrollLeft = Number(saved) || 0;
+    } catch { /* silencieux */ }
+    updateArrows();
+  }, [channelsReady, rowStorageKey]);
 
   function scrollByPage(direction: -1 | 1): void {
     const el = scrollerRef.current;
@@ -128,6 +150,12 @@ export function NetflixRow({
         <div
           ref={(element) => {
             scrollerRef.current = element;
+            if (element) {
+              try {
+                const saved = window.sessionStorage.getItem(rowStorageKey);
+                if (saved) element.scrollLeft = Number(saved) || 0;
+              } catch { /* stockage indisponible : silencieux */ }
+            }
             updateArrows();
           }}
           onScroll={scheduleArrows}

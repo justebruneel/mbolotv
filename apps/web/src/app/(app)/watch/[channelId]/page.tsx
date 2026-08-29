@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChannel, useCategories, useChannelEpg, useChannelRow, useChannelViewers, useInfiniteChannels, usePlayUrl, useActivityHeartbeat } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
 import { useSettingsStore } from '../../../../shared/stores/settings';
+import { internalNavigationCount } from '../../../../shared/components/RouteTracker';
 import { buildWatchHref, formatCategoryName } from '../../../../features/live-tv/utils';
 import { NetflixRow } from '../../../../features/live-tv/components/NetflixRow';
 import { useQueries } from '@tanstack/react-query';
@@ -220,6 +221,15 @@ export default function WatchPage() {
   }, [navigate]);
 
   const goBack = (): void => {
+    // Retour historique dès qu'une navigation interne a eu lieu : le scroll
+    // et l'état de la page d'origine sont restaurés par le routeur (un push
+    // les réinitialiserait et polluerait l'historique). Si l'utilisateur a
+    // ouvert un lien direct (entrée dans l'app sur watch), fallback sur le
+    // dernier chemin non-watch connu, sinon l'accueil.
+    if (internalNavigationCount.value > 0 && window.history.length > 1) {
+      router.back();
+      return;
+    }
     router.push(lastNonWatchPath || '/live');
   };
 
