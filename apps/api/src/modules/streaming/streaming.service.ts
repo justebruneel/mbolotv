@@ -19,21 +19,27 @@ export class StreamingService {
   private readonly absoluteTtlMs: number;
   private readonly aliasTtlMs: number;
   private readonly extraHostnames: string[];
+  private readonly ecoTranscoderUrl: string;
+  private readonly ecoToken: string;
+  private readonly ecoPublicUrl: string;
   constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService, private readonly store: StreamSessionStore, private readonly audit: AuditService, private readonly health: HealthCheckService, private readonly config: ConfigService, private readonly hostValidation: HostValidationCache = new HostValidationCache()) {
     this.idleTtlMs = Number(this.config.get('STREAM_IDLE_TTL_MINUTES', 240)) * 60_000;
     this.absoluteTtlMs = Number(this.config.get('STREAM_ABSOLUTE_TTL_HOURS', 24)) * 3_600_000;
     this.aliasTtlMs = Number(this.config.get('STREAM_ALIAS_TTL_HOURS', 6)) * 3_600_000;
     this.extraHostnames = (this.config.get<string>('STREAM_ALLOWED_HOSTS', '') ?? '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
+    this.ecoTranscoderUrl = (this.config.get<string>('ECO_TRANSCODER_URL') ?? '').trim().replace(/\/+$/, '');
+    this.ecoToken = (this.config.get<string>('ECO_TRANSCODER_TOKEN') ?? '').trim();
+    this.ecoPublicUrl = (this.config.get<string>('ECO_PUBLIC_URL') ?? '').trim().replace(/\/+$/, '');
   }
-  async createPlay(channelId: string, deviceId: string | undefined): Promise<PlayResponse> {
+  async createPlay(channelId: string, deviceId: string | undefined, eco = false): Promise<PlayResponse> {
     const variants = await this.prisma.streamVariant.findMany({ where: { channelId, isActive: true, source: { status: { not: 'DISABLED' } } }, orderBy: [{ healthScore: 'desc' }, { source: { priority: 'asc' } }], include: { source: true } });
     if (variants.length === 0) throw new NotFoundException('Aucun flux disponible pour cette chaîne');
     const variant = variants.find((item) => item.healthStatus !== 'DOWN') ?? variants[0];
     void this.health.checkVariantIfNeeded(variant).catch(() => undefined);
     void this.prisma.streamVariant.update({ where: { id: variant.id }, data: { lastPlayedAt: new Date() } }).catch(() => undefined);
-    return this.openSession(channelId, variant, deviceId);
+    return this.openSession(channelId, variant, deviceId, eco);
   }
-  async openSession(channelId: string, variant: { id: string; sourceId: string; encryptedLocator: Uint8Array }, deviceId: string | undefined): Promise<PlayResponse> {
+  async openSession(channelId: string, variant: { id: string; sourceId: string; encryptedLocator: Uint8Array }, deviceId: string | undefined, eco = false): Promise<PlayResponse> {
     let providerUrl: string;
     try { providerUrl = (await assertSafeUrl(this.crypto.decrypt(variant.encryptedLocator))).toString(); } catch { throw new NotFoundException('Flux indisponible pour cette chaîne'); }
     const session = await this.store.create({ channelId, variantId: variant.id, sourceId: variant.sourceId, providerHostname: new URL(providerUrl).hostname.toLowerCase(), deviceId: deviceId ?? '' }, this.idleTtlMs, this.absoluteTtlMs);
@@ -41,6 +47,13 @@ export class StreamingService {
     // L’audit ne doit pas retarder l’émission de l’URL HLS. Une panne Neon ne doit
     // jamais transformer le lancement du player en écran de chargement.
     void this.audit.log(null, 'stream.session_created', 'channel', channelId, { sessionId: session.id, variantId: variant.id }).catch(() => undefined);
+    // Mode éco (dataSaver) : la lecture passe par le transcodeur résidentiel
+    // (~1 Mbps au lieu de 6-8). En cas d'indisponibilité (capacité, panne),
+    // repli transparent sur le flux direct ci-dessous.
+    if (eco && this.ecoTranscoderUrl && this.ecoPublicUrl) {
+      const ecoUrl = await this.tryEcoPlayback(channelId, providerUrl);
+      if (ecoUrl) return { url: ecoUrl, expiresAt: new Date(session.expiresAt).toISOString() };
+    }
     // Proxy vidéo à la marge (Cloudflare Worker) : l'URL source est servie directement
     // par le Worker (cache + réécriture HLS côté edge), plus aucun octet vidéo ne passe
     // par cette API. Sans VIDEO_PROXY_URL, repli sur la session gateway historique.
@@ -57,6 +70,20 @@ export class StreamingService {
     return { url: `${publicApiUrl}/api/stream/${session.id}/master.m3u8`, expiresAt: new Date(session.expiresAt).toISOString() };
   }
   async assertSession(sessionId: string): Promise<StreamSession> { const session = await this.store.get(sessionId); if (!session) throw new NotFoundException('Session de lecture invalide ou expirée'); void this.store.touch(sessionId, this.idleTtlMs).catch(() => undefined); return session; }
+  /** Démarre le transcodage éco et renvoie l'URL HLS publique, ou null si indisponible. */
+  private async tryEcoPlayback(channelId: string, providerUrl: string): Promise<string | null> {
+    try {
+      const response = await fetch(`${this.ecoTranscoderUrl}/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(this.ecoToken ? { 'x-eco-token': this.ecoToken } : {}) },
+        body: JSON.stringify({ channelId, srcUrl: providerUrl }),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) return null;
+      const data = (await response.json()) as { ok?: boolean };
+      return data.ok ? `${this.ecoPublicUrl}/hls/${channelId}/index.m3u8` : null;
+    } catch { return null; }
+  }
   async resolveProviderUrl(session: StreamSession, alias = 'master'): Promise<string> { const url = await this.store.getAlias(session.id, alias); if (!url) throw new NotFoundException('Ressource de lecture indisponible'); return url; }
   async registerAlias(session: StreamSession, absoluteUrl: string): Promise<string> {
     let url: URL; try { url = new URL(absoluteUrl); } catch { throw new BadGatewayException('URL fournisseur invalide'); }

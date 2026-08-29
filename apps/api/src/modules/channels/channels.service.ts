@@ -78,11 +78,11 @@ export class ChannelsService {
       } as Programme;
     });
   }
-  async play(id: string, deviceId: string | undefined): Promise<PlayResponse> {
+  async play(id: string, deviceId: string | undefined, eco = false): Promise<PlayResponse> {
     const hiddenIds = await this.hiddenCategoryIds();
     const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
     if (!(await this.prisma.channel.findFirst({ where: { id, isVisible: true, ...categoryClause } }))) throw new NotFoundException('Channel not found');
-    return this.streaming.createPlay(id, deviceId);
+    return this.streaming.createPlay(id, deviceId, eco);
   }
   private async hiddenCategoryIds(): Promise<Set<string>> {
     const cats = await this.prisma.category.findMany({ select: { id: true, parentId: true, isVisible: true } });

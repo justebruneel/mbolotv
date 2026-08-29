@@ -1,0 +1,9 @@
+{
+  "name": "@mbolo/eco-transcoder",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Transcodeur éco : réduit les chaînes IPTV à ~1 Mbps (480p) côté relais résidentiel",
+  "scripts": {
+    "start": "node server.cjs"
+  }
+}

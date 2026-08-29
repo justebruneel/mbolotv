@@ -19,5 +19,5 @@ export class ChannelsController {
   @Get(':id/epg')
   epg(@Param('id') id: string): Promise<Programme[]> { return this.channelsService.epg(id); }
   @Get(':id/play')
-  play(@Param('id') id: string, @Headers('x-device-id') deviceId: string | undefined): Promise<PlayResponse> { return this.channelsService.play(id, deviceId); }
+  play(@Param('id') id: string, @Headers('x-device-id') deviceId: string | undefined, @Query('eco') eco: string | undefined): Promise<PlayResponse> { return this.channelsService.play(id, deviceId, eco === '1' || eco === 'true'); }
 }

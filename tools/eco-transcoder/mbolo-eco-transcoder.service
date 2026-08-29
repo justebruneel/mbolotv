@@ -1,0 +1,17 @@
+[Unit]
+Description=Mbolo TV - transcodeur eco (480p ~1 Mbps par chaine)
+After=network-online.target
+
+[Service]
+Type=simple
+User=bruneel
+WorkingDirectory=/home/bruneel/Bureau/mbolo TV/tools/eco-transcoder
+EnvironmentFile=/home/bruneel/Bureau/mbolo TV/tools/eco-transcoder/eco-transcoder.env
+ExecStart=/usr/bin/node server.cjs
+Restart=on-failure
+RestartSec=3
+# ffmpeg peut avoir besoin de tmp pour ses buffers
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
