@@ -266,6 +266,7 @@ export default function WatchPage() {
             </div>
           ) : playUrls.length > 0 ? (
             <Player
+              key={channelId}
               urls={playUrls}
               title={channel.name}
               initialVolume={volume}
