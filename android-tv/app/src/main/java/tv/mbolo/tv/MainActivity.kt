@@ -25,22 +25,34 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.Toast
+import java.io.File
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import org.mozilla.geckoview.AllowOrDeny
+import org.mozilla.geckoview.GeckoResult
+import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.GeckoRuntimeSettings
+import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.GeckoView
 
 /**
- * Enveloppe WebView de Mbolo TV.
+ * Enveloppe de Mbolo TV.
  *
  * Décisions clés :
- *  - WebView **système** (jamais GeckoView : +70 Mo) avec accélération
- *    matérielle (activée par défaut + manifest) et cache HTTP LOAD_DEFAULT ;
- *    le service worker du site (prod) assure le shell hors ligne.
+ *  - Moteur principal : WebView **système** (jamais GeckoView : +70 Mo) avec
+ *    accélération matérielle (activée par défaut + manifest) et cache HTTP
+ *    LOAD_DEFAULT ; le service worker du site (prod) assure le shell hors ligne.
+ *  - Moteur de secours GeckoView (Firefox autonome, +70 Mo) si la box n'a
+ *    AUCUN provider WebView ou une version trop ancienne pour le site —
+ *    cas fréquent sur les box AOSP sans Play Store. GeckoView n'a besoin
+ *    de rien du système : il embarque son propre moteur.
  *  - Immersif sticky : barres statut/navigation masquées en permanence.
  *  - Keep-screen-on : c'est une app vidéo, l'écran ne doit jamais s'éteindre
  *    en lecture — l'économie de batterie n'est pas prioritaire ici.
- *  - Plein écran vidéo : onShowCustomView/onHideCustomView, sinon le site
- *    retombe sur son pseudo plein écran.
+ *  - Plein écran vidéo : onShowCustomView/onHideCustomView (WebView) ou
+ *    exitFullScreen (Gecko), sinon le site retombe sur son pseudo plein écran.
  *  - Retour : plein écran → historique → double appui pour quitter.
  *  - Rotation : configChanges dans le manifest → l'Activity n'est pas
  *    recréée, la lecture ne se coupe jamais.
@@ -51,6 +63,13 @@ class MainActivity : Activity() {
     private lateinit var fullscreenContainer: FrameLayout
     private lateinit var offlineOverlay: View
     private lateinit var progressBar: ProgressBar
+
+    // Moteur de secours GeckoView (instancié uniquement si besoin).
+    private var geckoView: GeckoView? = null
+    private var geckoSession: GeckoSession? = null
+    private var geckoRuntime: GeckoRuntime? = null
+    private var geckoCanGoBack = false
+    private var geckoFullscreen = false
 
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
@@ -80,29 +99,36 @@ class MainActivity : Activity() {
         offlineOverlay = findViewById(R.id.offline_overlay)
         progressBar = findViewById(R.id.progress)
 
-        // Beaucoup de box Android TV (AOSP, sans Play Store) n'ont AUCUN
-        // provider WebView : l'écran de chargement serait à jamais blanc.
-        // On détecte le composant avant de créer la WebView et on oriente
-        // l'utilisateur, plutôt que de planter ou d'afficher du vide.
-        if (!webViewProviderAvailable()) {
-            showWebViewMissing()
+        findViewById<Button>(R.id.retry_button).setOnClickListener {
+            if (networkMonitor.isOnline()) {
+                hideOffline()
+                reloadActiveEngine()
+            } else {
+                Toast.makeText(this, R.string.still_offline, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Beaucoup de box Android TV (AOSP, sans Play Store) ont soit AUCUN
+        // provider WebView (écran à jamais blanc), soit un Chromium trop vieux
+        // pour le site (mise en page cassée, lecture impossible). Dans ces deux
+        // cas on bascule sur GeckoView, autonome, plutôt que d'afficher du vide.
+        val provider = findWebViewProvider()
+        if (provider == null || webViewMajorVersion(provider) < MIN_WEBVIEW_MAJOR) {
+            if (!initGeckoEngine()) {
+                showWebViewMissing()
+                return
+            }
             return
         }
         try {
             configureWebView()
         } catch (_: RuntimeException) {
-            // Provider corrompu/verrouillé : même issue, expliquée à l'écran.
-            showWebViewMissing()
-            return
-        }
-
-        findViewById<Button>(R.id.retry_button).setOnClickListener {
-            if (networkMonitor.isOnline()) {
-                hideOffline()
-                webView.reload()
-            } else {
-                Toast.makeText(this, R.string.still_offline, Toast.LENGTH_SHORT).show()
+            // Provider corrompu/verrouillé : même stratégie, moteur de secours.
+            if (!initGeckoEngine()) {
+                showWebViewMissing()
+                return
             }
+            return
         }
 
         networkMonitor.start(this)
@@ -122,17 +148,21 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        webView.onResume()
+        if (geckoSession != null) geckoSession?.setActive(true) else webView.onResume()
         hideSystemBars()
     }
 
     override fun onPause() {
-        webView.onPause()
+        if (geckoSession != null) geckoSession?.setActive(false) else webView.onPause()
         super.onPause()
     }
 
     override fun onDestroy() {
         networkMonitor.stop()
+        geckoSession?.close()
+        geckoRuntime?.shutdown()
+        geckoSession = null
+        geckoRuntime = null
         webView.apply {
             loadUrl("about:blank")
             removeAllViews()
@@ -233,20 +263,30 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (geckoSession != null) {
+            when {
+                geckoFullscreen -> geckoSession?.exitFullScreen()
+                geckoCanGoBack -> geckoSession?.goBack()
+                else -> confirmExit()
+            }
+            return
+        }
         when {
             customView != null -> exitFullscreen()
             webView.canGoBack() -> webView.goBack()
-            else -> {
-                // Double appui pour quitter : évite les sorties accidentelles
-                // à la télécommande comme au doigt.
-                val now = SystemClock.uptimeMillis()
-                if (now - lastBackAt < 2_000) {
-                    finish()
-                } else {
-                    lastBackAt = now
-                    Toast.makeText(this, R.string.back_to_exit, Toast.LENGTH_SHORT).show()
-                }
-            }
+            else -> confirmExit()
+        }
+    }
+
+    private fun confirmExit() {
+        // Double appui pour quitter : évite les sorties accidentelles
+        // à la télécommande comme au doigt.
+        val now = SystemClock.uptimeMillis()
+        if (now - lastBackAt < 2_000) {
+            finish()
+        } else {
+            lastBackAt = now
+            Toast.makeText(this, R.string.back_to_exit, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -272,8 +312,13 @@ class MainActivity : Activity() {
         if (offlineByNetwork) {
             offlineByNetwork = false
             hideOffline()
-            webView.reload()
+            reloadActiveEngine()
         }
+    }
+
+    private fun reloadActiveEngine() {
+        val session = geckoSession
+        if (session != null) session.reload() else webView.reload()
     }
 
     private fun showOffline() {
@@ -295,10 +340,122 @@ class MainActivity : Activity() {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
+    // ------------------------------- moteur de secours Gecko -------------------------------
+
+    /**
+     * Démarre GeckoView (moteur Firefox embarqué) à la place de la WebView
+     * système. Ne dépend d'aucun composant du système : fonctionne sur les
+     * box AOSP sans provider ou avec un Chromium trop ancien.
+     */
+    private fun initGeckoEngine(): Boolean {
+        var runtime: GeckoRuntime? = null
+        return try {
+            runtime = GeckoRuntime.create(
+                applicationContext,
+                GeckoRuntimeSettings.Builder()
+                    .configFilePath(autoplayConfigPath())
+                    .consoleOutput(false)
+                    .remoteDebuggingEnabled(false)
+                    .build(),
+            )
+            val session = GeckoSession(
+                GeckoSessionSettings.Builder()
+                    .userAgentOverride(defaultGeckoUserAgent())
+                    .build(),
+            )
+            session.open(runtime)
+
+            val view = findViewById<GeckoView>(R.id.geckoview)
+            webView.visibility = View.GONE
+            view.visibility = View.VISIBLE
+            view.setSession(session)
+
+            geckoRuntime = runtime
+            geckoSession = session
+            setupGeckoDelegates(session)
+            session.loadUri(BuildConfig.MBOLTV_URL)
+            networkMonitor.start(this)
+            true
+        } catch (_: Throwable) {
+            // Gecko lui-même indisponible (box exotique) : on retombe sur
+            // l'overlay d'explication, dernier recours.
+            runtime?.shutdown()
+            false
+        }
+    }
+
+    /**
+     * GV 129 n'expose pas l'autoplay en API publique : on le configure via un
+     * fichier de prefs Gecko (media.autoplay.default = 0 → toujours autorisé),
+     * comme la WebView path (mediaPlaybackRequiresUserGesture = false).
+     */
+    private fun autoplayConfigPath(): String {
+        val file = File(applicationContext.filesDir, "gecko-prefs.json")
+        if (!file.exists()) {
+            file.writeText("""{"media.autoplay.default": 0, "media.autoplay.blocking_policy": 0}""")
+        }
+        return file.absolutePath
+    }
+
+    private fun defaultGeckoUserAgent(): String {
+        return GeckoSession.getDefaultUserAgent() + " MboloTV/1.0 (Android; TV)"
+    }
+
+    private fun setupGeckoDelegates(session: GeckoSession) {
+        session.progressDelegate = object : GeckoSession.ProgressDelegate {
+            override fun onProgressChange(session: GeckoSession, progress: Int) {
+                progressBar.progress = progress
+                progressBar.visibility = if (progress >= 100) View.GONE else View.VISIBLE
+            }
+
+            override fun onPageStop(session: GeckoSession, success: Boolean) {
+                progressBar.visibility = View.GONE
+            }
+        }
+
+        session.navigationDelegate = object : GeckoSession.NavigationDelegate {
+            override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
+                geckoCanGoBack = canGoBack
+            }
+
+            override fun onLoadRequest(session: GeckoSession, request: GeckoSession.NavigationDelegate.LoadRequest): GeckoResult<AllowOrDeny> {
+                // Même règle que la WebView : origin de l'app → Gecko, tout le
+                // reste (wa.me, YouTube, mailto:, intent:) → app externe.
+                val uri = Uri.parse(request.uri)
+                val scheme = uri.scheme ?: return GeckoResult.allow()
+                if (scheme == "http" || scheme == "https") {
+                    val host = uri.host ?: return GeckoResult.allow()
+                    val sameSite = host == startHost || host.endsWith(".$startHost")
+                    if (sameSite) return GeckoResult.allow()
+                }
+                openExternal(request.uri)
+                return GeckoResult.deny()
+            }
+        }
+
+        session.contentDelegate = object : GeckoSession.ContentDelegate {
+            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                geckoFullscreen = fullScreen
+                hideSystemBars()
+            }
+
+            override fun onCrash(session: GeckoSession) {
+                // Session crashée : on la rouvre sur l'URL d'entrée.
+                session.close()
+                session.open(geckoRuntime ?: return)
+                geckoView?.setSession(session)
+                setupGeckoDelegates(session)
+                geckoFullscreen = false
+                geckoCanGoBack = false
+                session.loadUri(BuildConfig.MBOLTV_URL)
+            }
+        }
+    }
+
     // ------------------------------- webview système -------------------------------
 
-    /** Un provider WebView est-il installé (Google webview, AOSP, Microsoft, …) ? */
-    private fun webViewProviderAvailable(): Boolean {
+    /** Package du provider WebView installé, ou null s'il n'y en a aucun. */
+    private fun findWebViewProvider(): String? {
         val pm = packageManager
         val providers = listOf(
             "com.google.android.webview",
@@ -306,7 +463,7 @@ class MainActivity : Activity() {
             "com.google.android.webview.wbd",
             "com.microsoft.android.webview",
         )
-        return providers.any { pkg ->
+        return providers.firstOrNull { pkg ->
             try {
                 pm.getPackageInfo(pkg, 0)
                 true
@@ -314,6 +471,21 @@ class MainActivity : Activity() {
                 false
             }
         }
+    }
+
+    /** Version majeure du provider WebView (ex. "115.0.5790.136" → 115). */
+    private fun webViewMajorVersion(pkg: String): Int {
+        return try {
+            val version = packageManager.getPackageInfo(pkg, 0).versionName ?: return 0
+            version.substringBefore('.').toIntOrNull() ?: 0
+        } catch (_: PackageManager.NameNotFoundException) {
+            0
+        }
+    }
+
+    private companion object {
+        /** En dessous de ce Chromium, le site (Next.js 15 / React 19) casse. */
+        const val MIN_WEBVIEW_MAJOR = 90
     }
 
     private fun showWebViewMissing() {

@@ -3,3 +3,7 @@
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
+
+# GeckoView embarque ses règles consumer, mais on garde ce keep défensif :
+# le moteur est appelé via JNI depuis les libs natives libxul/libmozglue.
+-keep class org.mozilla.geckoview.** { *; }
