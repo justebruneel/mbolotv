@@ -86,6 +86,16 @@ export default function WatchPage() {
     }
   }, [playQuery]);
 
+  // Bascule Éco = changement réel de source : on re-demande l'URL de play
+  // (eco=1 lu au moment du fetch → transcodeur ~1 Mbps). Le Player recharge
+  // automatiquement quand l'URL change ; si le transcodeur est indisponible,
+  // l'API renvoie le flux direct (repli transparent).
+  const handleDataSaverChange = useCallback((next: boolean) => {
+    const changed = next !== dataSaver;
+    setDataSaver(next);
+    if (changed) void refetchPlayUrl();
+  }, [dataSaver, setDataSaver, refetchPlayUrl]);
+
   // Index id → {slug, name} de tout l'arbre des dossiers publiés.
   const categoryIndex = useMemo(() => {
     const map = new Map<string, { slug: string; name: string }>();
@@ -253,7 +263,7 @@ export default function WatchPage() {
               initialDataSaver={dataSaver}
               onVolumeChange={setVolume}
               onLevelChange={setPreferredLevel}
-              onDataSaverChange={setDataSaver}
+              onDataSaverChange={handleDataSaverChange}
               onRefreshSource={refetchPlayUrl}
             />
           ) : (
