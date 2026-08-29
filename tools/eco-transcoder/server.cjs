@@ -23,6 +23,9 @@ const path = require('node:path');
 const dns = require('node:dns').promises;
 
 const PORT = Number(process.env.PORT || 8090);
+// HOST=0.0.0.0 requis pour que le conteneur API atteigne le transcodeur via
+// la passerelle du bridge Docker (firewalld bloque le LAN externe de fait).
+const HOST = process.env.HOST || '127.0.0.1';
 const TOKEN = (process.env.ECO_TOKEN || '').trim();
 const HLS_ROOT = process.env.HLS_ROOT || '/var/lib/mbolo-eco';
 const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS || 5 * 60_000);
@@ -192,7 +195,11 @@ function sweep() {
 
 function send(res, status, body, headers = {}) {
   const payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-  res.writeHead(status, { 'content-length': Buffer.byteLength(payload), ...headers });
+  res.writeHead(status, {
+    'content-length': Buffer.byteLength(payload),
+    'access-control-allow-origin': '*',
+    ...headers,
+  });
   res.end(payload);
 }
 
@@ -212,6 +219,14 @@ function serveHls(res, channelId, file) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, OPTIONS',
+      'access-control-max-age': '86400',
+    });
+    return res.end();
+  }
   try {
     if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, streams: streams.size });
 
@@ -238,6 +253,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[${new Date().toISOString()}] éco-transcodeur sur 127.0.0.1:${PORT} (max ${MAX_STREAMS} flux, idle ${IDLE_TIMEOUT_MS / 1000}s, sortie ${HLS_ROOT})`);
+server.listen(PORT, HOST, () => {
+  console.log(`[${new Date().toISOString()}] éco-transcodeur sur ${HOST}:${PORT} (max ${MAX_STREAMS} flux, idle ${IDLE_TIMEOUT_MS / 1000}s, sortie ${HLS_ROOT})`);
 });

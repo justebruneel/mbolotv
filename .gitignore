@@ -18,3 +18,4 @@ docker.env
 docker.env.bak
 cloudflared-data/*.json
 cloudflared-data/*.pem
+tools/eco-transcoder/eco-transcoder.env
