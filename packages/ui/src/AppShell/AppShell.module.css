@@ -183,6 +183,8 @@
 }
 
 /* ---------- Onglets bas (mobile uniquement) ---------- */
+/* Pas de backdrop-filter : coûteux à recomposer à chaque frame de scroll sur
+   GPU faible (téléphones d'entrée de gamme) — un fond quasi opaque suffit. */
 .bottomTabs {
   position: fixed;
   left: 0;
@@ -191,9 +193,7 @@
   z-index: 48;
   display: flex;
   border-top: 1px solid var(--mbolo-border);
-  background: oklch(from var(--mbolo-bg) l c h / 0.94);
-  backdrop-filter: blur(14px) saturate(1.2);
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  background: oklch(from var(--mbolo-bg) l c h / 0.97);
   padding-bottom: env(safe-area-inset-bottom);
 }
 .bottomTab {

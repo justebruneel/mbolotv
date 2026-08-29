@@ -109,7 +109,7 @@ export function NetflixRow({
             type="button"
             aria-label="Précédent"
             onClick={() => scrollByPage(-1)}
-            className="absolute left-1 top-1/2 z-20 hidden h-16 w-10 -translate-y-1/2 items-center justify-center rounded-xl border border-border bg-bg/80 text-foreground opacity-0 backdrop-blur transition-opacity hover:bg-surface-3 group-hover/row:opacity-100 md:flex"
+            className="absolute left-1 top-1/2 z-20 hidden h-16 w-10 -translate-y-1/2 items-center justify-center rounded-xl border border-border bg-bg text-foreground opacity-0 transition-opacity hover:bg-surface-3 group-hover/row:opacity-100 md:flex"
           >
             <Icon.ChevronLeft size={26} />
           </button>
@@ -119,7 +119,7 @@ export function NetflixRow({
             type="button"
             aria-label="Suivant"
             onClick={() => scrollByPage(1)}
-            className="absolute right-1 top-1/2 z-20 hidden h-16 w-10 -translate-y-1/2 items-center justify-center rounded-xl border border-border bg-bg/80 text-foreground opacity-0 backdrop-blur transition-opacity hover:bg-surface-3 group-hover/row:opacity-100 md:flex"
+            className="absolute right-1 top-1/2 z-20 hidden h-16 w-10 -translate-y-1/2 items-center justify-center rounded-xl border border-border bg-bg text-foreground opacity-0 transition-opacity hover:bg-surface-3 group-hover/row:opacity-100 md:flex"
           >
             <Icon.ChevronRight size={26} />
           </button>
@@ -166,7 +166,7 @@ function RowCard({ channel }: { channel: Channel }) {
       <Link
         href={`/watch/${channel.id}`}
         aria-label={`Regarder ${channel.name}`}
-        className="group/card relative block w-[44vw] max-w-[248px] shrink-0 overflow-hidden rounded-xl border border-border/60 bg-surface transition-all duration-300 hover:z-30 hover:scale-[1.05] hover:border-accent/70 hover:shadow-2xl md:w-[264px] md:max-w-none md:hover:scale-[1.07]"
+        className="group/card relative block w-[44vw] max-w-[248px] shrink-0 overflow-hidden rounded-xl border border-border/60 bg-surface transition-[transform,border-color,box-shadow] duration-300 hover:z-30 hover:scale-[1.05] hover:border-accent/70 hover:shadow-2xl md:w-[264px] md:max-w-none md:hover:scale-[1.07]"
       >
         {/* Visuel : vignette du programme en cours, sinon logo sur dégradé */}
         <div className="relative aspect-video w-full">
@@ -184,13 +184,13 @@ function RowCard({ channel }: { channel: Channel }) {
 
           {/* Badge qualité */}
           {badge && (
-            <span className="absolute right-1.5 top-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[9px] font-black tracking-wide text-white backdrop-blur-sm">{badge}</span>
+            <span className="absolute right-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[9px] font-black tracking-wide text-white">{badge}</span>
           )}
 
           {/* DIRECT */}
           {programme && (
-            <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-danger/90 px-1.5 py-0.5 text-[9px] font-black tracking-widest text-white">
-              <span className="h-1 w-1 animate-pulse rounded-full bg-white" />
+            <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-danger px-1.5 py-0.5 text-[9px] font-black tracking-widest text-white">
+              <span className="h-1 w-1 rounded-full bg-white" />
               DIRECT
             </span>
           )}

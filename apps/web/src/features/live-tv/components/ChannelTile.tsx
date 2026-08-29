@@ -3,7 +3,7 @@
 import type { Channel, PlayResponse } from '@mbolo/contracts';
 import { FavoriteButton, ProgrammeProgress, warmStream } from '@mbolo/ui';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiGet } from '../../../shared/api/client';
 import { useSettingsStore } from '../../../shared/stores/settings';
@@ -16,6 +16,16 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
   const toggle = useFavoritesStore((state) => state.toggle);
   const [logoError, setLogoError] = useState(false);
   const [thumbError, setThumbError] = useState(false);
+  // Préchauffage différé : sans délai, un simple scroll souris déclenche
+  // 2 requêtes + un fetch de manifest par carte survolée (saccades réseau).
+  const prefetchTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(prefetchTimer.current), []);
+  const schedulePrefetch = (): void => {
+    if (down) return;
+    window.clearTimeout(prefetchTimer.current);
+    prefetchTimer.current = window.setTimeout(prefetch, 300);
+  };
+  const cancelPrefetch = (): void => window.clearTimeout(prefetchTimer.current);
   const href = buildWatchHref(channel.id, watchContext);
   const down = channel.healthStatus === 'DOWN';
   const isLive = channel.nowPlaying;
@@ -89,13 +99,13 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
       {/* Top badges */}
       <div className="absolute left-2.5 top-2.5 z-10 flex items-center gap-1.5">
         {isLive && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-danger/90 px-2 py-0.5 text-[9px] font-bold tracking-wide text-white backdrop-blur-sm">
-            <span className="h-1 w-1 animate-pulse rounded-full bg-white" />
+          <span className="inline-flex items-center gap-1 rounded-full bg-danger px-2 py-0.5 text-[9px] font-bold tracking-wide text-white">
+            <span className="h-1 w-1 rounded-full bg-white" />
             DIRECT
           </span>
         )}
         {badge && (
-          <span className="rounded-md bg-accent/90 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-on-accent backdrop-blur-sm">
+          <span className="rounded-md bg-accent/90 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-on-accent">
             {badge}
           </span>
         )}
@@ -163,9 +173,10 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
   return (
     <article
       className={`group relative min-w-0 ${down ? 'opacity-40 grayscale' : ''}`}
-      onMouseEnter={prefetch}
+      onMouseEnter={schedulePrefetch}
+      onMouseLeave={cancelPrefetch}
     >
-      <div className={`relative overflow-hidden rounded-xl border bg-surface transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-lg aspect-[4/3] sm:aspect-[16/10] ${highlight ? 'border-accent shadow-md shadow-accent/20' : 'border-border group-hover:border-accent/50'}`}>
+      <div className={`relative overflow-hidden rounded-xl border bg-surface transition-[transform,border-color,box-shadow] duration-300 group-hover:-translate-y-1 group-hover:shadow-lg aspect-[4/3] sm:aspect-[16/10] ${highlight ? 'border-accent shadow-md shadow-accent/20' : 'border-border group-hover:border-accent/50'}`}>
         {down ? (
           <div aria-disabled="true" className="h-full">{content}</div>
         ) : (

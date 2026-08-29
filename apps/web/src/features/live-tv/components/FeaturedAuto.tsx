@@ -133,7 +133,7 @@ export function FeaturedAuto() {
         {/* Pastilles de rotation (avec progression), comme sur l'accueil Netflix */}
         {multiple && (
           <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
-            <div className="flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-2 backdrop-blur-md shadow-lg">
+            <div className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-2 shadow-lg">
               {items.map((it, position) => (
                 <button
                   key={`${it.channelId}-${it.programme.id ?? position}-dot`}
