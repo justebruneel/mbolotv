@@ -102,7 +102,7 @@ export default function EntryPage() {
           >
             <Icon.Mail size={14} aria-hidden className="text-accent" /> Besoin d’un code ?
           </a>
-          <ThemeToggle />
+          <ThemeToggle variant="icon" />
         </div>
       </header>
 

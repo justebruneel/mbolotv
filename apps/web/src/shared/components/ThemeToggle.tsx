@@ -3,9 +3,14 @@
 import { Icon } from '@mbolo/ui';
 import { useTheme } from './ThemeProvider';
 
-// Ligne de menu pleine largeur (utilisée dans « Plus d'options ») : l'icône
-// reflète le thème courant, le clic fait tourner Sombre → Clair → Système.
-export function ThemeToggle() {
+const THEME_LABELS = { dark: 'Sombre', light: 'Clair', system: 'Système' } as const;
+
+// Deux variantes :
+//  - "menu" (défaut) : ligne de menu pleine largeur (« Plus d'options » de
+//    l'app) — icône + libellé du thème courant.
+//  - "icon" : pill icône seule pour les navbars (accueil) — le libellé reste
+//    accessible via title/aria-label.
+export function ThemeToggle({ variant = 'menu' }: { variant?: 'menu' | 'icon' }) {
   const { theme, setTheme } = useTheme();
 
   const cycle = () => {
@@ -14,8 +19,22 @@ export function ThemeToggle() {
     else setTheme('dark');
   };
 
-  const label = theme === 'dark' ? 'Sombre' : theme === 'light' ? 'Clair' : 'Système';
+  const label = THEME_LABELS[theme];
   const IconComponent = theme === 'dark' ? Icon.Moon : theme === 'light' ? Icon.Sun : Icon.Monitor;
+
+  if (variant === 'icon') {
+    return (
+      <button
+        type="button"
+        onClick={cycle}
+        title={`Thème : ${label}`}
+        aria-label={`Thème actuel : ${label}. Cliquer pour changer.`}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-surface/70 backdrop-blur text-foreground hover:bg-surface transition"
+      >
+        <IconComponent size={16} aria-hidden />
+      </button>
+    );
+  }
 
   return (
     <button
