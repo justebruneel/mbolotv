@@ -56,13 +56,14 @@ jobs:
       - name: Build APK Android TV
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android-tv/local.properties
-          (cd android-tv && ./gradlew assembleRelease --no-daemon)
+          (cd android-tv && ./gradlew assembleArm64Release assembleArm32Release --no-daemon)
 
       - name: Renommer les APK (noms stables pour releases/latest/download)
         run: |
           # Noms sans version : les liens du site restent valables à jamais.
           cp android/app/build/outputs/apk/release/app-release*.apk mbolo-tv-android.apk
-          cp android-tv/app/build/outputs/apk/release/app-release*.apk mbolo-tv-android-tv.apk
+          cp android-tv/app/build/outputs/apk/arm64/release/app-arm64-release*.apk mbolo-tv-android-tv-arm64.apk
+          cp android-tv/app/build/outputs/apk/arm32/release/app-arm32-release*.apk mbolo-tv-android-tv-arm32.apk
           ls -la mbolo-tv-android*.apk
 
       - name: Vérifier la signature
@@ -76,8 +77,9 @@ jobs:
         with:
           name: "Mbolo TV Apps ${{ github.ref_name }}"
           body: |
-            Enveloppes natives de Mbolo TV (WebView).
+            Enveloppes natives de Mbolo TV.
             - `mbolo-tv-android.apk` — téléphones Android 6+
-            - `mbolo-tv-android-tv.apk` — box Android TV
+            - `mbolo-tv-android-tv-arm64.apk` — box Android TV récentes (arm64)
+            - `mbolo-tv-android-tv-arm32.apk` — vieilles box AOSP (arm32, avec moteur Gecko embarqué)
           files: mbolo-tv-android*.apk
           fail_on_unmatched_files: false

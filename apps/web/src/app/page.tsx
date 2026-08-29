@@ -298,14 +298,20 @@ export default function EntryPage() {
                 <Icon.Monitor size={16} aria-hidden /> Android — Télécharger l’app
               </a>
               <a
-                href="https://github.com/justebruneel/mbolotv/releases/latest/download/mbolo-tv-android-tv.apk"
+                href="https://github.com/justebruneel/mbolotv/releases/latest/download/mbolo-tv-android-tv-arm64.apk"
                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-5 py-3 text-sm font-bold transition hover:bg-surface-3"
               >
                 <Icon.Tv size={16} aria-hidden /> Android TV — Télécharger l’app
               </a>
+              <a
+                href="https://github.com/justebruneel/mbolotv/releases/latest/download/mbolo-tv-android-tv-arm32.apk"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-surface-2 px-5 py-3 text-sm font-bold transition hover:bg-surface-3"
+              >
+                <Icon.Tv size={16} aria-hidden /> Box AOSP ancienne (arm32)
+              </a>
             </div>
             <p className="mt-3 text-xs text-muted">
-              APK signé · Android 6+ · ~100 Ko. Autorisez « sources inconnues » à l’installation.
+              APK signé · Android 6+ · les box Android TV embarquent un moteur de secours (GeckoView) si leur WebView est absente ou trop vieille. Autorisez « sources inconnues » à l’installation.
             </p>
           </div>
 
