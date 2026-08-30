@@ -38,6 +38,7 @@ export function NetflixRow({
   slug,
   channels: directChannels,
   seeAllHref,
+  highlightId,
 }: {
   title: string;
   subtitle?: string;
@@ -46,6 +47,8 @@ export function NetflixRow({
   /** Chaînes fournies directement (sans fetch). */
   channels?: Channel[];
   seeAllHref?: string;
+  /** Dernière chaîne vue : carte surlignée et recentrée horizontalement. */
+  highlightId?: string;
 }) {
   const { ref, inView } = useInView();
   const enabled = Boolean(inView && (slug || directChannels));
@@ -95,8 +98,14 @@ export function NetflixRow({
       const saved = window.sessionStorage.getItem(rowStorageKey);
       if (saved) el.scrollLeft = Number(saved) || 0;
     } catch { /* silencieux */ }
+    // Carte active : centrée horizontalement pour rester visible au retour,
+    // même si la position mémorisée la cachait (scroll vertical intact).
+    if (highlightId) {
+      const card = el.querySelector<HTMLElement>(`[data-channel-id="${CSS.escape(highlightId)}"]`);
+      if (card) el.scrollLeft = Math.max(0, card.offsetLeft - (el.clientWidth - card.offsetWidth) / 2);
+    }
     updateArrows();
-  }, [channelsReady, rowStorageKey]);
+  }, [channelsReady, rowStorageKey, highlightId]);
 
   function scrollByPage(direction: -1 | 1): void {
     const el = scrollerRef.current;
@@ -168,7 +177,7 @@ export function NetflixRow({
                 </div>
               ))
             : channels.map((channel) => (
-                <RowCard key={channel.id} channel={channel} />
+                <RowCard key={channel.id} channel={channel} highlight={channel.id === highlightId} />
               ))}
           {!isLoading && channels.length === 0 && <p className="py-8 text-sm text-muted">Aucune chaîne.</p>}
         </div>
@@ -177,7 +186,7 @@ export function NetflixRow({
   );
 }
 
-function RowCard({ channel }: { channel: Channel }) {
+function RowCard({ channel, highlight }: { channel: Channel; highlight?: boolean }) {
   const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
   const toggle = useFavoritesStore((state) => state.toggle);
   const badge = channelBadge(channel.name);
@@ -194,7 +203,8 @@ function RowCard({ channel }: { channel: Channel }) {
       <Link
         href={`/watch/${channel.id}`}
         aria-label={`Regarder ${channel.name}`}
-        className="group/card relative block w-[44vw] max-w-[248px] shrink-0 overflow-hidden rounded-xl border border-border/60 bg-surface transition-[transform,border-color,box-shadow] duration-300 hover:z-30 hover:scale-[1.05] hover:border-accent/70 hover:shadow-2xl md:w-[264px] md:max-w-none md:hover:scale-[1.07]"
+        data-channel-id={channel.id}
+        className={`group/card relative block w-[44vw] max-w-[248px] shrink-0 overflow-hidden rounded-xl border bg-surface transition-[transform,border-color,box-shadow] duration-300 hover:z-30 hover:scale-[1.05] hover:border-accent/70 hover:shadow-2xl md:w-[264px] md:max-w-none md:hover:scale-[1.07] ${highlight ? 'border-accent shadow-md shadow-accent/20' : 'border-border/60'}`}
       >
         {/* Visuel : vignette du programme en cours, sinon logo sur dégradé */}
         <div className="relative aspect-video w-full">

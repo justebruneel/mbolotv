@@ -81,6 +81,9 @@ function HomeView() {
   const recommendations = useRecommendations();
 
   const liveMatches = (liveMatchesQuery.data?.items ?? []).filter((match) => match.state === 'LIVE').slice(0, 12);
+  // Dernière chaîne vue : sa carte est surlignée et recentrée dans sa rangée
+  // au retour depuis le lecteur.
+  const highlightId = useSettingsStore((state) => state.lastWatched[0]?.channelId);
 
   if (channelsQuery.isLoading && pool.length === 0) {
     return (
@@ -95,11 +98,11 @@ function HomeView() {
       <div className="space-y-9 pt-6 md:pt-8">
         <FeaturedAuto />
 
-        {continueChannels.length > 0 && <NetflixRow title="Reprendre" subtitle="Continuer à regarder" channels={continueChannels} />}
+        {continueChannels.length > 0 && <NetflixRow title="Reprendre" subtitle="Continuer à regarder" channels={continueChannels} highlightId={highlightId} />}
 
-        {nowPlayingRow.length >= 4 && <NetflixRow title="Programmes en cours" channels={nowPlayingRow} />}
+        {nowPlayingRow.length >= 4 && <NetflixRow title="Programmes en cours" channels={nowPlayingRow} highlightId={highlightId} />}
 
-        {favChannels.length > 0 && <NetflixRow title="Mes favoris" channels={favChannels} seeAllHref="/favorites" />}
+        {favChannels.length > 0 && <NetflixRow title="Mes favoris" channels={favChannels} seeAllHref="/favorites" highlightId={highlightId} />}
 
         {recommendations.countryRow.length >= 4 && (
           <NetflixRow
@@ -112,10 +115,11 @@ function HomeView() {
             }
             subtitle={recommendations.countrySource === 'geo' ? 'Mis en avant pour votre pays' : 'Votre pays'}
             channels={recommendations.countryRow}
+            highlightId={highlightId}
           />
         )}
 
-        {recommendations.forYou.length >= 4 && <NetflixRow title="Recommandés pour toi" channels={recommendations.forYou} />}
+        {recommendations.forYou.length >= 4 && <NetflixRow title="Recommandés pour toi" channels={recommendations.forYou} highlightId={highlightId} />}
 
         {liveMatches.length > 0 && (
           <section className="group/row relative">
@@ -135,6 +139,7 @@ function HomeView() {
             subtitle={`${category.channelCount ?? 0}`}
             slug={category.slug}
             seeAllHref={`/live?category=${category.slug}`}
+            highlightId={highlightId}
           />
         ))}
 
