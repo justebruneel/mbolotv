@@ -9,6 +9,7 @@ import { useSettingsStore } from '../../../../shared/stores/settings';
 import { internalNavigationCount } from '../../../../shared/components/RouteTracker';
 import { buildWatchHref, formatCategoryName } from '../../../../features/live-tv/utils';
 import { NetflixRow } from '../../../../features/live-tv/components/NetflixRow';
+import { UpNextList } from '../../../../features/live-tv/components/UpNextList';
 import { useQueries } from '@tanstack/react-query';
 import { apiGet } from '../../../../shared/api/client';
 import type { Channel } from '@mbolo/contracts';
@@ -257,184 +258,205 @@ export default function WatchPage() {
 
   return (
     <main className="animate-fade-in pb-16">
-      {/* ================= PLAYER ================= */}
-      <div className={`relative w-full bg-black ${theatre ? 'rounded-none' : ''}`} onMouseMove={bumpChrome} onTouchStart={bumpChrome}>
-        <div className={theatre ? 'mx-auto max-w-none' : 'mx-auto max-w-[1600px]'}>
-          {playQuery.isLoading ? (
-            <div className="flex aspect-video max-h-[82vh] w-full items-center justify-center">
-              <Spinner />
-            </div>
-          ) : playUrls.length > 0 ? (
-            <Player
-              key={channelId}
-              urls={playUrls}
-              title={channel.name}
-              initialVolume={volume}
-              initialLevel={preferredLevel}
-              initialDataSaver={dataSaver}
-              onVolumeChange={setVolume}
-              onLevelChange={setPreferredLevel}
-              onDataSaverChange={handleDataSaverChange}
-              onRefreshSource={refetchPlayUrl}
-            />
-          ) : (
-            <div className="flex aspect-video max-h-[82vh] w-full flex-col items-center justify-center gap-3">
-              <EmptyState
-                title="Lecture indisponible"
-                hint={playErrorMessage ?? 'Impossible de récupérer un flux pour cette chaîne.'}
+      {/* ===== PLAYER + FILE « À SUIVRE » : deux colonnes sur desktop, façon YouTube ===== */}
+      {/* En théâtre le wrapper passe pleine largeur et la file latérale disparaît. */}
+      <div className={`mx-auto ${theatre ? 'max-w-none' : 'max-w-[1600px] lg:flex lg:items-start lg:gap-5'}`}>
+        {/* Colonne principale : lecteur + infos */}
+        <div className="min-w-0 flex-1">
+          {/* ================= PLAYER ================= */}
+          <div className="relative w-full bg-black" onMouseMove={bumpChrome} onTouchStart={bumpChrome}>
+            {playQuery.isLoading ? (
+              <div className="flex aspect-video max-h-[82vh] w-full items-center justify-center">
+                <Spinner />
+              </div>
+            ) : playUrls.length > 0 ? (
+              <Player
+                key={channelId}
+                urls={playUrls}
+                title={channel.name}
+                initialVolume={volume}
+                initialLevel={preferredLevel}
+                initialDataSaver={dataSaver}
+                onVolumeChange={setVolume}
+                onLevelChange={setPreferredLevel}
+                onDataSaverChange={handleDataSaverChange}
+                onRefreshSource={refetchPlayUrl}
               />
-              <div className="flex items-center gap-2">
-                <Button variant="primary" onClick={() => void refetchPlayUrl()}>
-                  Réessayer
+            ) : (
+              <div className="flex aspect-video max-h-[82vh] w-full flex-col items-center justify-center gap-3">
+                <EmptyState
+                  title="Lecture indisponible"
+                  hint={playErrorMessage ?? 'Impossible de récupérer un flux pour cette chaîne.'}
+                />
+                <div className="flex items-center gap-2">
+                  <Button variant="primary" onClick={() => void refetchPlayUrl()}>
+                    Réessayer
+                  </Button>
+                  <Button variant="ghost" onClick={goBack}>
+                    ← Retour
+                  </Button>
+                  <Button variant="ghost" onClick={handleReport} className="hidden sm:inline-flex">
+                    Signaler
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Chrome superposé */}
+            <button
+              type="button"
+              onClick={goBack}
+              aria-label="Retour"
+              className={`absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-lg bg-black/50 px-3 py-2 text-sm font-semibold text-white backdrop-blur transition-opacity duration-300 hover:bg-black/70 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+            >
+              <Icon.ChevronLeft size={16} aria-hidden /> Retour
+            </button>
+
+            <div
+              className={`absolute right-4 top-4 flex items-center gap-2 transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+            >
+              {channel.nowPlaying && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-widest text-white">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+                  DIRECT
+                </span>
+              )}
+              {viewersQuery.data && viewersQuery.data.count > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-bold text-white backdrop-blur">
+                  <Icon.Eye size={13} aria-hidden />
+                  {viewersQuery.data.count}
+                </span>
+              )}
+            </div>
+
+            {/* Bouton théâtre (desktop) */}
+            <button
+              type="button"
+              onClick={() => setTheatre((v) => !v)}
+              aria-label={theatre ? 'Quitter le mode théâtre' : 'Mode théâtre'}
+              className={`absolute bottom-4 right-4 hidden items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur hover:bg-black/70 md:inline-flex ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'} transition-opacity`}
+            >
+              {theatre ? <Icon.Minimize size={14} aria-hidden /> : <Icon.Maximize size={14} aria-hidden />}
+              {theatre ? 'Quitter théâtre' : 'Théâtre'}
+            </button>
+          </div>
+
+          {/* ================= BLOC INFOS ================= */}
+          <div className={`px-4 pt-6 md:px-10 ${theatre ? 'bg-surface/30 backdrop-blur' : 'lg:px-0'}`}>
+            <div className="flex flex-wrap items-start gap-4">
+              {channel.logoUrl ? (
+                <img src={channel.logoUrl} alt="" width={56} height={56} loading="lazy" decoding="async" className="h-14 w-14 shrink-0 rounded-xl border border-white/10 bg-white p-1 object-contain shadow-sm" />
+              ) : null}
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="min-w-0 truncate text-xl font-extrabold tracking-tight md:text-2xl">{channel.name}</h1>
+                  {channel.country && <Badge tone="accent" className="shrink-0">{channel.country}</Badge>}
+                  {currentCategory && <Badge tone="accent" className="shrink-0 hidden sm:inline-flex">{formatCategoryName(currentCategory.name)}</Badge>}
+                  {isDown && <Badge tone="accent" className="shrink-0 bg-danger text-white">Hors ligne</Badge>}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <FavoriteToggle channelId={channel.id} />
+                <Button variant="ghost" size="small" onClick={handleShare} aria-label="Partager" className="!rounded-lg">
+                  <Icon.Link size={16} aria-hidden /> <span className="hidden sm:inline">Partager</span>
                 </Button>
-                <Button variant="ghost" onClick={goBack}>
-                  ← Retour
-                </Button>
-                <Button variant="ghost" onClick={handleReport} className="hidden sm:inline-flex">
-                  Signaler
-                </Button>
+                {isDown && (
+                  <Button variant="ghost" size="small" onClick={handleReport} aria-label="Signaler chaîne hors ligne">
+                    Signaler
+                  </Button>
+                )}
+                <div className="flex items-center gap-1 rounded-xl border border-border bg-surface p-1">
+                  <Button variant="ghost" size="small" onClick={() => navigate('prev')} aria-label="Chaîne précédente" className="!rounded-lg">
+                    <Icon.ChevronLeft size={16} />
+                  </Button>
+                  <Button variant="ghost" size="small" onClick={() => navigate('next')} aria-label="Chaîne suivante" className="!rounded-lg">
+                    <Icon.ChevronRight size={16} />
+                  </Button>
+                </div>
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Chrome superposé */}
-        <button
-          type="button"
-          onClick={goBack}
-          aria-label="Retour"
-          className={`absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-lg bg-black/50 px-3 py-2 text-sm font-semibold text-white backdrop-blur transition-opacity duration-300 hover:bg-black/70 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-        >
-          <Icon.ChevronLeft size={16} aria-hidden /> Retour
-        </button>
-
-        <div
-          className={`absolute right-4 top-4 flex items-center gap-2 transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-        >
-          {channel.nowPlaying && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-widest text-white">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-              DIRECT
-            </span>
-          )}
-          {viewersQuery.data && viewersQuery.data.count > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-bold text-white backdrop-blur">
-              <Icon.Eye size={13} aria-hidden />
-              {viewersQuery.data.count}
-            </span>
-          )}
-        </div>
-
-        {/* Bouton théâtre (desktop) */}
-        <button
-          type="button"
-          onClick={() => setTheatre((v) => !v)}
-          aria-label={theatre ? 'Quitter le mode théâtre' : 'Mode théâtre'}
-          className={`absolute bottom-4 right-4 hidden items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur hover:bg-black/70 md:inline-flex ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'} transition-opacity`}
-        >
-          {theatre ? <Icon.Minimize size={14} aria-hidden /> : <Icon.Maximize size={14} aria-hidden />}
-          {theatre ? 'Quitter théâtre' : 'Théâtre'}
-        </button>
-      </div>
-
-      {/* ================= BLOC INFOS ================= */}
-      <div className={`mx-auto px-4 pt-6 md:px-10 ${theatre ? 'max-w-none bg-surface/30 backdrop-blur' : 'max-w-[1600px]'}`}>
-        <div className="flex flex-wrap items-start gap-4">
-          {channel.logoUrl ? (
-            <img src={channel.logoUrl} alt="" width={56} height={56} loading="lazy" decoding="async" className="h-14 w-14 shrink-0 rounded-xl border border-white/10 bg-white p-1 object-contain shadow-sm" />
-          ) : null}
-
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="min-w-0 truncate text-xl font-extrabold tracking-tight md:text-2xl">{channel.name}</h1>
-              {channel.country && <Badge tone="accent" className="shrink-0">{channel.country}</Badge>}
-              {currentCategory && <Badge tone="accent" className="shrink-0 hidden sm:inline-flex">{formatCategoryName(currentCategory.name)}</Badge>}
-              {isDown && <Badge tone="accent" className="shrink-0 bg-danger text-white">Hors ligne</Badge>}
-            </div>
-          </div>
-
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <FavoriteToggle channelId={channel.id} />
-            <Button variant="ghost" size="small" onClick={handleShare} aria-label="Partager" className="!rounded-lg">
-              <Icon.Link size={16} aria-hidden /> <span className="hidden sm:inline">Partager</span>
-            </Button>
-            {isDown && (
-              <Button variant="ghost" size="small" onClick={handleReport} aria-label="Signaler chaîne hors ligne">
-                Signaler
-              </Button>
+            {now && (
+              <div className="mt-3 h-[3px] overflow-hidden rounded-full bg-surface-2">
+                <ProgrammeProgressInline startsAt={now.startsAt} endsAt={now.endsAt} />
+              </div>
             )}
-            <div className="flex items-center gap-1 rounded-xl border border-border bg-surface p-1">
-              <Button variant="ghost" size="small" onClick={() => navigate('prev')} aria-label="Chaîne précédente" className="!rounded-lg">
-                <Icon.ChevronLeft size={16} />
-              </Button>
-              <Button variant="ghost" size="small" onClick={() => navigate('next')} aria-label="Chaîne suivante" className="!rounded-lg">
-                <Icon.ChevronRight size={16} />
-              </Button>
-            </div>
+
+            {/* EPG strip : 6 prochains programmes enrichis TMDB */}
+            {strip.length > 0 && (
+              <div className="mt-4 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {strip.map((prog) => {
+                  const enriched = prog as unknown as {
+                    type?: string | null;
+                    posterUrl?: string | null;
+                    backdropUrl?: string | null;
+                    trailerUrl?: string | null;
+                    genres?: string[] | null;
+                    year?: number | null;
+                    seasonNumber?: number | null;
+                    episodeNumber?: number | null;
+                  };
+                  const thumb = enriched.backdropUrl ?? enriched.posterUrl ?? prog.imageUrl ?? null;
+                  return (
+                    <div
+                      key={prog.id}
+                      className="group relative w-[240px] shrink-0 overflow-hidden rounded-xl border border-border bg-surface text-left transition hover:shadow-md sm:w-[260px]"
+                    >
+                      {thumb && (
+                        <div className="h-20 w-full overflow-hidden bg-surface-2">
+                          <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                        </div>
+                      )}
+                      <div className="p-3">
+                        <div className="flex items-center gap-1.5">
+                          {enriched.type && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">{enriched.type}</span>}
+                          {enriched.year && <span className="text-[11px] text-muted">{enriched.year}</span>}
+                          {enriched.seasonNumber && <span className="text-[11px] text-muted">S{enriched.seasonNumber} E{enriched.episodeNumber ?? ''}</span>}
+                        </div>
+                        <p className="mt-1 truncate text-xs font-bold text-foreground">{prog.title}</p>
+                        {enriched.genres && enriched.genres.length > 0 && <p className="truncate text-[11px] text-muted">{enriched.genres.slice(0, 2).join(' · ')}</p>}
+                        <p className="text-[11px] text-muted">
+                          {time(prog.startsAt)} – {time(prog.endsAt)}
+                        </p>
+                        {prog.description && <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">{prog.description}</p>}
+                        {enriched.trailerUrl && (
+                          <a
+                            href={enriched.trailerUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-bold text-white hover:bg-danger/90"
+                          >
+                            <Icon.Play size={12} aria-hidden /> Bande-annonce
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="mt-2 text-xs text-faint">Raccourcis : ← → zapper · k pause · f plein écran · m mute</p>
           </div>
         </div>
 
-        {now && (
-          <div className="mt-3 h-[3px] overflow-hidden rounded-full bg-surface-2">
-            <ProgrammeProgressInline startsAt={now.startsAt} endsAt={now.endsAt} />
-          </div>
+        {/* File « À suivre » : liste zapable collée à droite du lecteur
+            (desktop uniquement ; en théâtre la rangée Similaires la remplace) */}
+        {!theatre && similar.length > 0 && (
+          <aside
+            aria-label="Chaînes à suivre"
+            className="hidden lg:sticky lg:top-[72px] lg:block lg:max-h-[calc(100vh-88px)] lg:w-[360px] lg:shrink-0 lg:overflow-y-auto lg:pr-1.5 [scrollbar-width:thin] xl:w-[400px]"
+          >
+            <UpNextList
+              title="À suivre"
+              channels={similar}
+              context={{ category, country, q }}
+              seeAllHref={similarSlug ? `/live?category=${similarSlug}` : category ? `/live?category=${category}` : undefined}
+            />
+          </aside>
         )}
-
-        {/* EPG strip : 6 prochains programmes enrichis TMDB */}
-        {strip.length > 0 && (
-          <div className="mt-4 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {strip.map((prog) => {
-              const enriched = prog as unknown as {
-                type?: string | null;
-                posterUrl?: string | null;
-                backdropUrl?: string | null;
-                trailerUrl?: string | null;
-                genres?: string[] | null;
-                year?: number | null;
-                seasonNumber?: number | null;
-                episodeNumber?: number | null;
-              };
-              const thumb = enriched.backdropUrl ?? enriched.posterUrl ?? prog.imageUrl ?? null;
-              return (
-                <div
-                  key={prog.id}
-                  className="group relative w-[240px] shrink-0 overflow-hidden rounded-xl border border-border bg-surface text-left transition hover:shadow-md sm:w-[260px]"
-                >
-                  {thumb && (
-                    <div className="h-20 w-full overflow-hidden bg-surface-2">
-                      <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
-                    </div>
-                  )}
-                  <div className="p-3">
-                    <div className="flex items-center gap-1.5">
-                      {enriched.type && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">{enriched.type}</span>}
-                      {enriched.year && <span className="text-[11px] text-muted">{enriched.year}</span>}
-                      {enriched.seasonNumber && <span className="text-[11px] text-muted">S{enriched.seasonNumber} E{enriched.episodeNumber ?? ''}</span>}
-                    </div>
-                    <p className="mt-1 truncate text-xs font-bold text-foreground">{prog.title}</p>
-                    {enriched.genres && enriched.genres.length > 0 && <p className="truncate text-[11px] text-muted">{enriched.genres.slice(0, 2).join(' · ')}</p>}
-                    <p className="text-[11px] text-muted">
-                      {time(prog.startsAt)} – {time(prog.endsAt)}
-                    </p>
-                    {prog.description && <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">{prog.description}</p>}
-                    {enriched.trailerUrl && (
-                      <a
-                        href={enriched.trailerUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-2 inline-flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-bold text-white hover:bg-danger/90"
-                      >
-                        <Icon.Play size={12} aria-hidden /> Bande-annonce
-                      </a>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <p className="mt-2 text-xs text-faint">Raccourcis : ← → zapper · k pause · f plein écran · m mute</p>
       </div>
 
       {/* Toast */}
@@ -452,8 +474,9 @@ export default function WatchPage() {
       )}
 
       {/* ================= CHAÎNES SIMILAIRES ================= */}
+      {/* Masquée sur desktop hors théâtre : la file « À suivre » la remplace. */}
       {similar.length > 0 && (
-        <div className="mt-10">
+        <div className={`mt-10 ${theatre ? '' : 'lg:hidden'}`}>
           <NetflixRow
             title={similarTitle}
             subtitle={`${similar.length}`}
