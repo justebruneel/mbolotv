@@ -9,5 +9,6 @@ import { ChannelsService } from './channels.service';
   imports: [AccessModule, StreamingModule, StorageModule],
   controllers: [ChannelsController],
   providers: [ChannelsService],
+  exports: [ChannelsService],
 })
 export class ChannelsModule {}
