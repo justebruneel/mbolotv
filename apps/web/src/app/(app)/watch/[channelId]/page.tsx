@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChannel, useCategories, useChannelEpg, useChannelRow, useChannelViewers, useInfiniteChannels, usePlayUrl, useActivityHeartbeat } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
 import { useSettingsStore } from '../../../../shared/stores/settings';
+import { useFavoritesStore } from '../../../../shared/stores/favorites';
 import { internalNavigationCount } from '../../../../shared/components/RouteTracker';
 import { buildWatchHref, formatCategoryName } from '../../../../features/live-tv/utils';
 import { NetflixRow } from '../../../../features/live-tv/components/NetflixRow';
@@ -16,6 +17,11 @@ import type { Channel } from '@mbolo/contracts';
 
 const PAGE_SIZE = 48;
 const CHROME_HIDE_DELAY_MS = 3000;
+
+// Vignette du mini-lecteur (mobile) : au-dessus des onglets bas, sous les menus.
+const PLAYER_MINI = 'fixed bottom-[calc(68px+env(safe-area-inset-bottom))] right-3 z-40 w-[232px] overflow-hidden rounded-xl border border-border bg-black shadow-2xl';
+// Chips de la barre d'actions mobile (favori / partage / zap).
+const ACTION_CHIP = 'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-4 text-xs font-bold text-foreground transition hover:bg-surface-2';
 
 function time(iso: string): string {
   return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -69,6 +75,8 @@ export default function WatchPage() {
   const recordWatch = useSettingsStore((state) => state.recordWatch);
   const lastNonWatchPath = useSettingsStore((state) => state.lastNonWatchPath);
   const setLastWatchedChannelId = useSettingsStore((state) => state.setLastWatchedChannelId);
+  const isFavorite = useFavoritesStore((state) => state.ids.includes(channelId));
+  const toggleFavorite = useFavoritesStore((state) => state.toggle);
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
   const playQuery = usePlayUrl(channelId);
@@ -116,6 +124,47 @@ export default function WatchPage() {
 
   // Théâtre
   const [theatre, setTheatre] = useState(false);
+
+  // Mini-lecteur (mobile) : passé le bas du lecteur, il se réduît en vignette
+  // flottante et la lecture continue pendant qu'on parcourt la suite. Un
+  // espace-témoin reste en flux pour ne pas faire sauter le scroll.
+  const playerBoxRef = useRef<HTMLDivElement | null>(null);
+  const [mobileViewport, setMobileViewport] = useState(false);
+  const [mini, setMini] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const onChange = (): void => setMobileViewport(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  useEffect(() => {
+    if (!mobileViewport) {
+      setMini(false);
+      return;
+    }
+    let raf = 0;
+    const update = (): void => {
+      raf = 0;
+      const el = playerBoxRef.current;
+      if (!el) return;
+      // Mini dès que le bord bas du lecteur (ou de son espace-témoin) sort en haut.
+      const next = el.getBoundingClientRect().bottom < 0;
+      setMini((prev) => (prev === next ? prev : next));
+    };
+    const onScroll = (): void => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, [mobileViewport]);
+  const restorePlayer = useCallback((): void => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
   // Toast
   const [toast, setToast] = useState<string | null>(null);
   const showToast = useCallback((msg: string) => {
@@ -243,6 +292,11 @@ export default function WatchPage() {
   const similarTitle = currentCategory
     ? `Similaires · ${formatCategoryName(currentCategory.name)}`
     : 'Chaînes similaires';
+  const similarSeeAllHref = similarSlug
+    ? `/live?category=${similarSlug}`
+    : category
+      ? `/live?category=${category}`
+      : undefined;
   const continueChannels = useContinueChannels();
   const isDown = channelQuery.data?.healthStatus === 'DOWN' || playQuery.error?.message?.includes('404');
 
@@ -263,8 +317,15 @@ export default function WatchPage() {
       <div className={`mx-auto ${theatre ? 'max-w-none' : 'max-w-[1600px] lg:flex lg:items-start lg:gap-5'}`}>
         {/* Colonne principale : lecteur + infos */}
         <div className="min-w-0 flex-1">
+          {/* En mini-lecteur : espace-témoin en flux, même hauteur que le lecteur */}
+          {mini && <div ref={playerBoxRef} className="aspect-video w-full bg-black" aria-hidden="true" />}
           {/* ================= PLAYER ================= */}
-          <div className="relative w-full bg-black" onMouseMove={bumpChrome} onTouchStart={bumpChrome}>
+          <div
+            ref={mini ? undefined : playerBoxRef}
+            className={mini ? PLAYER_MINI : 'relative w-full bg-black'}
+            onMouseMove={bumpChrome}
+            onTouchStart={bumpChrome}
+          >
             {playQuery.isLoading ? (
               <div className="flex aspect-video max-h-[82vh] w-full items-center justify-center">
                 <Spinner />
@@ -302,43 +363,70 @@ export default function WatchPage() {
               </div>
             )}
 
-            {/* Chrome superposé */}
-            <button
-              type="button"
-              onClick={goBack}
-              aria-label="Retour"
-              className={`absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-lg bg-black/50 px-3 py-2 text-sm font-semibold text-white backdrop-blur transition-opacity duration-300 hover:bg-black/70 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-            >
-              <Icon.ChevronLeft size={16} aria-hidden /> Retour
-            </button>
+            {!mini && (
+              <>
+                {/* Chrome superposé */}
+                <button
+                  type="button"
+                  onClick={goBack}
+                  aria-label="Retour"
+                  className={`absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-lg bg-black/50 px-3 py-2 text-sm font-semibold text-white backdrop-blur transition-opacity duration-300 hover:bg-black/70 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+                >
+                  <Icon.ChevronLeft size={16} aria-hidden /> Retour
+                </button>
 
-            <div
-              className={`absolute right-4 top-4 flex items-center gap-2 transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-            >
-              {channel.nowPlaying && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-widest text-white">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-                  DIRECT
-                </span>
-              )}
-              {viewersQuery.data && viewersQuery.data.count > 0 && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-bold text-white backdrop-blur">
-                  <Icon.Eye size={13} aria-hidden />
-                  {viewersQuery.data.count}
-                </span>
-              )}
-            </div>
+                <div
+                  className={`absolute right-4 top-4 flex items-center gap-2 transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+                >
+                  {channel.nowPlaying && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-widest text-white">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+                      DIRECT
+                    </span>
+                  )}
+                  {viewersQuery.data && viewersQuery.data.count > 0 && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-bold text-white backdrop-blur">
+                      <Icon.Eye size={13} aria-hidden />
+                      {viewersQuery.data.count}
+                    </span>
+                  )}
+                </div>
 
-            {/* Bouton théâtre (desktop) */}
-            <button
-              type="button"
-              onClick={() => setTheatre((v) => !v)}
-              aria-label={theatre ? 'Quitter le mode théâtre' : 'Mode théâtre'}
-              className={`absolute bottom-4 right-4 hidden items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur hover:bg-black/70 md:inline-flex ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'} transition-opacity`}
-            >
-              {theatre ? <Icon.Minimize size={14} aria-hidden /> : <Icon.Maximize size={14} aria-hidden />}
-              {theatre ? 'Quitter théâtre' : 'Théâtre'}
-            </button>
+                {/* Bouton théâtre (desktop) */}
+                <button
+                  type="button"
+                  onClick={() => setTheatre((v) => !v)}
+                  aria-label={theatre ? 'Quitter le mode théâtre' : 'Mode théâtre'}
+                  className={`absolute bottom-4 right-4 hidden items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur hover:bg-black/70 md:inline-flex ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'} transition-opacity`}
+                >
+                  {theatre ? <Icon.Minimize size={14} aria-hidden /> : <Icon.Maximize size={14} aria-hidden />}
+                  {theatre ? 'Quitter théâtre' : 'Théâtre'}
+                </button>
+              </>
+            )}
+
+            {/* Mini-lecteur : un tap n'importe où rouvre en grand, ✕ ferme */}
+            {mini && (
+              <>
+                <button type="button" onClick={restorePlayer} aria-label="Agrandir le lecteur" className="absolute inset-0 z-10" />
+                <button
+                  type="button"
+                  onClick={restorePlayer}
+                  aria-label="Agrandir le lecteur"
+                  className="absolute left-1.5 top-1.5 z-20 rounded-full bg-black/70 p-1.5 text-white backdrop-blur"
+                >
+                  <Icon.Maximize size={13} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  onClick={goBack}
+                  aria-label="Fermer le lecteur et revenir en arrière"
+                  className="absolute right-1.5 top-1.5 z-20 rounded-full bg-black/70 p-1.5 text-white backdrop-blur"
+                >
+                  <Icon.X size={13} aria-hidden />
+                </button>
+              </>
+            )}
           </div>
 
           {/* ================= BLOC INFOS ================= */}
@@ -357,7 +445,7 @@ export default function WatchPage() {
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <div className="hidden shrink-0 flex-wrap items-center gap-2 lg:flex">
                 <FavoriteToggle channelId={channel.id} />
                 <Button variant="ghost" size="small" onClick={handleShare} aria-label="Partager" className="!rounded-lg">
                   <Icon.Link size={16} aria-hidden /> <span className="hidden sm:inline">Partager</span>
@@ -376,6 +464,28 @@ export default function WatchPage() {
                   </Button>
                 </div>
               </div>
+            </div>
+
+            {/* Barre d'actions mobile : chips étiquetées façon YouTube */}
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:hidden">
+              <button
+                type="button"
+                onClick={() => toggleFavorite(channelId)}
+                aria-pressed={isFavorite}
+                className={`${ACTION_CHIP} ${isFavorite ? 'border-accent bg-accent/10 text-accent' : ''}`}
+              >
+                <Icon.Heart size={15} fill={isFavorite ? 'currentColor' : 'none'} aria-hidden />
+                {isFavorite ? 'Dans mes favoris' : 'Favori'}
+              </button>
+              <button type="button" onClick={handleShare} className={ACTION_CHIP}>
+                <Icon.Link size={15} aria-hidden /> Partager
+              </button>
+              <button type="button" onClick={() => navigate('prev')} className={ACTION_CHIP}>
+                <Icon.ChevronLeft size={15} aria-hidden /> Précédente
+              </button>
+              <button type="button" onClick={() => navigate('next')} className={ACTION_CHIP}>
+                Suivante <Icon.ChevronRight size={15} aria-hidden />
+              </button>
             </div>
 
             {now && (
@@ -440,6 +550,20 @@ export default function WatchPage() {
 
             <p className="mt-2 text-xs text-faint">Raccourcis : ← → zapper · k pause · f plein écran · m mute</p>
           </div>
+
+          {/* Liste « À suivre » verticale (mobile/tablette) : remplace la rangée
+              Similaires ; masquée en théâtre, qui réaffiche la rangée en bas. */}
+          {!theatre && similar.length > 0 && (
+            <div className="mt-5 px-4 pb-2 md:px-10 lg:hidden">
+              <UpNextList
+                title="À suivre"
+                channels={similar}
+                context={{ category, country, q }}
+                collapsedTo={6}
+                seeAllHref={similarSeeAllHref}
+              />
+            </div>
+          )}
         </div>
 
         {/* File « À suivre » : liste zapable collée à droite du lecteur
@@ -453,7 +577,7 @@ export default function WatchPage() {
               title="À suivre"
               channels={similar}
               context={{ category, country, q }}
-              seeAllHref={similarSlug ? `/live?category=${similarSlug}` : category ? `/live?category=${category}` : undefined}
+              seeAllHref={similarSeeAllHref}
             />
           </aside>
         )}
@@ -473,15 +597,16 @@ export default function WatchPage() {
         </div>
       )}
 
-      {/* ================= CHAÎNES SIMILAIRES ================= */}
-      {/* Masquée sur desktop hors théâtre : la file « À suivre » la remplace. */}
-      {similar.length > 0 && (
-        <div className={`mt-10 ${theatre ? '' : 'lg:hidden'}`}>
+      {/* ================= CHAÎNES SIMILAIRES (théâtre) ================= */}
+      {/* Hors théâtre, la file « À suivre » la remplace : latérale sur desktop,
+          verticale sous le bloc infos sur mobile. */}
+      {theatre && similar.length > 0 && (
+        <div className="mt-10">
           <NetflixRow
             title={similarTitle}
             subtitle={`${similar.length}`}
             channels={similar}
-            seeAllHref={similarSlug ? `/live?category=${similarSlug}` : category ? `/live?category=${category}` : undefined}
+            seeAllHref={similarSeeAllHref}
           />
         </div>
       )}

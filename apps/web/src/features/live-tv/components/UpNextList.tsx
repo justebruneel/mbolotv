@@ -2,6 +2,7 @@
 
 import type { Channel } from '@mbolo/contracts';
 import Link from 'next/link';
+import { useState } from 'react';
 import { ProgrammeProgress } from '@mbolo/ui';
 import { buildWatchHref, channelBadge, channelInitials, type WatchContext } from '../utils';
 import { ChevronRightIcon } from './Icons';
@@ -21,13 +22,18 @@ export function UpNextList({
   channels,
   context,
   seeAllHref,
+  collapsedTo,
 }: {
   title: string;
   channels: Channel[];
   /** Contexte (dossier/pays/recherche) conservé par les liens de zap. */
   context?: WatchContext;
   seeAllHref?: string;
+  /** Mobile : liste repliée sur les N premières chaînes, bouton « Tout afficher ». */
+  collapsedTo?: number;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded || collapsedTo === undefined ? channels : channels.slice(0, collapsedTo);
   return (
     <div className="py-1">
       <div className="flex items-end justify-between gap-2 px-1 pb-2">
@@ -43,10 +49,21 @@ export function UpNextList({
       </div>
 
       <div className="flex flex-col gap-1">
-        {channels.map((channel) => (
+        {visible.map((channel) => (
           <UpNextCard key={channel.id} channel={channel} context={context} />
         ))}
       </div>
+
+      {collapsedTo !== undefined && channels.length > collapsedTo && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          className="mt-1 w-full rounded-xl border border-border bg-surface py-2.5 text-xs font-bold text-muted transition hover:bg-surface-2 hover:text-foreground"
+        >
+          {expanded ? 'Réduire' : `Tout afficher (${channels.length})`}
+        </button>
+      )}
     </div>
   );
 }
