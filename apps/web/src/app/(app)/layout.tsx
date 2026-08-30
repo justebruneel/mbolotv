@@ -7,7 +7,7 @@ import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
 import { GlobalPlayer } from '../../shared/components/GlobalPlayer';
 import { ThemeToggle } from '../../shared/components/ThemeToggle';
-import { useActiveUsers, useActivityHeartbeat } from '../../shared/api/queries';
+import { useActiveUsers, useActivityHeartbeat, useFavoritesSync } from '../../shared/api/queries';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
 import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/access';
 
@@ -28,6 +28,8 @@ function ShellContent({ children }: { children: ReactNode }) {
   const active = NAV_ITEMS.find((item) => pathname?.startsWith(item.href))?.href;
   const { data: activeData } = useActiveUsers();
   useActivityHeartbeat();
+  // Favoris : synchronisation initiale avec la liste serveur de l'appareil.
+  useFavoritesSync();
 
   return (
     <>

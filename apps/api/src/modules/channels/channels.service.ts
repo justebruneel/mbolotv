@@ -41,6 +41,17 @@ export class ChannelsService {
     const rows = await this.prisma.channel.groupBy({ by: ['country'], where: { isVisible: true, ...categoryClause, country: { not: null }, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } }, _count: { country: true } });
     return rows.filter((row: CountryRow) => row.country !== null).map((row: CountryRow) => ({ slug: row.country as string, name: row.country as string, count: row._count.country })).sort((a: CountryOption, b: CountryOption) => b.count - a.count);
   }
+  /** Chaînes précises par ids (favoris) : même sérialisation que list(), ordre à la charge de l'appelant. */
+  async listByIds(ids: string[]): Promise<ChannelListResponse> {
+    if (ids.length === 0) return { items: [], total: 0, hasMore: false };
+    const hiddenIds = await this.hiddenCategoryIds();
+    const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
+    const channels = await this.prisma.channel.findMany({ where: { id: { in: ids }, isVisible: true, ...categoryClause, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } } });
+    const nowPlaying = await this.findNowPlaying(channels.map((channel: { id: string }) => channel.id));
+    const healthByChannel = await this.findHealthStatus(channels.map((channel: { id: string }) => channel.id));
+    const items = await Promise.all(channels.map((channel: ListedChannel) => this.serialize(channel, nowPlaying.get(channel.id) ?? null, healthByChannel.get(channel.id) ?? null)));
+    return { items, total: items.length, hasMore: false };
+  }
   async findOne(id: string): Promise<Channel> {
     const hiddenIds = await this.hiddenCategoryIds();
     const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};

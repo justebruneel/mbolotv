@@ -2,21 +2,16 @@
 
 import { Icon, Spinner } from '@mbolo/ui';
 import Link from 'next/link';
-import { useMemo } from 'react';
-import { useChannels } from '../../../shared/api/queries';
-import { useFavoritesStore } from '../../../shared/stores/favorites';
+import { useFavorites } from '../../../shared/api/queries';
 import { ChannelGrid } from '../../../features/live-tv/components/ChannelGrid';
 
 export default function FavoritesPage() {
-  const ids = useFavoritesStore((state) => state.ids);
-  const channelsQuery = useChannels({ limit: 100 });
+  // Liste serveur de l'appareil : chaînes complètes, les plus récemment
+  // ajoutées d'abord — plus de filtre sur les 100 premières du catalogue.
+  const favoritesQuery = useFavorites();
+  const favorites = favoritesQuery.data?.items ?? [];
 
-  const favorites = useMemo(
-    () => (channelsQuery.data?.items ?? []).filter((channel) => ids.includes(channel.id)),
-    [channelsQuery.data, ids],
-  );
-
-  if (channelsQuery.isLoading) {
+  if (favoritesQuery.isLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <Spinner />

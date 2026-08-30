@@ -28,7 +28,6 @@ model Profile {
   name String
   settings Json?
   user User @relation(fields:[userId], references:[id], onDelete:Cascade)
-  favorites Favorite[]
   @@index([userId])
 }
 model Source {
@@ -143,11 +142,13 @@ model MatchStream {
   @@unique([matchId, streamVariantId])
 }
 model Favorite {
-  profileId String
+  deviceId  String
   channelId String
-  profile Profile @relation(fields:[profileId], references:[id], onDelete:Cascade)
-  channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
-  @@id([profileId, channelId])
+  createdAt DateTime @default(now())
+  channel   Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
+
+  @@id([deviceId, channelId])
+  @@index([deviceId, createdAt])
 }
 model AuditLog {
   id String @id @default(cuid())

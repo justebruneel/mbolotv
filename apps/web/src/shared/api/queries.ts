@@ -15,6 +15,7 @@ import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-qu
 import { useEffect } from 'react';
 import { apiGet, apiPost } from './client';
 import { useSettingsStore } from '../stores/settings';
+import { useFavoritesStore } from '../stores/favorites';
 
 export function useCategories() {
   return useQuery({
@@ -155,6 +156,35 @@ export function useChannelViewers(channelId: string, enabled = true) {
     staleTime: 10_000,
     enabled,
   });
+}
+
+/** Favoris de l'appareil : chaînes complètes, les plus récemment ajoutées d'abord. */
+export function useFavorites(enabled = true) {
+  return useQuery({
+    queryKey: ['favorites'],
+    queryFn: () => apiGet<ChannelListResponse>('/favorites'),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+/** Synchronise le store local avec la liste serveur (au montage de l'app) :
+ * au premier passage, les favoris localStorage inconnus du serveur y sont
+ * importés — ensuite le serveur fait foi, pour que les retraits faits sur
+ * un autre appareil ne ressuscitent pas ici. */
+export function useFavoritesSync(): void {
+  useEffect(() => {
+    let cancelled = false;
+    void apiGet<ChannelListResponse>('/favorites')
+      .then((data) => {
+        if (cancelled) return;
+        useFavoritesStore.getState().syncFromServer(data.items.map((channel) => channel.id));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 }
 
 export function useActivityHeartbeat(channelId?: string) {

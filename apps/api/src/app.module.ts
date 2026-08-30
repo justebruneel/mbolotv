@@ -12,6 +12,7 @@ import { CategoriesModule } from './modules/categories/categories.module';
 import { ChannelHealthModule } from './modules/channel-health/channel-health.module';
 import { ChannelsModule } from './modules/channels/channels.module';
 import { EpgModule } from './modules/epg/epg.module';
+import { FavoritesModule } from './modules/favorites/favorites.module';
 import { HealthModule } from './modules/health/health.module';
 import { MatchesModule } from './modules/matches/matches.module';
 import { OwnerAuthModule } from './modules/owner-auth/owner-auth.module';
@@ -41,6 +42,7 @@ import { StreamingModule } from './modules/streaming/streaming.module';
     ChannelHealthModule,
     ChannelsModule,
     EpgModule,
+    FavoritesModule,
     MatchesModule,
     OwnerAuthModule,
     OwnerConsoleModule,

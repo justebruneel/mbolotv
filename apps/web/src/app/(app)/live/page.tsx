@@ -5,12 +5,11 @@ import { Icon, MatchCard, Spinner } from '@mbolo/ui';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef } from 'react';
-import { useCategories, useInfiniteChannels, useMatches, useWideChannels } from '../../../shared/api/queries';
+import { useCategories, useFavorites, useInfiniteChannels, useMatches } from '../../../shared/api/queries';
 import { FeaturedAuto } from '../../../features/live-tv/components/FeaturedAuto';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
 import { useRecommendations } from '../../../features/live-tv/hooks/useRecommendations';
-import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { useSettingsStore } from '../../../shared/stores/settings';
 import { categoryLabel, formatCategoryName } from '../../../features/live-tv/utils';
 import { useQueries } from '@tanstack/react-query';
@@ -45,7 +44,6 @@ function HomeView() {
   const channelsQuery = useInfiniteChannels({}, PAGE_SIZE);
   const categoriesQuery = useCategories();
   const liveMatchesQuery = useMatches('LIVE');
-  const favoritesIds = useFavoritesStore((state) => state.ids);
 
   // Pool de chaînes : première page (48) suffit pour hero + rangées ;
   // NetflixRow charge chaque dossier en lazy, pas besoin de précharger 96.
@@ -71,9 +69,6 @@ function HomeView() {
     [categories],
   );
 
-  // Favoris : une requête large cachée, filtrée par les ids du store.
-  const favChannels = useFavoriteChannels(favoritesIds, pool.length > 0);
-
   // Reprendre : même si 0 favoris, affiche les dernières chaînes vues (lastWatched)
   const continueChannels = useContinueChannels();
 
@@ -84,6 +79,9 @@ function HomeView() {
   // Dernière chaîne vue : sa carte est surlignée et recentrée dans sa rangée
   // au retour depuis le lecteur.
   const highlightId = useSettingsStore((state) => state.lastWatched[0]?.channelId);
+
+  // Favoris : liste serveur de l'appareil (les plus récemment ajoutés d'abord).
+  const favChannels = useFavorites().data?.items ?? [];
 
   if (channelsQuery.isLoading && pool.length === 0) {
     return (
@@ -168,16 +166,6 @@ function MatchLinkInner({ match, channelId }: { match: Match; channelId?: string
       <MatchCard match={match} />
     </Link>
   );
-}
-
-// Rangée de favoris : requête large dédiée (clé propre), filtrée localement.
-function useFavoriteChannels(favoriteIds: string[], enabled: boolean): Channel[] {
-  const wideQuery = useWideChannels(200, enabled && favoriteIds.length > 0);
-  return useMemo(() => {
-    if (favoriteIds.length === 0) return [];
-    const wanted = new Set(favoriteIds);
-    return (wideQuery.data?.items ?? []).filter((channel) => wanted.has(channel.id)).slice(0, 24);
-  }, [favoriteIds, wideQuery.data]);
 }
 
 function useContinueChannels(): Channel[] {
