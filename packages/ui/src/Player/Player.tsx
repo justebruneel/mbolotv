@@ -223,7 +223,20 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); deadlineTimer = retryTimer = null; };
-    const destroy = (): void => { const hls = hlsRef.current; if (hls) { hls.stopLoad(); hls.detachMedia(); hls.destroy(); } hlsRef.current = null; el.removeAttribute('src'); el.load(); };
+    const destroy = (): void => {
+      const hls = hlsRef.current;
+      if (hls) {
+        // Chaque étape est isolée : une exception dans hls.js ne doit jamais
+        // empêcher le nettoyage du <video> (sinon l'ancien flux continue de
+        // jouer en arrière-plan après un changement de chaîne).
+        try { hls.stopLoad(); } catch { /* ignore */ }
+        try { hls.detachMedia(); } catch { /* ignore */ }
+        try { hls.destroy(); } catch { /* ignore */ }
+      }
+      hlsRef.current = null;
+      try { el.pause(); } catch { /* ignore */ }
+      try { el.removeAttribute('src'); el.load(); } catch { /* ignore */ }
+    };
     const bufferAhead = (): number => el.buffered.length === 0 ? 0 : Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
     const updateStats = (latency: number | null = null): void => setStats((c) => ({ ...c, bufferAhead: bufferAhead(), latency }));
     const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); setStats((c) => ({ ...c, startupMs: c.startupMs ?? performance.now() - startupAtRef.current, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); if (deadlineTimer) clearTimeout(deadlineTimer); };
@@ -255,7 +268,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       // retente en muet pour ne jamais rester bloqué sur le spinner ; l'UI
       // propose ensuite de réactiver le son.
       const attemptPlayback = (): void => {
-        if (playbackInitiated || cancelled) return;
+        if (playbackInitiated || cancelled || !el.isConnected) return;
         playbackInitiated = true;
         void el.play().catch(() => {
           if (cancelled) return;
@@ -299,7 +312,17 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
       hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startBufferRef.current) attemptPlayback(); else resumeIfBuffered(); });
     }
-    const onPlaying = (): void => markReady();
+    const onPlaying = (): void => {
+      // Garde-fou déterministe : un <video> détaché du DOM (ancien lecteur
+      // après un changement de chaîne) ne doit JAMAIS jouer — c'est lui qui
+      // volait la lecture en arrière-plan et mettait en pause la chaîne
+      // courante (focus audio du WebView).
+      if (!el.isConnected) {
+        try { el.pause(); } catch { /* ignore */ }
+        return;
+      }
+      markReady();
+    };
     const onCanPlay = (): void => { if (!Hls.isSupported()) markReady(); };
     const onWaiting = (): void => {
       if (!started) return;
@@ -310,7 +333,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       setBuffering(true);
     };
     const resumeIfBuffered = (): void => {
-      if (!started || !stallPauseRef.current) return;
+      if (cancelled || !started || !stallPauseRef.current) return;
       if (bufferAhead() >= RESUME_BUFFER_SECONDS) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
     };
     const onPlayingReset = (): void => { if (started && !stallPauseRef.current) { setBuffering(false); updateStats(); } };
