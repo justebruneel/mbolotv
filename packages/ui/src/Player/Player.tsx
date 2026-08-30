@@ -18,8 +18,21 @@ const MAX_NETWORK_RETRIES = 3;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const STARTUP_DEADLINE_MS = 15_000;
 const MIN_VIABLE_BUFFER_SECONDS = 2;
-const RESUME_BUFFER_SECONDS = 5;
-const STALL_PAUSE_THRESHOLD_SECONDS = 1.5;
+const RESUME_BUFFER_SECONDS = 3;
+const STALL_PAUSE_THRESHOLD_SECONDS = 0.5;
+// Anti-overshoot au démarrage : les premiers fragments arrivent sur une
+// connexion déjà chaude (warmStream + caches fournisseur) et gonflent
+// l'estimation EWMA — l'ABR monte alors sur un niveau que le débit réel ne
+// soutient pas, le buffer se vide, la lecture « rattrape » le préchargé puis
+// se bloque pour recharger. Pendant cette fenêtre, on plafonne l'ABR au
+// niveau le plus haut dont le bitrate tient dans l'estimation conservative
+// du profil réseau ; passé le délai, l'ABR reprend la main avec un buffer
+// déjà fourni et se corrige sans stall.
+const START_WARMUP_MS = 12_000;
+// Seuil de démarrage : 1,5× la durée d'un segment, borné. Avec des segments
+// de 6-10 s, partir avec 2-3 s d'avance garantit un rattrapage au premier
+// fragment lent ; attendre le premier fragment complet évite ce piège.
+const START_BUFFER_MAX_SECONDS = 6;
 const CONTROLS_HIDE_DELAY_MS = 3_000;
 const MOBILE_CONTROLS_HIDE_DELAY_MS = 4_000;
 const GESTURE_THRESHOLD = 40;
@@ -34,6 +47,11 @@ const LEGACY_LEVEL_INDEX_MAX = 10;
 function exponentialDelay(attempt: number): number { return Math.min(1000 * 2 ** attempt, 8000); }
 function formatBitrate(bps: number | undefined): string { if (!bps) return ''; if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`; return `${Math.round(bps / 1000)} kbps`; }
 function heightFromBitrate(bps: number | undefined): number { if (!bps) return 0; if (bps < 500_000) return 360; if (bps < 1_500_000) return 480; if (bps < 3_500_000) return 720; if (bps < 6_000_000) return 1080; return 1440; }
+/** Durée cible d'un segment telle que publiée par la playlist (0 si inconnue). */
+function targetDurationOf(details: unknown): number {
+  const d = details as { targetduration?: number; averagetargetduration?: number; fragments?: Array<{ duration?: number }> } | null | undefined;
+  return d?.targetduration || d?.averagetargetduration || d?.fragments?.[0]?.duration || 0;
+}
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
@@ -114,6 +132,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const isIosRef = useRef(false);
   const startBufferRef = useRef(2);
+  // Durée d'un segment du flux courant (LEVEL_UPDATED) : sert à caler le
+  // seuil de démarrage sur la granularité réelle du flux.
+  const fragDurationRef = useRef(0);
   const stallPauseRef = useRef(false);
   const liveEdgeRef = useRef(0);
   const urlsRef = useRef(urls);
@@ -216,13 +237,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let refreshUsed = false;
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let warmupTimer: ReturnType<typeof setTimeout> | null = null;
     startupAtRef.current = performance.now();
     rebufferCountRef.current = 0;
     stallPauseRef.current = false;
     liveEdgeRef.current = 0;
     setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
-    const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); deadlineTimer = retryTimer = null; };
+    const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); deadlineTimer = retryTimer = warmupTimer = null; };
     const destroy = (): void => {
       const hls = hlsRef.current;
       if (hls) {
@@ -260,6 +282,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     function loadCurrent(): void {
       if (cancelled) return;
       clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
+      fragDurationRef.current = 0;
       if (!Hls.isSupported()) { el.src = urls[urlIndex]; el.load(); return; }
       started = false;
       playbackInitiated = false;
@@ -281,6 +304,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) attemptPlayback(); else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
       startBufferRef.current = profile.startBuffer;
+      // Seuil de démarrage : au moins le plancher du profil, sinon 1,5× la
+      // durée d'un segment (bornée) dès que la playlist la révèle.
+      const startupBufferTarget = (): number => {
+        if (!fragDurationRef.current) return startBufferRef.current;
+        return clamp(fragDurationRef.current * 1.5, startBufferRef.current, START_BUFFER_MAX_SECONDS);
+      };
       // startLevel -1 : l'ABR choisit le niveau de départ selon l'estimation
       // réseau (plus de démarrage forcé en 360p sur bonne connexion).
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 45, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: -1, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
@@ -304,13 +333,25 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         setLevels(discovered);
         networkCapRef.current = profile.capHeight === null ? -1 : Math.max(0, ...discovered.filter((l) => l.height <= profile.capHeight!).map((l) => l.index));
         const dataCap = Math.max(0, ...discovered.filter((l) => l.height <= DATA_SAVER_MAX_HEIGHT).map((l) => l.index));
-        hls.autoLevelCapping = initialDataSaver ? Math.min(networkCapRef.current < 0 ? dataCap : networkCapRef.current, dataCap) : networkCapRef.current;
+        const baseCap = initialDataSaver ? Math.min(networkCapRef.current < 0 ? dataCap : networkCapRef.current, dataCap) : networkCapRef.current;
+        // Warm-up anti-overshoot (voir START_WARMUP_MS) : on plafonne au
+        // niveau le plus haut dont le bitrate tient dans l'estimation
+        // conservative du profil ; un seul niveau bas suffit à en profiter.
+        const safeLevels = discovered.filter((l) => (l.bitrate ? l.bitrate <= profile.estimate : l.height <= 720));
+        const warmCap = safeLevels.length > 0 ? Math.max(0, ...safeLevels.map((l) => l.index)) : -1;
+        const combine = (a: number, b: number): number => (a < 0 ? b : b < 0 ? a : Math.min(a, b));
+        if (warmCap >= 0 && warmCap !== baseCap) {
+          hls.autoLevelCapping = combine(baseCap, warmCap);
+          warmupTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) hls.autoLevelCapping = baseCap; }, START_WARMUP_MS);
+        } else {
+          hls.autoLevelCapping = baseCap;
+        }
         hls.currentLevel = resolveHeightIndex(discovered, preferredHeight);
-        if (bufferAhead() >= startBufferRef.current) attemptPlayback();
+        if (bufferAhead() >= startupBufferTarget()) attemptPlayback();
       });
       hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); } });
-      hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
-      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startBufferRef.current) attemptPlayback(); else resumeIfBuffered(); });
+      hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { fragDurationRef.current = targetDurationOf(data.details) || fragDurationRef.current; const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startupBufferTarget()) attemptPlayback(); else resumeIfBuffered(); });
     }
     const onPlaying = (): void => {
       // Garde-fou déterministe : un <video> détaché du DOM (ancien lecteur
