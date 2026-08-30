@@ -1,12 +1,13 @@
 'use client';
 
-import { Badge, Button, EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
+import { Badge, Button, Icon, Spinner } from '@mbolo/ui';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChannel, useCategories, useChannelEpg, useChannelRow, useChannelViewers, useInfiniteChannels, usePlayUrl, useActivityHeartbeat } from '../../../../shared/api/queries';
+import { useChannel, useCategories, useChannelEpg, useChannelRow, useChannelViewers, useInfiniteChannels } from '../../../../shared/api/queries';
 import { FavoriteToggle } from '../../../../shared/components/FavoriteToggle';
 import { useSettingsStore } from '../../../../shared/stores/settings';
 import { useFavoritesStore } from '../../../../shared/stores/favorites';
+import { usePlayerStore } from '../../../../shared/stores/player';
 import { internalNavigationCount } from '../../../../shared/components/RouteTracker';
 import { buildWatchHref, formatCategoryName } from '../../../../features/live-tv/utils';
 import { NetflixRow } from '../../../../features/live-tv/components/NetflixRow';
@@ -18,8 +19,6 @@ import type { Channel } from '@mbolo/contracts';
 const PAGE_SIZE = 48;
 const CHROME_HIDE_DELAY_MS = 3000;
 
-// Vignette du mini-lecteur (mobile) : au-dessus des onglets bas, sous les menus.
-const PLAYER_MINI = 'fixed bottom-[calc(68px+env(safe-area-inset-bottom))] right-3 z-40 w-[232px] overflow-hidden rounded-xl border border-border bg-black shadow-2xl';
 // Chips de la barre d'actions mobile (favori / partage / zap).
 const ACTION_CHIP = 'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-4 text-xs font-bold text-foreground transition hover:bg-surface-2';
 
@@ -66,12 +65,6 @@ export default function WatchPage() {
   const category = searchParams.get('category') ?? undefined;
   const country = searchParams.get('country') ?? undefined;
   const q = searchParams.get('q') ?? undefined;
-  const volume = useSettingsStore((state) => state.volume);
-  const preferredLevel = useSettingsStore((state) => state.preferredLevel);
-  const dataSaver = useSettingsStore((state) => state.dataSaver);
-  const setVolume = useSettingsStore((state) => state.setVolume);
-  const setPreferredLevel = useSettingsStore((state) => state.setPreferredLevel);
-  const setDataSaver = useSettingsStore((state) => state.setDataSaver);
   const recordWatch = useSettingsStore((state) => state.recordWatch);
   const lastNonWatchPath = useSettingsStore((state) => state.lastNonWatchPath);
   const setLastWatchedChannelId = useSettingsStore((state) => state.setLastWatchedChannelId);
@@ -79,32 +72,17 @@ export default function WatchPage() {
   const toggleFavorite = useFavoritesStore((state) => state.toggle);
   const channelQuery = useChannel(channelId);
   const epgQuery = useChannelEpg(channelId);
-  const playQuery = usePlayUrl(channelId);
   const categoriesQuery = useCategories();
   const channelsQuery = useInfiniteChannels({ category, country, q }, PAGE_SIZE);
   const navChannels = channelsQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const viewersQuery = useChannelViewers(channelId);
-  useActivityHeartbeat(channelId);
-  const playUrls = useMemo(() => (playQuery.data?.url ? [playQuery.data.url] : []), [playQuery.data?.url]);
-  const playErrorMessage = playQuery.error instanceof Error ? playQuery.error.message : null;
-  const refetchPlayUrl = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await playQuery.refetch();
-      return result.isSuccess;
-    } catch {
-      return false;
-    }
-  }, [playQuery]);
 
-  // Bascule Éco = changement réel de source : on re-demande l'URL de play
-  // (eco=1 lu au moment du fetch → transcodeur ~1 Mbps). Le Player recharge
-  // automatiquement quand l'URL change ; si le transcodeur est indisponible,
-  // l'API renvoie le flux direct (repli transparent).
-  const handleDataSaverChange = useCallback((next: boolean) => {
-    const changed = next !== dataSaver;
-    setDataSaver(next);
-    if (changed) void refetchPlayUrl();
-  }, [dataSaver, setDataSaver, refetchPlayUrl]);
+  // Déclare la source au lecteur global : c'est ce qui permet au mini-lecteur
+  // de survivre à une navigation vers /live ou /favorites.
+  const setPlayerSource = usePlayerStore((state) => state.setSource);
+  useEffect(() => {
+    setPlayerSource(channelId, buildWatchHref(channelId, { category, country, q }));
+  }, [channelId, category, country, q, setPlayerSource]);
 
   // Index id → {slug, name} de tout l'arbre des dossiers publiés.
   const categoryIndex = useMemo(() => {
@@ -124,47 +102,6 @@ export default function WatchPage() {
 
   // Théâtre
   const [theatre, setTheatre] = useState(false);
-
-  // Mini-lecteur (mobile) : passé le bas du lecteur, il se réduît en vignette
-  // flottante et la lecture continue pendant qu'on parcourt la suite. Un
-  // espace-témoin reste en flux pour ne pas faire sauter le scroll.
-  const playerBoxRef = useRef<HTMLDivElement | null>(null);
-  const [mobileViewport, setMobileViewport] = useState(false);
-  const [mini, setMini] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    const onChange = (): void => setMobileViewport(mq.matches);
-    onChange();
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-  useEffect(() => {
-    if (!mobileViewport) {
-      setMini(false);
-      return;
-    }
-    let raf = 0;
-    const update = (): void => {
-      raf = 0;
-      const el = playerBoxRef.current;
-      if (!el) return;
-      // Mini dès que le bord bas du lecteur (ou de son espace-témoin) sort en haut.
-      const next = el.getBoundingClientRect().bottom < 0;
-      setMini((prev) => (prev === next ? prev : next));
-    };
-    const onScroll = (): void => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      window.removeEventListener('scroll', onScroll);
-    };
-  }, [mobileViewport]);
-  const restorePlayer = useCallback((): void => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
   // Toast
   const [toast, setToast] = useState<string | null>(null);
   const showToast = useCallback((msg: string) => {
@@ -200,6 +137,21 @@ export default function WatchPage() {
     bumpChrome();
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
+    };
+  }, [bumpChrome]);
+
+  // Le chrome suit la souris/le toucher sur le lecteur global (conteneur fixe
+  // qui recouvre cet emplacement) comme sur la bande chrome elle-même.
+  useEffect(() => {
+    const bump = (event: Event): void => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-player-root],[data-player-chrome]')) bumpChrome();
+    };
+    window.addEventListener('mousemove', bump);
+    window.addEventListener('touchstart', bump);
+    return () => {
+      window.removeEventListener('mousemove', bump);
+      window.removeEventListener('touchstart', bump);
     };
   }, [bumpChrome]);
 
@@ -298,7 +250,7 @@ export default function WatchPage() {
       ? `/live?category=${category}`
       : undefined;
   const continueChannels = useContinueChannels();
-  const isDown = channelQuery.data?.healthStatus === 'DOWN' || playQuery.error?.message?.includes('404');
+  const isDown = channelQuery.data?.healthStatus === 'DOWN';
 
   if (channelQuery.isLoading || !channelQuery.data) {
     return (
@@ -317,116 +269,50 @@ export default function WatchPage() {
       <div className={`mx-auto ${theatre ? 'max-w-none' : 'max-w-[1600px] lg:flex lg:items-start lg:gap-5'}`}>
         {/* Colonne principale : lecteur + infos */}
         <div className="min-w-0 flex-1">
-          {/* En mini-lecteur : espace-témoin en flux, même hauteur que le lecteur */}
-          {mini && <div ref={playerBoxRef} className="aspect-video w-full bg-black" aria-hidden="true" />}
           {/* ================= PLAYER ================= */}
-          <div
-            ref={mini ? undefined : playerBoxRef}
-            className={mini ? PLAYER_MINI : 'relative w-full bg-black'}
-            onMouseMove={bumpChrome}
-            onTouchStart={bumpChrome}
-          >
-            {playQuery.isLoading ? (
-              <div className="flex aspect-video max-h-[82vh] w-full items-center justify-center">
-                <Spinner />
-              </div>
-            ) : playUrls.length > 0 ? (
-              <Player
-                key={channelId}
-                urls={playUrls}
-                title={channel.name}
-                initialVolume={volume}
-                initialLevel={preferredLevel}
-                initialDataSaver={dataSaver}
-                onVolumeChange={setVolume}
-                onLevelChange={setPreferredLevel}
-                onDataSaverChange={handleDataSaverChange}
-                onRefreshSource={refetchPlayUrl}
-              />
-            ) : (
-              <div className="flex aspect-video max-h-[82vh] w-full flex-col items-center justify-center gap-3">
-                <EmptyState
-                  title="Lecture indisponible"
-                  hint={playErrorMessage ?? 'Impossible de récupérer un flux pour cette chaîne.'}
-                />
-                <div className="flex items-center gap-2">
-                  <Button variant="primary" onClick={() => void refetchPlayUrl()}>
-                    Réessayer
-                  </Button>
-                  <Button variant="ghost" onClick={goBack}>
-                    ← Retour
-                  </Button>
-                  <Button variant="ghost" onClick={handleReport} className="hidden sm:inline-flex">
-                    Signaler
-                  </Button>
-                </div>
-              </div>
-            )}
+          {/* Le lecteur est rendu par GlobalPlayer (conteneur fixe recalé en
+              continu sur #watch-player-slot) ; la page réserve l'emplacement
+              et possède le chrome. */}
+          <div className="relative w-full bg-black" data-player-chrome>
+            <div id="watch-player-slot" className="aspect-video w-full" />
 
-            {!mini && (
-              <>
-                {/* Chrome superposé */}
-                <button
-                  type="button"
-                  onClick={goBack}
-                  aria-label="Retour"
-                  className={`absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-lg bg-black/50 px-3 py-2 text-sm font-semibold text-white backdrop-blur transition-opacity duration-300 hover:bg-black/70 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-                >
-                  <Icon.ChevronLeft size={16} aria-hidden /> Retour
-                </button>
+            {/* Chrome superposé */}
+            <button
+              type="button"
+              onClick={goBack}
+              aria-label="Retour"
+              className={`absolute left-4 top-4 z-40 inline-flex items-center gap-1.5 rounded-lg bg-black/50 px-3 py-2 text-sm font-semibold text-white backdrop-blur transition-opacity duration-300 hover:bg-black/70 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+            >
+              <Icon.ChevronLeft size={16} aria-hidden /> Retour
+            </button>
 
-                <div
-                  className={`absolute right-4 top-4 flex items-center gap-2 transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-                >
-                  {channel.nowPlaying && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-widest text-white">
-                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-                      DIRECT
-                    </span>
-                  )}
-                  {viewersQuery.data && viewersQuery.data.count > 0 && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-bold text-white backdrop-blur">
-                      <Icon.Eye size={13} aria-hidden />
-                      {viewersQuery.data.count}
-                    </span>
-                  )}
-                </div>
+            <div
+              className={`absolute right-4 top-4 z-40 flex items-center gap-2 transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+            >
+              {channel.nowPlaying && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-danger/90 px-2.5 py-1 text-[10px] font-bold tracking-widest text-white">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+                  DIRECT
+                </span>
+              )}
+              {viewersQuery.data && viewersQuery.data.count > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-bold text-white backdrop-blur">
+                  <Icon.Eye size={13} aria-hidden />
+                  {viewersQuery.data.count}
+                </span>
+              )}
+            </div>
 
-                {/* Bouton théâtre (desktop) */}
-                <button
-                  type="button"
-                  onClick={() => setTheatre((v) => !v)}
-                  aria-label={theatre ? 'Quitter le mode théâtre' : 'Mode théâtre'}
-                  className={`absolute bottom-4 right-4 hidden items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur hover:bg-black/70 md:inline-flex ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'} transition-opacity`}
-                >
-                  {theatre ? <Icon.Minimize size={14} aria-hidden /> : <Icon.Maximize size={14} aria-hidden />}
-                  {theatre ? 'Quitter théâtre' : 'Théâtre'}
-                </button>
-              </>
-            )}
-
-            {/* Mini-lecteur : un tap n'importe où rouvre en grand, ✕ ferme */}
-            {mini && (
-              <>
-                <button type="button" onClick={restorePlayer} aria-label="Agrandir le lecteur" className="absolute inset-0 z-10" />
-                <button
-                  type="button"
-                  onClick={restorePlayer}
-                  aria-label="Agrandir le lecteur"
-                  className="absolute left-1.5 top-1.5 z-20 rounded-full bg-black/70 p-1.5 text-white backdrop-blur"
-                >
-                  <Icon.Maximize size={13} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  onClick={goBack}
-                  aria-label="Fermer le lecteur et revenir en arrière"
-                  className="absolute right-1.5 top-1.5 z-20 rounded-full bg-black/70 p-1.5 text-white backdrop-blur"
-                >
-                  <Icon.X size={13} aria-hidden />
-                </button>
-              </>
-            )}
+            {/* Bouton théâtre (desktop) */}
+            <button
+              type="button"
+              onClick={() => setTheatre((v) => !v)}
+              aria-label={theatre ? 'Quitter le mode théâtre' : 'Mode théâtre'}
+              className={`absolute bottom-4 right-4 z-40 hidden items-center gap-1.5 rounded-lg bg-black/50 px-2.5 py-1.5 text-xs font-bold text-white backdrop-blur hover:bg-black/70 md:inline-flex ${chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0'} transition-opacity`}
+            >
+              {theatre ? <Icon.Minimize size={14} aria-hidden /> : <Icon.Maximize size={14} aria-hidden />}
+              {theatre ? 'Quitter théâtre' : 'Théâtre'}
+            </button>
           </div>
 
           {/* ================= BLOC INFOS ================= */}

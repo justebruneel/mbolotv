@@ -37,10 +37,11 @@ export function useChannels(params: ChannelQuery) {
   });
 }
 
-export function useChannel(id: string) {
+export function useChannel(id: string, enabled = true) {
   return useQuery({
     queryKey: ['channel', id],
     queryFn: () => apiGet<Channel>(`/channels/${id}`),
+    enabled,
   });
 }
 
@@ -98,7 +99,7 @@ export function useChannelEpg(id: string) {
   });
 }
 
-export function usePlayUrl(id: string) {
+export function usePlayUrl(id: string, enabled = true) {
   return useQuery({
     // Pas d'« eco » dans la clé : basculer Éco en cours de lecture ne doit pas
     // changer l'URL (donc pas de redémarrage du flux) — le plafonnement est
@@ -114,6 +115,7 @@ export function usePlayUrl(id: string) {
     // proxy edge) et embarquent un jeton fournisseur : on force une revalidation
     // réseau au clic après 60 s (refetch) au lieu des 30 min historiques.
     staleTime: 60_000,
+    enabled,
   });
 }
 
