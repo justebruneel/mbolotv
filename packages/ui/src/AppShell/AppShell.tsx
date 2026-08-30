@@ -165,9 +165,9 @@ export function AppShell({ brand, navItems, utilityItems = [], menuActions, acti
 
       <main className={styles.main}>{children}</main>
 
-      {/* Onglets bas mobiles */}
+      {/* Onglets bas mobiles : les 3 premiers navItems + « Plus » */}
       <nav className={styles.bottomTabs} aria-label="Navigation mobile">
-        {navItems.slice(0, 2).map((item) => {
+        {navItems.slice(0, 3).map((item) => {
           const active = item.href === activeHref;
           return (
             <Link

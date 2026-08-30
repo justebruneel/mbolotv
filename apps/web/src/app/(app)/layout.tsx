@@ -12,6 +12,7 @@ import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/acc
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
+  { href: '/epg', label: 'Programmes', icon: <Icon.CalendarDays size={20} /> },
   { href: '/favorites', label: 'Favoris', icon: <Icon.Heart size={20} /> },
 ];
 const UTILITY_ITEMS = [
