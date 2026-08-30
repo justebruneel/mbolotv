@@ -6,6 +6,7 @@ import * as matches from "./matches.js";
 import * as epg from "./epg.js";
 import * as activity from "./activity.js";
 import * as access from "./access.js";
+import * as favorites from "./favorites.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports } from "./owner-routes.js";
 import { scanDueVariants } from "./healthcheck.js";
@@ -20,7 +21,7 @@ function corsHeaders(request, env) {
     .filter(Boolean);
   const origin = request.headers.get("origin");
   const headers = {
-    "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
     "access-control-allow-headers": "content-type,x-device-id,cookie,set-cookie",
     vary: "Origin",
   };
@@ -408,6 +409,30 @@ async function route(ctx, url) {
     );
     if (result.status !== 200) return ctx.fail(result.status, result.message);
     return ctx.json(result.value);
+  }
+
+  // Favoris par appareil — même garde que la lecture : grant actif requis.
+  if (path === "/api/favorites" && method === "GET") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    return ctx.json(await favorites.listFavorites(env, deviceId));
+  }
+
+  const favoriteMatch = path.match(/^\/api\/favorites\/([^/]+)$/);
+  if (favoriteMatch && (method === "PUT" || method === "DELETE")) {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    const channelId = decodeURIComponent(favoriteMatch[1]);
+    const result =
+      method === "PUT"
+        ? await favorites.addFavorite(env, deviceId, channelId)
+        : await favorites.removeFavorite(env, deviceId, channelId);
+    if (result === null) return ctx.fail(404, "Channel not found");
+    return ctx.json(result);
   }
 
   const ownerResponse = await handleOwnerRoute(ctx, url, path, method);

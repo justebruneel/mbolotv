@@ -1,6 +1,6 @@
 import { loadHiddenIds, categoryFilterSql } from "./categories.js";
 
-const VISIBLE_VARIANTS =
+export const VISIBLE_VARIANTS =
   'EXISTS (SELECT 1 FROM "StreamVariant" v WHERE v."channelId" = c.id AND v."isActive" AND (v."healthStatus" IS NULL OR v."healthStatus" = \'OK\'))';
 
 export function resolveLogoUrl(env, logoKey) {
@@ -18,7 +18,7 @@ export function resolveLogoUrl(env, logoKey) {
   return base ? `${base}/uploads/${logoKey}` : null;
 }
 
-async function nowPlayingByChannel(env, channelIds) {
+export async function nowPlayingByChannel(env, channelIds) {
   const map = new Map();
   if (channelIds.length === 0) return map;
   const result = await env.db.query(
@@ -38,7 +38,7 @@ async function nowPlayingByChannel(env, channelIds) {
   return map;
 }
 
-async function healthByChannel(env, channelIds) {
+export async function healthByChannel(env, channelIds) {
   const map = new Map();
   if (channelIds.length === 0) return map;
   const result = await env.db.query(
@@ -54,7 +54,7 @@ async function healthByChannel(env, channelIds) {
   return map;
 }
 
-function serialize(env, row, nowPlaying, healthStatus) {
+export function serialize(env, row, nowPlaying, healthStatus) {
   return {
     id: row.id,
     name: row.name,
