@@ -64,6 +64,34 @@ html {
   overscroll-behavior: none;
 }
 
+/* ---------- Comportement natif (PWA iOS) ----------
+   L'app doit garder sa forme : pas de sélection de texte ni de menu
+   d'appui-long (copier / enregistrer l'image) comme dans un navigateur,
+   pas de zoom double-tap. La sélection reste permise dans les champs et
+   sur les pages de contenu (<article> : docs, contact…). */
+body {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+input,
+textarea,
+select,
+[contenteditable='true'],
+article {
+  -webkit-touch-callout: auto;
+  user-select: text;
+}
+
+/* Console owner : outil de travail, le texte doit rester copiable. */
+.console-selectable {
+  -webkit-touch-callout: auto;
+  user-select: text;
+}
+
 ::selection {
   background: var(--mbolo-accent-muted);
   color: var(--mbolo-text);

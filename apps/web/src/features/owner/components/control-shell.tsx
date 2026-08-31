@@ -26,7 +26,9 @@ export function ControlShell({ children }: { children: ReactNode }) {
 
   return (
     <AppShell brand={<Logo size={26} />} navItems={NAV} activeHref={active} pathname={pathname}>
-      {children}
+      {/* Console = outil de travail : le texte doit rester copiable malgré le
+          comportement natif (user-select: none) appliqué au reste de l'app. */}
+      <div className="console-selectable">{children}</div>
     </AppShell>
   );
 }

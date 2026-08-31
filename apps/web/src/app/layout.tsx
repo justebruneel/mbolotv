@@ -12,8 +12,12 @@ export const metadata: Metadata = {
   applicationName: 'Mbolo TV',
   manifest: '/manifest.webmanifest',
   icons: { icon: '/icon.svg', shortcut: '/icon.svg', apple: '/apple-icon.svg' },
+  // PWA iOS : plein écran immersif, contenu sous la barre de statut
+  // (les safe-areas env() sont déjà gérées par l'AppShell et le body).
+  appleWebApp: { capable: true, title: 'Mbolo TV', statusBarStyle: 'black-translucent' },
 };
-export const viewport: Viewport = { themeColor: [{ color: '#0f1419', media: '(prefers-color-scheme: dark)' }, { color: '#f8f9fa', media: '(prefers-color-scheme: light)' }], width: 'device-width', initialScale: 1, viewportFit: 'cover' };
+// Zoom pinceau et double-tap désactivés : l'app doit garder sa forme native.
+export const viewport: Viewport = { themeColor: [{ color: '#0f1419', media: '(prefers-color-scheme: dark)' }, { color: '#f8f9fa', media: '(prefers-color-scheme: light)' }], width: 'device-width', initialScale: 1, maximumScale: 1, userScalable: false, viewportFit: 'cover' };
 
 const THEME_INIT_SCRIPT = `
 (function() {
