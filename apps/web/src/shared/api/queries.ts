@@ -20,6 +20,7 @@ import { apiGet, apiPost } from './client';
 import { useSettingsStore } from '../stores/settings';
 import { useFavoritesStore } from '../stores/favorites';
 import { useRemindersStore } from '../stores/reminders';
+import { useWhatsNewStore } from '../stores/whatsNew';
 
 export function useCategories() {
   return useQuery({
@@ -189,6 +190,16 @@ export function useAnnouncements(enabled = true) {
     enabled,
     staleTime: 60_000,
   });
+}
+
+/** Nombre d'annonces plus récentes que la dernière lecture (badge menu). */
+export function useUnreadAnnouncements(): number {
+  const { data } = useAnnouncements();
+  const lastReadAt = useWhatsNewStore((state) => state.lastReadAt);
+  const items = data?.items ?? [];
+  if (items.length === 0) return 0;
+  if (!lastReadAt) return items.length;
+  return items.filter((item) => item.createdAt > lastReadAt).length;
 }
 
 /** Synchronise les rappels locaux avec le serveur (au montage de l'app),

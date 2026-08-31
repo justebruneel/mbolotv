@@ -4,8 +4,7 @@ import type { AnnouncementKind } from '@mbolo/contracts';
 import { Icon, Skeleton } from '@mbolo/ui';
 import { useEffect, useRef, useState } from 'react';
 import { useAnnouncements } from '../../../shared/api/queries';
-
-const READ_KEY = 'mbolo:whats-new-read';
+import { useWhatsNewStore } from '../../../shared/stores/whatsNew';
 
 const KIND_TONE: Record<AnnouncementKind, string> = {
   INFO: 'bg-surface-2 text-secondary',
@@ -26,23 +25,19 @@ function formatDate(iso: string): string {
 export default function WhatsNewPage() {
   const announcementsQuery = useAnnouncements();
   const items = announcementsQuery.data?.items ?? [];
-  // Horodatage de la dernière visite, capturé AVANT d'être recalé sur la
-  // plus récente annonce : c'est ce repère qui marque les « Nouveau ».
-  const [previousRead, setPreviousRead] = useState<string | null>(null);
+  // Repère de lecture partagé avec les badges du menu : on capture la valeur
+  // AVANT de la recaler sur la plus récente annonce (sinon plus de « Nouveau »).
+  const lastReadAt = useWhatsNewStore((state) => state.lastReadAt);
+  const markRead = useWhatsNewStore((state) => state.markRead);
+  const [previousRead, setPreviousRead] = useState<string | null | undefined>(undefined);
   const capturedRef = useRef(false);
 
   useEffect(() => {
-    // Les annonces arrivent après le montage : on capture le repère de
-    // lecture une seule fois, à la première réponse non vide.
     if (capturedRef.current || items.length === 0) return;
     capturedRef.current = true;
-    try {
-      setPreviousRead(window.localStorage.getItem(READ_KEY));
-      window.localStorage.setItem(READ_KEY, items[0].createdAt);
-    } catch {
-      setPreviousRead(null);
-    }
-  }, [items]);
+    setPreviousRead(lastReadAt);
+    markRead(items[0].createdAt);
+  }, [items, lastReadAt, markRead]);
 
   return (
     <main className="mx-auto max-w-2xl animate-fade-in px-4 py-6 md:px-10">
@@ -70,7 +65,7 @@ export default function WhatsNewPage() {
       {items.length > 0 && (
         <ul className="mt-6 flex flex-col gap-4">
           {items.map((item) => {
-            const unread = previousRead === null || item.createdAt > previousRead;
+            const unread = previousRead !== undefined && (previousRead === null || item.createdAt > previousRead);
             return (
               <li key={item.id} className={`rounded-2xl border bg-surface p-5 ${unread ? 'border-accent/50 shadow-md shadow-accent/10' : 'border-border'}`}>
                 <div className="flex flex-wrap items-center gap-2">

@@ -5,13 +5,15 @@ import Link from 'next/link';
 import { MoreVertical, Download } from 'lucide-react';
 import styles from './AppShell.module.css';
 
-export interface NavItem { href: string; label: string; icon?: ReactNode; }
+export interface NavItem { href: string; label: string; icon?: ReactNode; badge?: number; }
 export interface MenuSection { label: string; items: NavItem[]; }
 export interface AppShellProps {
   brand: ReactNode;
   navItems: NavItem[];
   /** Sections du menu ⋮ / « Plus » — liens internes à l'app (navigation SPA). */
   menuSections?: MenuSection[];
+  /** Compteur de non-lues : pastille sur le bouton ⋮ et l'onglet « Plus ». */
+  menuBadge?: number;
   activeHref?: string;
   pathname?: string;
   activeUsers?: number;
@@ -32,7 +34,7 @@ interface BeforeInstallPromptEvent extends Event {
 //   .bottomTabs : < 768 px   → onglets bas (3 premiers navItems) + « Plus »
 // Le menu ⋮ / Plus partagé ne contient QUE des liens internes (menuSections)
 // + l'invite d'installation : la navigation principale a déjà ses onglets.
-export function AppShell({ brand, navItems, menuSections = [], activeHref, pathname: _pathname, activeUsers, children, searchSlot }: AppShellProps) {
+export function AppShell({ brand, navItems, menuSections = [], menuBadge = 0, activeHref, pathname: _pathname, activeUsers, children, searchSlot }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
 
@@ -90,11 +92,12 @@ export function AppShell({ brand, navItems, menuSections = [], activeHref, pathn
           <button
             type="button"
             className={[styles.iconButton, styles.desktopOnly].join(' ')}
-            aria-label="Plus d'options"
+            aria-label={menuBadge > 0 ? `Plus d'options — ${menuBadge} non lue(s)` : "Plus d'options"}
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((value) => !value)}
           >
             <MoreVertical size={20} aria-hidden />
+            {menuBadge > 0 && <span className={styles.iconBadge} aria-hidden>{menuBadge > 9 ? '9+' : menuBadge}</span>}
           </button>
         </div>
       </header>
@@ -118,13 +121,16 @@ export function AppShell({ brand, navItems, menuSections = [], activeHref, pathn
         <>
           <div className={styles.menuBackdrop} onClick={() => setMenuOpen(false)} aria-hidden="true" />
           <div className={styles.menuPanel} role="menu">
-            {/* Les items de nav au-delà des 3 onglets bas (console : sources,
-                imports, audit…) vivent dans le « Plus » ; l'app publique a
-                exactement 3 items → aucune section Navigation. */}
+            {/* Le menu liste TOUJOURS toute la navigation du shell : les
+                consoles (> 3 items) y retrouvent chaque page, y compris celles
+                déjà visibles dans la barre inline ou les onglets bas — aucun
+                lien ne devient injoignable si la barre est tronquée. L'app
+                publique (3 items) n'affiche pas de section : les onglets bas
+                suffisent. */}
             {navItems.length > 3 && (
               <>
                 <p className={styles.menuSection}>Navigation</p>
-                {navItems.slice(3).map((item) => (
+                {navItems.map((item) => (
                   <Link
                     key={`menu-nav-${item.href}`}
                     href={item.href}
@@ -134,6 +140,7 @@ export function AppShell({ brand, navItems, menuSections = [], activeHref, pathn
                   >
                     {item.icon}
                     {item.label}
+                    {item.badge ? <span className={styles.menuBadge} aria-hidden>{item.badge > 9 ? '9+' : item.badge}</span> : null}
                   </Link>
                 ))}
               </>
@@ -151,6 +158,7 @@ export function AppShell({ brand, navItems, menuSections = [], activeHref, pathn
                   >
                     {item.icon}
                     {item.label}
+                    {item.badge ? <span className={styles.menuBadge} aria-hidden>{item.badge > 9 ? '9+' : item.badge}</span> : null}
                   </Link>
                 ))}
               </Fragment>
@@ -190,6 +198,7 @@ export function AppShell({ brand, navItems, menuSections = [], activeHref, pathn
         >
           <MoreVertical size={20} aria-hidden />
           <span>Plus</span>
+          {menuBadge > 0 && <span className={styles.tabBadge} aria-hidden>{menuBadge > 9 ? '9+' : menuBadge}</span>}
         </button>
       </nav>
     </div>

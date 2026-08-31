@@ -96,6 +96,7 @@
 
 /* ---------- Bouton icône partagé ---------- */
 .iconButton {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -114,6 +115,37 @@
 }
 .iconButton:active {
   transform: scale(0.95);
+}
+
+/* ---------- Badges de notifications non lues ---------- */
+.iconBadge,
+.tabBadge,
+.menuBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--mbolo-danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+.iconBadge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+}
+.tabBadge {
+  position: absolute;
+  top: 4px;
+  right: calc(50% - 24px);
+}
+.menuBadge {
+  margin-left: auto;
 }
 
 /* ---------- Menu ⋮ ---------- */
@@ -197,6 +229,7 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 .bottomTab {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
