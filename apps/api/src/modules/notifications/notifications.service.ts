@@ -132,14 +132,20 @@ export class NotificationsService {
       where: { fired: false, startsAt: { gte: new Date(now - 60_000), lte: new Date(now + 120_000) } },
     });
     for (const reminder of due) {
-      await this.prisma.programmeReminder.update({ where: { deviceId_programmeId: { deviceId: reminder.deviceId, programmeId: reminder.programmeId } }, data: { fired: true } });
       const subs = await this.prisma.pushSubscription.findMany({ where: { deviceId: reminder.deviceId } });
-      await this.sendAll(subs, {
+      const delivered = await this.sendAll(subs, {
         title: reminder.title,
         body: `Commence maintenant sur ${reminder.channelName}`,
         url: `/watch/${reminder.channelId}`,
         tag: `reminder-${reminder.programmeId}`,
       });
+      // « fired » seulement après une livraison effective : un échec
+      // (service push injoignable, abonnement pas encore créé) est retenté
+      // au cron suivant tant que la fenêtre reste ouverte, au lieu d'être
+      // consommé dans le vide.
+      if (delivered > 0) {
+        await this.prisma.programmeReminder.update({ where: { deviceId_programmeId: { deviceId: reminder.deviceId, programmeId: reminder.programmeId } }, data: { fired: true } });
+      }
     }
     // Les rappels dont l'heure de début est passée depuis plus d'un jour
     // n'ont plus lieu d'être conservés.
@@ -148,31 +154,45 @@ export class NotificationsService {
 
   private async dispatchAnnouncements(): Promise<void> {
     const pending = await this.prisma.announcement.findMany({ where: { status: 'SENT', sentAt: null } });
+    if (pending.length === 0) return;
+    // Une seule lecture des abonnements pour toutes les annonces du tick.
+    const subs = await this.prisma.pushSubscription.findMany({});
     for (const announcement of pending) {
-      const subs = await this.prisma.pushSubscription.findMany({});
-      await this.sendAll(subs, {
+      const delivered = await this.sendAll(subs, {
         title: announcement.title,
         body: announcement.body,
         url: '/whats-new',
         tag: `announcement-${announcement.id}`,
       });
-      await this.prisma.announcement.update({ where: { id: announcement.id }, data: { sentAt: new Date() } });
-      this.logger.log(`Annonce « ${announcement.title} » poussée à ${subs.length} appareil(s).`);
+      if (delivered > 0) {
+        await this.prisma.announcement.update({ where: { id: announcement.id }, data: { sentAt: new Date() } });
+        this.logger.log(`Annonce « ${announcement.title} » poussée à ${delivered} appareil(s).`);
+      } else {
+        // 0 livraison (aucun abonnement ou échec total) : « sentAt » reste
+        // nul, l'annonce sera retentée au prochain cron au lieu d'être
+        // définitivement perdue.
+        this.logger.warn(`Annonce « ${announcement.title} » : 0 livraison sur ${subs.length} abonnement(s), nouvelle tentative au prochain passage.`);
+      }
     }
   }
 
-  private async sendAll(subs: { endpoint: string; p256dh: string; auth: string }[], payload: PushPayload): Promise<void> {
-    await Promise.all(
+  private async sendAll(subs: { endpoint: string; p256dh: string; auth: string }[], payload: PushPayload): Promise<number> {
+    const results = await Promise.all(
       subs.map(async (sub) => {
         try {
           await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, JSON.stringify(payload));
+          return true;
         } catch (error) {
           const status = (error as { statusCode?: number }).statusCode;
           // 404/410 : abonnement mort (navigateur désinscrit) → nettoyage.
+          // 401/403 (clé VAPID invalide) : volontairement conservé — supprimer
+          // détruirait toute la table si les clés serveur étaient fausses.
           if (status === 404 || status === 410) await this.prisma.pushSubscription.deleteMany({ where: { endpoint: sub.endpoint } });
+          return false;
         }
       }),
     );
+    return results.filter(Boolean).length;
   }
 
   /* ---------- Helpers ---------- */
