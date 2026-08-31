@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Redéploiement de l'API : l'image embarque le code (aucun bind mount du
 # dépôt), donc on copie le dist compilé + le schéma/migrations Prisma dans
-# le conteneur, on y régénère le client Prisma, puis on redémarre — la
-# commande de démarrage du conteneur applique `prisma migrate deploy`.
+# le conteneur, on y régénère le client Prisma, on y resynchronise les
+# dépendances (un nouveau paquet dans package.json — ex. web-push — sinon
+# crash au boot en boucle), puis on redémarre — la commande de démarrage du
+# conteneur applique `prisma migrate deploy`.
 #
 # Usage : sudo bash scripts/deploy-api.sh [id-ou-nom-du-conteneur]
 set -euo pipefail
@@ -21,14 +23,25 @@ docker cp "$ROOT/apps/api/prisma/schema.prisma" "$CONTAINER:$WORKDIR/apps/api/pr
 docker exec "$CONTAINER" mkdir -p "$WORKDIR/apps/api/prisma/migrations"
 docker cp "$ROOT/apps/api/prisma/migrations/." "$CONTAINER:$WORKDIR/apps/api/prisma/migrations/"
 
+echo "→ Copie du package.json et du lockfile (définition des dépendances)…"
+docker cp "$ROOT/apps/api/package.json" "$CONTAINER:$WORKDIR/apps/api/package.json"
+docker cp "$ROOT/pnpm-lock.yaml" "$CONTAINER:$WORKDIR/pnpm-lock.yaml"
+
+echo "→ Installation des dépendances dans le conteneur (no-op si à jour)…"
+# CI=true : pnpm n'affiche aucune invite (sinon il sort sans rien faire en
+# mode non interactif) ; sans --prod car la chaîne de boot du conteneur
+# lance `prisma migrate deploy` (CLI en devDependencies).
+docker exec "$CONTAINER" sh -c "cd '$WORKDIR' && CI=true pnpm install --no-frozen-lockfile"
+
 echo "→ Régénération du client Prisma dans le conteneur…"
 docker exec "$CONTAINER" sh -c "cd '$WORKDIR' && pnpm --filter @mbolo/api exec prisma generate"
 
 echo "→ Redémarrage (migrate deploy automatique au boot)…"
 docker restart "$CONTAINER"
 
-for _ in $(seq 1 30); do
-  sleep 2
+# Le boot applique migrate deploy + génération Prisma : compter plusieurs minutes.
+for _ in $(seq 1 60); do
+  sleep 5
   if curl -fs -o /dev/null "http://127.0.0.1:4000/api/health" 2>/dev/null; then
     echo "✔ API en ligne — routes favoris actives."
     exit 0
