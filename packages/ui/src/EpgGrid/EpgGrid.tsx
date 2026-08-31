@@ -1,3 +1,6 @@
+'use client';
+
+import { useEffect, useRef } from 'react';
 import type { EpgEntry, Programme } from '@mbolo/contracts';
 import styles from './EpgGrid.module.css';
 
@@ -15,6 +18,20 @@ export function EpgGrid({ entries, from, to, onSelectChannel, onSelectProgramme 
   const windowMs = to.getTime() - from.getTime();
   const totalWidth = Math.max(600, (windowMs / 3_600_000) * PX_PER_HOUR);
   const now = Date.now();
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  // À l'ouverture, on amène le curseur « maintenant » en vue (avec une
+  // avance de 90 min) au lieu de débarquer sur le début de la journée.
+  const fromMs = from.getTime();
+  const toMs = to.getTime();
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const current = Date.now();
+    if (current < fromMs || current > toMs) return;
+    const ratio = (current - fromMs) / (toMs - fromMs);
+    el.scrollLeft = Math.max(0, ratio * totalWidth - 240);
+  }, [fromMs, toMs, totalWidth]);
 
   const hours: Date[] = [];
   for (let t = from.getTime(); t < to.getTime(); t += 3_600_000) {
@@ -33,7 +50,7 @@ export function EpgGrid({ entries, from, to, onSelectChannel, onSelectProgramme 
 
   return (
     <div className={styles.grid}>
-      <div className={styles.scroller}>
+      <div className={styles.scroller} ref={scrollerRef}>
         <div className={styles.timeline} style={{ width: totalWidth + 240 }}>
           <div className={styles.header}>
             <div className={styles.channelHead}>Chaînes</div>

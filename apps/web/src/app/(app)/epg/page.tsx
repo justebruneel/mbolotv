@@ -1,12 +1,11 @@
 'use client';
 
+import { Icon } from '@mbolo/ui';
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCategories, useEpgRange } from '../../../shared/api/queries';
 import { EpgView } from '../../../features/epg/components/EpgView';
 import { ProgrammeSearch } from '../../../features/epg/components/ProgrammeSearch';
-import { apiGet } from '../../../shared/api/client';
-import type { EpgRangeResponse } from '@mbolo/contracts';
-import { Icon } from '@mbolo/ui';
+import { formatCategoryName } from '../../../features/live-tv/utils';
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -19,8 +18,13 @@ function addDays(date: Date, days: number): Date {
   return d;
 }
 
+const PILL = 'shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-bold transition';
+const PILL_ON = 'border-accent bg-accent text-on-accent';
+const PILL_OFF = 'border-border bg-surface text-muted hover:bg-surface-2 hover:text-foreground';
+
 export default function EpgPage() {
   const [offset, setOffset] = useState(0); // -1 hier, 0 aujourd'hui, 1 demain
+  const [category, setCategory] = useState<string | undefined>(undefined);
   const base = useMemo(() => addDays(startOfDay(new Date()), offset), [offset]);
   const from = useMemo(() => {
     const f = new Date(base);
@@ -33,11 +37,12 @@ export default function EpgPage() {
     return t;
   }, [base]);
 
-  const epgQuery = useQuery({
-    queryKey: ['epg', from.toISOString(), to.toISOString()],
-    queryFn: () => apiGet<EpgRangeResponse>('/epg/range', { from: from.toISOString(), to: to.toISOString() }),
-    staleTime: 2 * 60_000,
-  });
+  const categoriesQuery = useCategories();
+  const topCategories = useMemo(
+    () => [...(categoriesQuery.data ?? [])].sort((a, b) => (b.channelCount ?? 0) - (a.channelCount ?? 0)).slice(0, 12),
+    [categoriesQuery.data],
+  );
+  const epgQuery = useEpgRange(from, to, category);
 
   const label = offset === -1 ? 'Hier' : offset === 0 ? "Aujourd'hui" : offset === 1 ? 'Demain' : base.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
 
@@ -55,11 +60,11 @@ export default function EpgPage() {
 
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setOffset((v) => v - 1)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface hover:bg-surface-2">
+          <button type="button" onClick={() => setOffset((v) => v - 1)} aria-label="Jour précédent" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface hover:bg-surface-2">
             <Icon.ChevronLeft size={16} aria-hidden />
           </button>
           <span className="min-w-[140px] text-center text-sm font-bold capitalize">{label}</span>
-          <button type="button" onClick={() => setOffset((v) => v + 1)} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface hover:bg-surface-2">
+          <button type="button" onClick={() => setOffset((v) => v + 1)} aria-label="Jour suivant" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface hover:bg-surface-2">
             <Icon.ChevronRight size={16} aria-hidden />
           </button>
           {offset !== 0 && (
@@ -73,7 +78,27 @@ export default function EpgPage() {
         </span>
       </div>
 
-      <EpgView data={epgQuery.data} isLoading={epgQuery.isLoading} from={from} to={to} />
+      {/* Filtre par catégorie (l'API accepte déjà category côté /epg/range). */}
+      {topCategories.length > 0 && (
+        <div className="mb-5 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" aria-label="Filtrer par catégorie">
+          <button type="button" aria-pressed={!category} onClick={() => setCategory(undefined)} className={`${PILL} ${!category ? PILL_ON : PILL_OFF}`}>
+            Toutes
+          </button>
+          {topCategories.map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              aria-pressed={category === cat.slug}
+              onClick={() => setCategory(category === cat.slug ? undefined : cat.slug)}
+              className={`${PILL} ${category === cat.slug ? PILL_ON : PILL_OFF}`}
+            >
+              {formatCategoryName(cat.name)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <EpgView data={epgQuery.data} isLoading={epgQuery.isLoading} from={from} to={to} category={category} />
 
       <p className="mt-6 text-center text-xs text-faint">
         This product uses the TMDB API but is not endorsed or certified by TMDB. — Données EPG via fournisseurs configurés (XMLTV.fr, Xtream, etc.)
