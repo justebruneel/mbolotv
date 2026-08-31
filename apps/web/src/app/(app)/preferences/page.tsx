@@ -1,7 +1,7 @@
 'use client';
 
 import { Icon } from '@mbolo/ui';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTheme } from '../../../shared/components/ThemeProvider';
 import { sharedQueryClient } from '../../../shared/components/QueryProvider';
 import { useSettingsStore } from '../../../shared/stores/settings';
@@ -62,6 +62,12 @@ export default function PreferencesPage() {
   const lastWatched = useSettingsStore((state) => state.lastWatched);
   const clearLastWatched = useSettingsStore((state) => state.clearLastWatched);
   const [clearing, setClearing] = useState(false);
+  // iOS ignore video.volume (limitation WebKit) : le curseur serait trompeur,
+  // on affiche l'explication à la place (même détection que le Player).
+  const [isIos, setIsIos] = useState(false);
+  useEffect(() => {
+    setIsIos(/iPad|iPhone|iPod/.test(window.navigator.userAgent) || (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1));
+  }, []);
 
   // Purge complète côté client : service worker désinscrit, caches vidés,
   // rechargement — l'app repart du réseau (le SW se réinstalle à la version
@@ -149,21 +155,28 @@ export default function PreferencesPage() {
           <Switch checked={miniPlayerOnBrowse} onChange={() => setMiniPlayerOnBrowse(!miniPlayerOnBrowse)} label="Mini-lecteur sur l'accueil" />
         </Row>
 
-        <Row title="Volume par défaut" hint="Niveau sonore appliqué à chaque nouvelle chaîne.">
-          <div className="flex shrink-0 items-center gap-3">
-            <Icon.Volume1 size={16} aria-hidden className="text-muted" />
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={Math.round(volume * 100)}
-              onChange={(event) => setVolume(Number(event.target.value) / 100)}
-              aria-label="Volume par défaut"
-              className="h-1.5 w-32 accent-[var(--mbolo-accent)]"
-            />
-            <span className="w-9 text-right text-xs font-bold tabular-nums text-muted">{Math.round(volume * 100)}%</span>
-          </div>
+        <Row
+          title="Volume par défaut"
+          hint={isIos ? 'Sur iPhone et iPad, le volume se règle uniquement avec les boutons physiques de l’appareil (limite iOS) ; cette valeur s’applique aux autres appareils.' : 'Niveau sonore appliqué à chaque nouvelle chaîne.'}
+        >
+          {isIos ? (
+            <Icon.VolumeX size={18} aria-hidden className="shrink-0 text-muted" />
+          ) : (
+            <div className="flex shrink-0 items-center gap-3">
+              <Icon.Volume1 size={16} aria-hidden className="text-muted" />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round(volume * 100)}
+                onChange={(event) => setVolume(Number(event.target.value) / 100)}
+                aria-label="Volume par défaut"
+                className="h-1.5 w-32 accent-[var(--mbolo-accent)]"
+              />
+              <span className="w-9 text-right text-xs font-bold tabular-nums text-muted">{Math.round(volume * 100)}%</span>
+            </div>
+          )}
         </Row>
       </section>
 
