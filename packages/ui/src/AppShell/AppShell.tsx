@@ -118,6 +118,26 @@ export function AppShell({ brand, navItems, menuSections = [], activeHref, pathn
         <>
           <div className={styles.menuBackdrop} onClick={() => setMenuOpen(false)} aria-hidden="true" />
           <div className={styles.menuPanel} role="menu">
+            {/* Les items de nav au-delà des 3 onglets bas (console : sources,
+                imports, audit…) vivent dans le « Plus » ; l'app publique a
+                exactement 3 items → aucune section Navigation. */}
+            {navItems.length > 3 && (
+              <>
+                <p className={styles.menuSection}>Navigation</p>
+                {navItems.slice(3).map((item) => (
+                  <Link
+                    key={`menu-nav-${item.href}`}
+                    href={item.href}
+                    role="menuitem"
+                    className={[styles.menuItem, item.href === activeHref ? styles.menuItemActive : ''].filter(Boolean).join(' ')}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </Link>
+                ))}
+              </>
+            )}
             {menuSections.map((section) => (
               <Fragment key={section.label}>
                 <p className={styles.menuSection}>{section.label}</p>
