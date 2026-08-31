@@ -1,17 +1,17 @@
 'use client';
 
-import { ReactNode, useEffect, useState } from 'react';
+import { Fragment, ReactNode, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MoreVertical, Download } from 'lucide-react';
 import styles from './AppShell.module.css';
 
 export interface NavItem { href: string; label: string; icon?: ReactNode; }
+export interface MenuSection { label: string; items: NavItem[]; }
 export interface AppShellProps {
   brand: ReactNode;
   navItems: NavItem[];
-  utilityItems?: NavItem[];
-  /** Action (ex. bascule de thème) rendue dans les « Plus d'options ». */
-  menuActions?: ReactNode;
+  /** Sections du menu ⋮ / « Plus » — liens internes à l'app (navigation SPA). */
+  menuSections?: MenuSection[];
   activeHref?: string;
   pathname?: string;
   activeUsers?: number;
@@ -29,9 +29,10 @@ interface BeforeInstallPromptEvent extends Event {
 // breakpoint par le CSS — aucun héritage ni partage de structure :
 //   .desktopBar : ≥ 768 px   → logo · liens inline · badge · ⋮
 //   .mobileBar  : < 768 px   → logo + « Mbolo TV » · badge · ⋮
-//   .bottomTabs : < 768 px   → onglets bas Accueil / Favoris / Plus
-// Le menu ⋮ / Plus partagé contient aussi les préférences (menuActions).
-export function AppShell({ brand, navItems, utilityItems = [], menuActions, activeHref, pathname: _pathname, activeUsers, children, searchSlot }: AppShellProps) {
+//   .bottomTabs : < 768 px   → onglets bas (3 premiers navItems) + « Plus »
+// Le menu ⋮ / Plus partagé ne contient QUE des liens internes (menuSections)
+// + l'invite d'installation : la navigation principale a déjà ses onglets.
+export function AppShell({ brand, navItems, menuSections = [], activeHref, pathname: _pathname, activeUsers, children, searchSlot }: AppShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
 
@@ -111,53 +112,34 @@ export function AppShell({ brand, navItems, utilityItems = [], menuActions, acti
         </div>
       </header>
 
-      {/* Menu ⋮ partagé (navigation sur mobile, utilitaires sur desktop) */}
+      {/* Menu ⋮ / Plus : sections internes à l'app (navigation SPA, pas de
+          nouvel onglet) + invite d'installation conditionnelle. */}
       {menuOpen && (
         <>
           <div className={styles.menuBackdrop} onClick={() => setMenuOpen(false)} aria-hidden="true" />
           <div className={styles.menuPanel} role="menu">
-            <p className={styles.menuSection}>Navigation</p>
-            {navItems.map((item) => {
-              const active = item.href === activeHref;
-              return (
-                <Link
-                  key={`nav-${item.href}`}
-                  href={item.href}
-                  role="menuitem"
-                  className={[styles.menuItem, active ? styles.menuItemActive : ''].filter(Boolean).join(' ')}
-                  onClick={() => setMenuOpen(false)}
-                >
-                  {item.icon}
-                  {item.label}
-                </Link>
-              );
-            })}
-            <p className={styles.menuSection}>Plus</p>
-            {utilityItems.map((item) => (
-              <a
-                key={`util-${item.href}`}
-                href={item.href}
-                role="menuitem"
-                target="_blank"
-                rel="noreferrer"
-                className={styles.menuItem}
-                onClick={() => setMenuOpen(false)}
-              >
-                {item.icon}
-                {item.label}
-              </a>
+            {menuSections.map((section) => (
+              <Fragment key={section.label}>
+                <p className={styles.menuSection}>{section.label}</p>
+                {section.items.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    role="menuitem"
+                    className={[styles.menuItem, item.href === activeHref ? styles.menuItemActive : ''].filter(Boolean).join(' ')}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </Link>
+                ))}
+              </Fragment>
             ))}
             {installEvent && (
               <button type="button" role="menuitem" className={styles.menuItem} onClick={() => { void install(); setMenuOpen(false); }}>
                 <Download size={17} aria-hidden />
                 Installer l’application
               </button>
-            )}
-            {menuActions && (
-              <>
-                <p className={styles.menuSection}>Préférences</p>
-                <div className={styles.menuItem}>{menuActions}</div>
-              </>
             )}
           </div>
         </>

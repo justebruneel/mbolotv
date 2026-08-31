@@ -36,8 +36,10 @@ export function GlobalPlayer() {
 
   const watchId = pathname?.match(/^\/watch\/([^/]+)/)?.[1] ?? null;
   const isWatch = Boolean(watchId);
-  // La lecture ne survit qu'à une navigation vers live / favoris.
-  const keepAlive = Boolean(pathname && (isWatch || pathname.startsWith('/live') || pathname.startsWith('/favorites')));
+  // La lecture ne survit à une navigation vers live / favoris que si
+  // l'option « Mini-lecteur sur l'accueil » est activée (Préférences).
+  const miniPlayerOnBrowse = useSettingsStore((state) => state.miniPlayerOnBrowse);
+  const keepAlive = Boolean(pathname && (isWatch || (miniPlayerOnBrowse && (pathname.startsWith('/live') || pathname.startsWith('/favorites')))));
   const channelId = watchId ?? (keepAlive ? storeChannelId : null);
 
   // Hors pages keep-alive : la lecture s'arrête (démontage du Player) et la
@@ -51,6 +53,7 @@ export function GlobalPlayer() {
   const volume = useSettingsStore((state) => state.volume);
   const preferredLevel = useSettingsStore((state) => state.preferredLevel);
   const dataSaver = useSettingsStore((state) => state.dataSaver);
+  const autoPlay = useSettingsStore((state) => state.autoPlay);
   const setVolume = useSettingsStore((state) => state.setVolume);
   const setPreferredLevel = useSettingsStore((state) => state.setPreferredLevel);
   const setDataSaver = useSettingsStore((state) => state.setDataSaver);
@@ -195,6 +198,7 @@ export function GlobalPlayer() {
           initialVolume={volume}
           initialLevel={preferredLevel}
           initialDataSaver={dataSaver}
+          autoPlay={autoPlay}
           onVolumeChange={setVolume}
           onLevelChange={setPreferredLevel}
           onDataSaverChange={handleDataSaverChange}

@@ -6,7 +6,6 @@ import { ReactNode, Suspense } from 'react';
 import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
 import { GlobalPlayer } from '../../shared/components/GlobalPlayer';
-import { ThemeToggle } from '../../shared/components/ThemeToggle';
 import { useActiveUsers, useActivityHeartbeat, useFavoritesSync } from '../../shared/api/queries';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
 import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/access';
@@ -16,11 +15,21 @@ const NAV_ITEMS = [
   { href: '/epg', label: 'Programmes', icon: <Icon.CalendarDays size={20} /> },
   { href: '/favorites', label: 'Favoris', icon: <Icon.Heart size={20} /> },
 ];
-const UTILITY_ITEMS = [
-  { href: '/docs', label: 'Documentation', icon: <Icon.BookOpen size={17} /> },
-  { href: '/about', label: 'À propos', icon: <Icon.Info size={17} /> },
-  { href: '/help', label: "Centre d'aide", icon: <Icon.CircleHelp size={17} /> },
-  { href: '/contact', label: 'Contact', icon: <Icon.Mail size={17} /> },
+// Menu ⋮ / « Plus » : uniquement des pages internes (liens SPA). La navigation
+// principale a déjà ses onglets ; l'aide se limite à Documentation + Contact.
+const MENU_SECTIONS = [
+  {
+    label: 'Compte',
+    items: [{ href: '/access', label: 'Mon accès', icon: <Icon.Key size={17} /> }],
+  },
+  {
+    label: 'Application',
+    items: [
+      { href: '/preferences', label: 'Préférences', icon: <Icon.Settings2 size={17} /> },
+      { href: '/docs', label: 'Documentation', icon: <Icon.BookOpen size={17} /> },
+      { href: '/contact', label: 'Contact', icon: <Icon.Mail size={17} /> },
+    ],
+  },
 ];
 
 function ShellContent({ children }: { children: ReactNode }) {
@@ -39,8 +48,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       <AppShell
         brand={<Logo />}
         navItems={NAV_ITEMS}
-        utilityItems={UTILITY_ITEMS}
-        menuActions={<ThemeToggle />}
+        menuSections={MENU_SECTIONS}
         searchSlot={pathname?.startsWith('/live') ? (
           <div className="flex items-center gap-2">
             <Suspense fallback={<div className="h-10 w-10" />}>

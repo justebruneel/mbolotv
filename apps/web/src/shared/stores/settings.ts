@@ -13,6 +13,10 @@ interface SettingsState {
   volume: number;
   preferredLevel: number;
   dataSaver: boolean;
+  /** Démarrage automatique de la lecture à l'ouverture d'une chaîne. */
+  autoPlay: boolean;
+  /** Le mini-lecteur continue sur /live et /favorites. */
+  miniPlayerOnBrowse: boolean;
   lastWatched: LastWatchedEntry[];
   lastNonWatchPath: string | null;
   lastWatchedChannelId: string | null;
@@ -20,6 +24,8 @@ interface SettingsState {
   setVolume: (volume: number) => void;
   setPreferredLevel: (level: number) => void;
   setDataSaver: (dataSaver: boolean) => void;
+  setAutoPlay: (autoPlay: boolean) => void;
+  setMiniPlayerOnBrowse: (value: boolean) => void;
   recordWatch: (channelId: string, name: string) => void;
   clearLastWatched: () => void;
   setLastNonWatchPath: (path: string) => void;
@@ -35,6 +41,8 @@ export const useSettingsStore = create<SettingsState>()(
       volume: 1,
       preferredLevel: -1,
       dataSaver: false,
+      autoPlay: true,
+      miniPlayerOnBrowse: true,
       lastWatched: [],
       lastNonWatchPath: null,
       lastWatchedChannelId: null,
@@ -45,6 +53,8 @@ export const useSettingsStore = create<SettingsState>()(
       setVolume: (volume) => set({ volume }),
       setPreferredLevel: (preferredLevel) => set({ preferredLevel }),
       setDataSaver: (dataSaver) => set({ dataSaver }),
+      setAutoPlay: (autoPlay) => set({ autoPlay }),
+      setMiniPlayerOnBrowse: (miniPlayerOnBrowse) => set({ miniPlayerOnBrowse }),
       recordWatch: (channelId, name) =>
         set((state) => ({
           lastWatched: [

@@ -7,7 +7,7 @@ import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
 import styles from './Player.module.css';
 
-export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; }
+export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; }
 interface QualityLevel { index: number; height: number; bitrate?: number; }
 interface PlaybackStats { startupMs: number | null; rebufferCount: number; bufferAhead: number; bitrate: number | null; latency: number | null; }
 interface GestureState { startX: number; startY: number; startTime: number; }
@@ -86,7 +86,7 @@ function getErrorMessage(errorType: string | null, httpCode: number | null): str
   return 'Le fournisseur ne répond pas ou la session a expiré.';
 }
 
-export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource }: PlayerProps) {
+export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -293,6 +293,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       const attemptPlayback = (): void => {
         if (playbackInitiated || cancelled || !el.isConnected) return;
         playbackInitiated = true;
+        // Lecture automatique désactivée dans les préférences : le buffer se
+        // remplit, l'invite « Lancer la lecture » prend le relais.
+        if (!autoPlay) { setAutoplayBlocked(true); return; }
         void el.play().catch(() => {
           if (cancelled) return;
           el.muted = true;
@@ -411,7 +414,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
 
   return <div ref={containerRef} className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''} ${isPseudoFullscreen ? styles.pseudoFullscreen : ''}`} data-state={status} onMouseMove={!isMobile ? showControls : undefined} onMouseLeave={() => { if (!isMobile && status === 'ready') setControlsVisible(false); }} onTouchStart={(e) => { showControls(); handleTouchStart(e); }} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
     <video ref={videoRef} className={styles.video} playsInline preload="auto" onClick={handleVideoClick} aria-label={`Lecteur ${title}`} />
-    {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && (autoplayBlocked ? <><h2 className={styles.title}>Lecture automatique bloquée</h2><button type="button" className={styles.retryButton} onClick={startPlayback}>Lancer la lecture</button></> : <><Spinner />{retrying && <p className={styles.hint}>Nouvelle tentative…</p>}</>)}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
+    {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && (autoplayBlocked ? <><h2 className={styles.title}>Lecture en attente</h2><button type="button" className={styles.retryButton} onClick={startPlayback}>Lancer la lecture</button></> : <><Spinner />{retrying && <p className={styles.hint}>Nouvelle tentative…</p>}</>)}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
     {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>{stallPauseRef.current ? `Lissage du flux… reprise à ${RESUME_BUFFER_SECONDS} s de marge` : 'Rattrapage du direct…'}</span></div>}
     {bandwidth !== null && controlsVisible && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && (autoplayBlocked || mutedAutoplay) && <button type="button" className={styles.playPrompt} onClick={startPlayback}>{autoplayBlocked ? 'Lancer la lecture' : 'Activer le son'}</button>}

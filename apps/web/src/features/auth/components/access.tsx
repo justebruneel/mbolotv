@@ -9,6 +9,7 @@ import { DAY_MS, formatExpiresAt, formatRemaining } from '../../../shared/utils/
 
 const WHATSAPP_URL = 'https://wa.me/qr/CPB7IL3GHAGIK1';
 const WHATSAPP_NUMBER = '+241 60 10 89 84';
+export { WHATSAPP_URL, WHATSAPP_NUMBER };
 
 /**
  * Bandeau d'expiration/renouvellement affiché au-dessus du formulaire
@@ -77,9 +78,10 @@ export function AccessTimeBadge() {
  * `pollMs > 0` : re-vérification périodique (garde des pages internes) pour
  * détecter une expiration en cours de session.
  */
-export function useAccessStatus(pollMs = 0): { status: AccessStatus | null; loading: boolean } {
+export function useAccessStatus(pollMs = 0): { status: AccessStatus | null; loading: boolean; refresh: () => void } {
   const [status, setStatus] = useState<AccessStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     let mounted = true;
     let timer: number | undefined;
@@ -91,8 +93,8 @@ export function useAccessStatus(pollMs = 0): { status: AccessStatus | null; load
     void refresh();
     if (pollMs > 0) timer = window.setInterval(() => void refresh(), pollMs);
     return () => { mounted = false; if (timer !== undefined) window.clearInterval(timer); };
-  }, [pollMs]);
-  return { status, loading };
+  }, [pollMs, tick]);
+  return { status, loading, refresh: () => setTick((value) => value + 1) };
 }
 
 async function redeem(code: string): Promise<AccessStatus> {
