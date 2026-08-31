@@ -44,7 +44,12 @@ function portalEndpoints(base) {
 
 async function stalkerFetch(env, url, headers, timeoutMs) {
   const relayed = resolveRelay(env, url);
-  const response = await fetch(relayed.url, { headers: { ...(headers || {}), ...relayed.headers }, signal: AbortSignal.timeout(timeoutMs || CONNECTOR_TIMEOUT_MS) });
+  // `headers` peut être une instance Headers : la détailler explicitement —
+  // un spread {...headers} sur une instance donne un objet VIDE et la
+  // requête partirait sans MAC/Cookie/UA (réponses 200 vides du panel).
+  const merged = new Headers(headers || {});
+  for (const [name, value] of Object.entries(relayed.headers)) merged.set(name, value);
+  const response = await fetch(relayed.url, { headers: merged, signal: AbortSignal.timeout(timeoutMs || CONNECTOR_TIMEOUT_MS) });
   const bodyText = await response.text();
   if (bodyText.length > MAX_API_BYTES) throw new Error("Réponse trop volumineuse");
   return { ok: response.ok, status: response.status, body: bodyText };
@@ -93,6 +98,10 @@ export async function fetchMacPortalEntries(env, connection) {
     "MAC": String(mac),
     "Cookie": "mac=" + mac + ";stb_lang=en;timezone=UTC",
     "Accept": "application/json, text/javascript, */*; q=0.01",
+    // Certains panels (ex. mag.tiger-ott.net) réinitialisent la connexion
+    // TCP sur un User-Agent inconnu : présenter l'UA de la box, comme le
+    // ferait un vrai MAG — sinon chaque requête portail meurt en RST.
+    "User-Agent": "Model: MAG254; Link: Ethernet",
     "X-User-Agent": "Model: MAG254; Link: Ethernet",
     "Referer": base + "/",
     "Origin": originStr,
@@ -127,6 +136,7 @@ export async function fetchMacPortalEntries(env, connection) {
   } catch { /* facultatifs */ }
 
   const channelsResult = await stalkerFetch(
+    env,
     endpoint + "/portal.php?type=itv&action=get_all_channels&token=" + encodeURIComponent(token) + "&JsHttpRequest=1-json",
     authHeaders,
     CONNECTOR_TIMEOUT_MS,

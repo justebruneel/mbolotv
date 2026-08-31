@@ -99,6 +99,9 @@ export async function resolveStalkerLocator(env, locator) {
     "MAC": mac,
     "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`,
     "Accept": "application/json",
+    // Certains panels réinitialisent la connexion sur un UA inconnu :
+    // présenter l'UA de la box, comme le ferait un vrai MAG.
+    "User-Agent": "Model: MAG254; Link: Ethernet",
     "X-User-Agent": "Model: MAG254; Link: Ethernet",
   };
 

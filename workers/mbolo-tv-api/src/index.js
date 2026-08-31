@@ -519,6 +519,9 @@ export async function scheduled(event, env) {
 }
 
 export default {
+  async scheduled(event, env, context) {
+    context.waitUntil(scheduled(event, env));
+  },
   async fetch(request, env, ctx) {
     const context = new Ctx(request, env, ctx);
     context.env.db = {
