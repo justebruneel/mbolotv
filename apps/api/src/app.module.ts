@@ -15,6 +15,7 @@ import { EpgModule } from './modules/epg/epg.module';
 import { FavoritesModule } from './modules/favorites/favorites.module';
 import { HealthModule } from './modules/health/health.module';
 import { MatchesModule } from './modules/matches/matches.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OwnerAuthModule } from './modules/owner-auth/owner-auth.module';
 import { OwnerConsoleModule } from './modules/owner-console/owner-console.module';
 import { SourcesModule } from './modules/sources/sources.module';
@@ -44,6 +45,7 @@ import { StreamingModule } from './modules/streaming/streaming.module';
     EpgModule,
     FavoritesModule,
     MatchesModule,
+    NotificationsModule,
     OwnerAuthModule,
     OwnerConsoleModule,
     SourcesModule,

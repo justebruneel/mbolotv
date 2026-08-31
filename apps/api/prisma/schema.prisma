@@ -222,3 +222,38 @@ model ChannelEpgMapping {
   @@unique([channelId, provider])
   @@index([provider, externalId])
 }
+
+model PushSubscription {
+  id String @id @default(cuid())
+  deviceId String
+  endpoint String @unique
+  p256dh String
+  auth String
+  createdAt DateTime @default(now())
+  @@index([deviceId])
+}
+
+model ProgrammeReminder {
+  deviceId String
+  programmeId String
+  channelId String
+  channelName String
+  title String
+  startsAt DateTime
+  endsAt DateTime
+  fired Boolean @default(false)
+  createdAt DateTime @default(now())
+  @@id([deviceId, programmeId])
+  @@index([startsAt, fired])
+}
+
+model Announcement {
+  id String @id @default(cuid())
+  title String
+  body String
+  kind String @default("INFO")
+  status String @default("DRAFT")
+  createdAt DateTime @default(now())
+  sentAt DateTime?
+  @@index([status, createdAt])
+}

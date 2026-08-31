@@ -7,6 +7,7 @@ import * as epg from "./epg.js";
 import * as activity from "./activity.js";
 import * as access from "./access.js";
 import * as favorites from "./favorites.js";
+import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports } from "./owner-routes.js";
 import { scanDueVariants } from "./healthcheck.js";
@@ -433,6 +434,47 @@ async function route(ctx, url) {
         : await favorites.removeFavorite(env, deviceId, channelId);
     if (result === null) return ctx.fail(404, "Channel not found");
     return ctx.json(result);
+  }
+
+  // Notifications : abonnements push et rappels par appareil, annonces lues.
+  // Mêmes routes que l'API NestJS ; l'envoi effectif est fait par son cron.
+  if (path === "/api/push/subscribe" && (method === "POST" || method === "DELETE")) {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    if (method === "DELETE") return ctx.json(await notifications.unsubscribe(env, deviceId));
+    const subscribed = await notifications.subscribe(env, deviceId, await ctx.readJson().catch(() => null));
+    if (!subscribed) return ctx.fail(400, "Abonnement invalide");
+    return ctx.json(subscribed);
+  }
+
+  if (path === "/api/reminders" && (method === "GET" || method === "POST")) {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    if (method === "GET") return ctx.json(await notifications.listReminders(env, deviceId));
+    const added = await notifications.addReminder(env, deviceId, await ctx.readJson().catch(() => null));
+    if (!added) return ctx.fail(400, "Rappel invalide");
+    return ctx.json(added);
+  }
+
+  const reminderMatch = path.match(/^\/api\/reminders\/([^/]+)$/);
+  if (reminderMatch && method === "DELETE") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    return ctx.json(await notifications.removeReminder(env, deviceId, decodeURIComponent(reminderMatch[1])));
+  }
+
+  if (path === "/api/announcements" && method === "GET") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    return ctx.json(await notifications.listPublished(env));
   }
 
   const ownerResponse = await handleOwnerRoute(ctx, url, path, method);

@@ -179,3 +179,45 @@ export const accessStatusSchema = z.object({ active: z.boolean(), expiresAt: z.s
 export type AccessStatus = z.infer<typeof accessStatusSchema>;
 export const accessRedeemSchema = z.object({ code: z.string().min(4).max(64) });
 export type AccessRedeemInput = z.infer<typeof accessRedeemSchema>;
+
+/* ---------- Notifications (push, rappels, annonces) ---------- */
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().min(1),
+  keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
+});
+export type PushSubscriptionInput = z.infer<typeof pushSubscriptionSchema>;
+
+export const reminderCreateSchema = z.object({
+  programmeId: z.string().min(1),
+  channelId: z.string().min(1),
+  channelName: z.string().min(1),
+  title: z.string().min(1).max(200),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+});
+export type ReminderCreateInput = z.infer<typeof reminderCreateSchema>;
+export const reminderSchema = reminderCreateSchema.extend({ fired: z.boolean() });
+export type Reminder = z.infer<typeof reminderSchema>;
+export const reminderListSchema = z.object({ items: z.array(reminderSchema) });
+export type ReminderList = z.infer<typeof reminderListSchema>;
+
+export const announcementKindSchema = z.enum(['INFO', 'VERSION', 'PROMO']);
+export type AnnouncementKind = z.infer<typeof announcementKindSchema>;
+export const announcementSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  body: z.string(),
+  kind: announcementKindSchema,
+  status: z.enum(['DRAFT', 'SENT']),
+  createdAt: z.string(),
+  sentAt: z.string().nullable(),
+});
+export type Announcement = z.infer<typeof announcementSchema>;
+export const announcementCreateSchema = z.object({
+  title: z.string().min(3).max(80),
+  body: z.string().min(3).max(500),
+  kind: announcementKindSchema.default('INFO'),
+});
+export type AnnouncementCreateInput = z.infer<typeof announcementCreateSchema>;
+export const announcementListSchema = z.object({ items: z.array(announcementSchema) });
+export type AnnouncementList = z.infer<typeof announcementListSchema>;

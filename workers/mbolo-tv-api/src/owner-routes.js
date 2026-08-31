@@ -6,6 +6,7 @@ import { runSourceImport, ACTIVE_IMPORT_STATES } from './importer.js';
 import { runEpgImportForSource } from './epgimport.js';
 import { checkVariant } from './healthcheck.js';
 import { featuredList, featuredSet, featuredRemove } from './featured.js';
+import * as notifications from './notifications.js';
 
 function chunks(values, size) {
   const output = [];
@@ -538,6 +539,30 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     const rows = await env.db.query(env, `DELETE FROM "AccessCode" WHERE id = $1 AND "createdById" = $2 RETURNING id`, [decodeURIComponent(accessRevoke[1]), owner.userId]);
     if (rows.rows.length === 0) return ctx.fail(404, 'Code introuvable');
     await audit(ctx, owner.userId, 'access_code.revoke', 'access_code', accessRevoke[1], {});
+    return new Response(null, { status: 204, headers: ctx.corsHeaders() });
+  }
+
+  // Annonces push (console Groupe Nzogho) : rédaction, publication, suppression.
+  if (path === '/api/owner/notifications' && method === 'GET') {
+    return ctx.json(await notifications.ownerList(env, owner.userId));
+  }
+  if (path === '/api/owner/notifications' && method === 'POST') {
+    const created = await notifications.ownerCreate(env, await ctx.readJson().catch(() => null));
+    if (!created) return ctx.fail(400, 'Annonce invalide (titre 3-80 caractères, corps 3-500)');
+    await audit(ctx, owner.userId, 'notifications.create', 'announcement', created.id, { kind: created.kind });
+    return ctx.json(created);
+  }
+  const notifPublish = path.match(/^\/api\/owner\/notifications\/([^/]+)\/publish$/);
+  if (notifPublish && method === 'POST') {
+    const published = await notifications.ownerPublish(env, decodeURIComponent(notifPublish[1]));
+    if (!published) return ctx.fail(404, 'Annonce introuvable');
+    await audit(ctx, owner.userId, 'notifications.publish', 'announcement', published.id, {});
+    return ctx.json(published);
+  }
+  const notifRemove = path.match(/^\/api\/owner\/notifications\/([^/]+)$/);
+  if (notifRemove && method === 'DELETE') {
+    await notifications.ownerRemove(env, decodeURIComponent(notifRemove[1]));
+    await audit(ctx, owner.userId, 'notifications.delete', 'announcement', decodeURIComponent(notifRemove[1]), {});
     return new Response(null, { status: 204, headers: ctx.corsHeaders() });
   }
 
