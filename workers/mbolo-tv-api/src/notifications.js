@@ -14,12 +14,14 @@ export async function subscribe(env, deviceId, body) {
   const p256dh = typeof body?.keys?.p256dh === "string" ? body.keys.p256dh : null;
   const auth = typeof body?.keys?.auth === "string" ? body.keys.auth : null;
   if (!endpoint || !p256dh || !auth) return null;
+  // id : défaut cuid() appliqué par Prisma côté NestJS — en SQL brut, le
+  // Worker doit générer la clé lui-même.
   await env.db.query(
     env,
-    `INSERT INTO "PushSubscription" ("deviceId", "endpoint", "p256dh", "auth")
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO "PushSubscription" (id, "deviceId", "endpoint", "p256dh", "auth")
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT ("endpoint") DO UPDATE SET "deviceId" = EXCLUDED."deviceId", "p256dh" = EXCLUDED."p256dh", "auth" = EXCLUDED."auth"`,
-    [deviceId, endpoint, p256dh, auth],
+    [crypto.randomUUID(), deviceId, endpoint, p256dh, auth],
   );
   return { ok: true };
 }
@@ -112,8 +114,8 @@ export async function ownerCreate(env, body) {
   if (title.length < 3 || title.length > 80 || text.length < 3 || text.length > 500) return null;
   const rows = await env.db.query(
     env,
-    `INSERT INTO "Announcement" (title, body, kind) VALUES ($1, $2, $3) RETURNING id, title, body, kind, status, "createdAt", "sentAt"`,
-    [title, text, kind],
+    `INSERT INTO "Announcement" (id, title, body, kind) VALUES ($1, $2, $3, $4) RETURNING id, title, body, kind, status, "createdAt", "sentAt"`,
+    [crypto.randomUUID(), title, text, kind],
   );
   return mapAnnouncement(rows.rows[0]);
 }
