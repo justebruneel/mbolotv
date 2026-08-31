@@ -1,6 +1,9 @@
 import type {
   AccessCode,
   AccessCodeCreateInput,
+  Announcement,
+  AnnouncementCreateInput,
+  AnnouncementList,
   AuditEntry,
   ChannelTestResponse,
   ConnectTestResponse,
@@ -102,5 +105,11 @@ export const ownerApi = {
     list: (): Promise<ImportRunListResponse> => fetch(`${BASE_URL}/owner/imports`, { credentials: 'include' }).then(parseResponse<ImportRunListResponse>),
     detail: (id: string): Promise<ImportRun> => fetch(`${BASE_URL}/owner/imports/${id}`, { credentials: 'include' }).then(parseResponse<ImportRun>),
     cancel: (id: string): Promise<ImportRun> => fetch(`${BASE_URL}/owner/imports/${id}/cancel`, { method: 'POST', credentials: 'include' }).then(parseResponse<ImportRun>),
+  },
+  notifications: {
+    list: (): Promise<AnnouncementList> => fetch(`${BASE_URL}/owner/notifications`, { credentials: 'include' }).then(parseResponse<AnnouncementList>),
+    create: (input: AnnouncementCreateInput): Promise<Announcement> => fetch(`${BASE_URL}/owner/notifications`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<Announcement>),
+    publish: (id: string): Promise<Announcement> => fetch(`${BASE_URL}/owner/notifications/${id}/publish`, { method: 'POST', credentials: 'include' }).then(parseResponse<Announcement>),
+    remove: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/notifications/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
   },
 };
