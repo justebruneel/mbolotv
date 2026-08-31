@@ -106,3 +106,39 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
+
+// ---------- Notifications push ----------
+// Le serveur (cron de l'API) envoie { title, body, url, tag } ; l'affichage
+// est natif OS — il fonctionne même app fermée (PWA installé, iOS ≥ 16.4).
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { title: 'Mbolo TV', body: event.data ? event.data.text() : '' };
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title || 'Mbolo TV', {
+      body: payload.body || '',
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+      tag: payload.tag || undefined,
+      data: { url: payload.url || '/' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      const client = clientList[0];
+      if (client) {
+        // Ramener l'app déjà ouverte sur la bonne page plutôt qu'un doublon.
+        return client.navigate(target).catch(() => client.focus());
+      }
+      return self.clients.openWindow(target);
+    }),
+  );
+});

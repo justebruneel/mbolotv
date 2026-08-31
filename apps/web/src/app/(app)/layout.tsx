@@ -6,7 +6,8 @@ import { ReactNode, Suspense } from 'react';
 import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
 import { GlobalPlayer } from '../../shared/components/GlobalPlayer';
-import { useActiveUsers, useActivityHeartbeat, useFavoritesSync } from '../../shared/api/queries';
+import { useActiveUsers, useActivityHeartbeat, useFavoritesSync, useRemindersSync } from '../../shared/api/queries';
+import { useReminderScheduler } from '../../features/epg/hooks/useReminderScheduler';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
 import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/access';
 
@@ -20,7 +21,10 @@ const NAV_ITEMS = [
 const MENU_SECTIONS = [
   {
     label: 'Compte',
-    items: [{ href: '/access', label: 'Mon accès', icon: <Icon.Key size={17} /> }],
+    items: [
+      { href: '/access', label: 'Mon accès', icon: <Icon.Key size={17} /> },
+      { href: '/whats-new', label: 'Quoi de neuf', icon: <Icon.Bell size={17} /> },
+    ],
   },
   {
     label: 'Application',
@@ -39,6 +43,9 @@ function ShellContent({ children }: { children: ReactNode }) {
   useActivityHeartbeat();
   // Favoris : synchronisation initiale avec la liste serveur de l'appareil.
   useFavoritesSync();
+  // Rappels de programmes : miroir serveur + secours local quand l'app est ouverte.
+  useRemindersSync();
+  useReminderScheduler();
 
   return (
     <>

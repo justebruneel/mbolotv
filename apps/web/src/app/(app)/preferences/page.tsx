@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useTheme } from '../../../shared/components/ThemeProvider';
 import { sharedQueryClient } from '../../../shared/components/QueryProvider';
 import { useSettingsStore } from '../../../shared/stores/settings';
+import { usePush } from '../../../shared/hooks/usePush';
 
 const THEME_OPTIONS = [
   { value: 'dark', label: 'Sombre', icon: Icon.Moon },
@@ -62,6 +63,21 @@ export default function PreferencesPage() {
   const lastWatched = useSettingsStore((state) => state.lastWatched);
   const clearLastWatched = useSettingsStore((state) => state.clearLastWatched);
   const [clearing, setClearing] = useState(false);
+  const push = usePush();
+  const [pushBusy, setPushBusy] = useState(false);
+
+  const pushHint =
+    push.state === 'subscribed'
+      ? 'Tu seras prévenu à l’heure de début de tes rappels, même app fermée.'
+      : push.state === 'denied'
+        ? 'Notifications bloquées : réautorise-les dans les réglages de l’app (iPhone : Réglages → Notifications).'
+        : push.state === 'unsupported'
+          ? 'Non pris en charge par ce navigateur.'
+          : push.state === 'no-vapid'
+            ? 'Service de notifications indisponible pour le moment.'
+            : !push.standalone
+              ? 'Sur iPhone, installe l’app (Partager → Sur l’écran d’accueil) pour activer les rappels push.'
+              : 'Préviens-nous : on t’avertira au début de chaque programme rappelé.';
   // iOS ignore video.volume (limitation WebKit) : le curseur serait trompeur,
   // on affiche l'explication à la place (même détection que le Player).
   const [isIos, setIsIos] = useState(false);
@@ -177,6 +193,35 @@ export default function PreferencesPage() {
               <span className="w-9 text-right text-xs font-bold tabular-nums text-muted">{Math.round(volume * 100)}%</span>
             </div>
           )}
+        </Row>
+      </section>
+
+      {/* ===== Notifications ===== */}
+      <section className="mt-4 rounded-2xl border border-border bg-surface p-5">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-muted">Notifications</h2>
+        <Row title="Rappels et annonces" hint={pushHint}>
+          {push.state === 'subscribed' ? (
+            <button
+              type="button"
+              onClick={() => void push.disable()}
+              className="shrink-0 rounded-xl border border-border px-3.5 py-2 text-xs font-bold text-muted transition hover:bg-surface-2 hover:text-foreground"
+            >
+              Désactiver
+            </button>
+          ) : push.state === 'prompt' ? (
+            <button
+              type="button"
+              disabled={pushBusy}
+              onClick={async () => {
+                setPushBusy(true);
+                await push.enable().catch(() => false);
+                setPushBusy(false);
+              }}
+              className="shrink-0 rounded-xl bg-accent px-4 py-2 text-xs font-bold text-on-accent transition hover:bg-accent/90 disabled:opacity-50"
+            >
+              {pushBusy ? 'Activation…' : 'Activer'}
+            </button>
+          ) : null}
         </Row>
       </section>
 

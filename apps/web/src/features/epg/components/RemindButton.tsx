@@ -2,6 +2,7 @@
 
 import { Icon } from '@mbolo/ui';
 import { useRemindersStore } from '../../../shared/stores/reminders';
+import { usePush } from '../../../shared/hooks/usePush';
 
 export interface RemindTarget {
   id: string;
@@ -9,12 +10,14 @@ export interface RemindTarget {
   channelName: string;
   title: string;
   startsAt: string;
+  endsAt: string;
 }
 
 export function RemindButton({ programme }: { programme: RemindTarget }) {
   const has = useRemindersStore((state) => state.has);
   const add = useRemindersStore((state) => state.add);
   const remove = useRemindersStore((state) => state.remove);
+  const { enable } = usePush();
   const active = has(programme.id);
 
   const onClick = async (): Promise<void> => {
@@ -22,19 +25,18 @@ export function RemindButton({ programme }: { programme: RemindTarget }) {
       remove(programme.id);
       return;
     }
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      try {
-        await Notification.requestPermission();
-      } catch {
-        // permission refusée : le rappel reste enregistré sans notification
-      }
-    }
+    // Un premier rappel tente l'activation du push (permission + abonnement) :
+    // c'est le geste utilisateur qu'iOS exige. S'il échoue (refus, app non
+    // installée), le rappel reste enregistré et le scheduler local prend le
+    // relais quand l'app est ouverte.
+    await enable().catch(() => false);
     add({
       programmeId: programme.id,
       channelId: programme.channelId,
       channelName: programme.channelName,
       title: programme.title,
       startsAt: programme.startsAt,
+      endsAt: programme.endsAt,
       fired: false,
     });
   };

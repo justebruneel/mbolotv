@@ -1,21 +1,25 @@
 import type {
   ActiveCountsResponse,
+  AnnouncementList,
   Category,
   Channel,
   ChannelListResponse,
   ChannelQuery,
   ChannelViewersResponse,
   CountryOption,
+  EpgRangeResponse,
   MatchListResponse,
   PlayResponse,
   Programme,
   ProgrammeSearchResponse,
+  ReminderList,
 } from '@mbolo/contracts';
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { apiGet, apiPost } from './client';
 import { useSettingsStore } from '../stores/settings';
 import { useFavoritesStore } from '../stores/favorites';
+import { useRemindersStore } from '../stores/reminders';
 
 export function useCategories() {
   return useQuery({
@@ -100,6 +104,15 @@ export function useChannelEpg(id: string) {
   });
 }
 
+/** Grille des programmes d'une plage horaire (page Programmes). */
+export function useEpgRange(from: Date, to: Date, category?: string) {
+  return useQuery({
+    queryKey: ['epg', from.toISOString(), to.toISOString(), category ?? ''],
+    queryFn: () => apiGet<EpgRangeResponse>('/epg/range', { from: from.toISOString(), to: to.toISOString(), category }),
+    staleTime: 2 * 60_000,
+  });
+}
+
 export function usePlayUrl(id: string, enabled = true) {
   return useQuery({
     // Pas d'« eco » dans la clé : basculer Éco en cours de lecture ne doit pas
@@ -166,6 +179,28 @@ export function useFavorites(enabled = true) {
     enabled,
     staleTime: 30_000,
   });
+}
+
+/** Annonces publiées par l'administrateur (« Quoi de neuf »). */
+export function useAnnouncements(enabled = true) {
+  return useQuery({
+    queryKey: ['announcements'],
+    queryFn: () => apiGet<AnnouncementList>('/announcements'),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+/** Synchronise les rappels locaux avec le serveur (au montage de l'app),
+ * même logique d'import unique que les favoris. */
+export function useRemindersSync(): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    void queryClient
+      .fetchQuery({ queryKey: ['reminders'], queryFn: () => apiGet<ReminderList>('/reminders'), staleTime: 30_000 })
+      .then((data) => useRemindersStore.getState().syncFromServer(data.items))
+      .catch(() => undefined);
+  }, [queryClient]);
 }
 
 /** Synchronise le store local avec la liste serveur (au montage de l'app) :

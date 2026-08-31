@@ -4,6 +4,7 @@ import { EmptyState, Icon, Spinner } from '@mbolo/ui';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useProgrammeSearch } from '../../../shared/api/queries';
+import { buildWatchHref } from '../../live-tv/utils';
 import { RemindButton } from './RemindButton';
 
 function formatTime(iso: string): string {
@@ -68,7 +69,7 @@ export function ProgrammeSearch() {
                     <p className="text-sm font-medium text-foreground truncate">{item.title}</p>
                     <button
                       type="button"
-                      onClick={() => router.push(`/watch/${item.channelId}`)}
+                      onClick={() => router.push(buildWatchHref(item.channelId))}
                       className="text-xs text-muted hover:text-accent transition-colors truncate"
                     >
                       {item.channel.name}
@@ -81,6 +82,7 @@ export function ProgrammeSearch() {
                       channelName: item.channel.name,
                       title: item.title,
                       startsAt: item.startsAt,
+                      endsAt: item.endsAt,
                     }}
                   />
                 </li>
