@@ -50,7 +50,15 @@ async function bootstrap(): Promise<void> {
   if (config.get<string>('STORAGE_DRIVER', 'local') === 'local') {
     const uploadsDir = resolve(config.get<string>('STORAGE_LOCAL_DIR', './uploads'));
     await mkdir(uploadsDir, { recursive: true });
-    await instance.register(fastifyStatic, { root: uploadsDir, prefix: '/uploads/' });
+    await instance.register(fastifyStatic, {
+      root: uploadsDir,
+      prefix: '/uploads/',
+      // Les logos sont adressés par clé de fichier : un changement de logo
+      // change d'URL → cache long sans risque de servir du périmé.
+      setHeaders: (response) => {
+        response.header('cache-control', 'public, max-age=86400');
+      },
+    });
   }
 
   const port = config.get<number>('API_PORT', 4000);

@@ -11,7 +11,7 @@ import type {
   Programme,
   ProgrammeSearchResponse,
 } from '@mbolo/contracts';
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { apiGet, apiPost } from './client';
 import { useSettingsStore } from '../stores/settings';
@@ -173,18 +173,14 @@ export function useFavorites(enabled = true) {
  * importés — ensuite le serveur fait foi, pour que les retraits faits sur
  * un autre appareil ne ressuscitent pas ici. */
 export function useFavoritesSync(): void {
+  const queryClient = useQueryClient();
   useEffect(() => {
-    let cancelled = false;
-    void apiGet<ChannelListResponse>('/favorites')
-      .then((data) => {
-        if (cancelled) return;
-        useFavoritesStore.getState().syncFromServer(data.items.map((channel) => channel.id));
-      })
+    // Même clé que useFavorites : une seule requête partagée au démarrage.
+    void queryClient
+      .fetchQuery({ queryKey: ['favorites'], queryFn: () => apiGet<ChannelListResponse>('/favorites'), staleTime: 30_000 })
+      .then((data) => useFavoritesStore.getState().syncFromServer(data.items.map((channel) => channel.id)))
       .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [queryClient]);
 }
 
 export function useActivityHeartbeat(channelId?: string) {

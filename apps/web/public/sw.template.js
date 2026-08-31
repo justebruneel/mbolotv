@@ -1,13 +1,14 @@
-// Service Worker Mbolo TV
+// Service Worker Mbolo TV — GABARIT : public/sw.js est généré à chaque build
+// depuis ce fichier avec une VERSION unique (next.config.ts), ce qui force le
+// navigateur à réinstaller le SW et purger les caches runtime périmés.
 //
 // Stratégies :
 //   - Navigations (HTML)   → réseau d'abord, repli cache hors ligne.
 //     Chaque déploiement est donc visible immédiatement.
 //   - /_next/static/*      → cache-first (fichiers hashés = immuables).
 //   - Autres GET même origine → stale-while-revalidate.
-// Le nom de cache est versionné : incrémenter VERSION purge tout l'ancien.
 
-const VERSION = 'v2';
+const VERSION = 'dev';
 const SHELL_CACHE = `mbolo-tv-shell-${VERSION}`;
 const RUNTIME_CACHE = `mbolo-tv-runtime-${VERSION}`;
 const PRECACHE = ['/', '/icon.svg', '/apple-icon.svg'];
