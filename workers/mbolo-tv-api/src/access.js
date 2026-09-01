@@ -89,7 +89,12 @@ export async function redeemCode(env, code, deviceId, userAgent, ip) {
     return { status: 200, value: await accessStatus(env, deviceId) };
   }
 
-  const expiresAt = new Date(Date.now() + accessCode.durationHours * 3_600_000);
+  // Prolongement : la durée du nouveau code s'ajoute à l'accès actif restant
+  // (pas à maintenant), sinon un code plus court que le temps restant serait
+  // perdu — findGrant retenant l'expiration la plus lointaine.
+  const currentGrant = await findGrant(env, deviceId);
+  const baseTime = currentGrant ? Math.max(new Date(currentGrant.expiresAt).getTime(), Date.now()) : Date.now();
+  const expiresAt = new Date(baseTime + accessCode.durationHours * 3_600_000);
   try {
     // L'id de DeviceGrant n'a pas de défaut en base (défaut Prisma applicatif) :
     // il doit être fourni explicitement ici.

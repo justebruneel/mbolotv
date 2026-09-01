@@ -69,7 +69,12 @@ export class AccessService {
       return this.status(deviceId);
     }
 
-    const expiresAt = new Date(Date.now() + accessCode.durationHours * 3_600_000);
+    // Prolongement : la durée du nouveau code s'ajoute à l'accès actif restant
+    // (pas à maintenant), sinon un code plus court que le temps restant serait
+    // perdu — le statut retenant l'expiration la plus lointaine.
+    const currentGrant = await this.findGrant(deviceId);
+    const baseTime = currentGrant ? Math.max(currentGrant.expiresAt.getTime(), Date.now()) : Date.now();
+    const expiresAt = new Date(baseTime + accessCode.durationHours * 3_600_000);
     try {
       await this.prisma.deviceGrant.create({ data: { accessCodeId: accessCode.id, deviceHash, userAgent: userAgent?.slice(0, 200) ?? null, ipHash: this.hash(ip), expiresAt } });
     } catch {
