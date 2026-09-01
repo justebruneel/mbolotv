@@ -331,6 +331,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       };
       const url = urls[urlIndex];
       const isHlsStream = /m3u8/i.test(url);
+      // Seuil de démarrage : au moins le plancher du profil, sinon 1,5× la
+      // durée d'un segment (bornée) dès que la playlist la révèle.
+      const startupBufferTarget = (): number => {
+        if (!fragDurationRef.current) return startBufferRef.current;
+        return clamp(fragDurationRef.current * 1.5, startBufferRef.current, START_BUFFER_MAX_SECONDS);
+      };
       // Flux MPEG-TS brut (portails Stalker MAC) : mpegts.js via MSE —
       // hls.js exigerait un manifest .m3u8 et n'en sortirait jamais.
       if (!isHlsStream) {
@@ -403,12 +409,6 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) attemptPlayback(); else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
       startBufferRef.current = profile.startBuffer;
-      // Seuil de démarrage : au moins le plancher du profil, sinon 1,5× la
-      // durée d'un segment (bornée) dès que la playlist la révèle.
-      const startupBufferTarget = (): number => {
-        if (!fragDurationRef.current) return startBufferRef.current;
-        return clamp(fragDurationRef.current * 1.5, startBufferRef.current, START_BUFFER_MAX_SECONDS);
-      };
       // startLevel -1 : l'ABR choisit le niveau de départ selon l'estimation
       // réseau (plus de démarrage forcé en 360p sur bonne connexion).
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 45, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: -1, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
