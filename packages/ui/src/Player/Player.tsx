@@ -95,17 +95,22 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   // n'accepte qu'un manifest .m3u8 et bouclerait en erreur sur un TS direct.
   // Import dynamique : le paquet touche `self` au top-level (SSR interdit).
   const mpegtsRef = useRef<ReturnType<typeof MpegtsPlayer.createPlayer> | null>(null);
-  const mpegtsLibRef = useRef<typeof MpegtsPlayer | null>(null);
+  // mpegts.js chargé par script dynamique (l'import webpack crée un chunk 404
+  // sur Vercel → la promesse pend sans résoudre, spinner infini).
+  const mpegtsReadyRef = useRef<Promise<typeof MpegtsPlayer | null> | null>(null);
   const loadMpegts = useCallback(async (): Promise<typeof MpegtsPlayer | null> => {
-    if (mpegtsLibRef.current) return mpegtsLibRef.current;
-    try {
-      const mod = await import('mpegts.js');
-      const lib = (mod as unknown as { default?: typeof MpegtsPlayer }).default ?? (mod as unknown as typeof MpegtsPlayer);
-      mpegtsLibRef.current = lib;
-      return lib;
-    } catch {
-      return null;
-    }
+    if (mpegtsReadyRef.current) return mpegtsReadyRef.current;
+    if (typeof window === 'undefined') return null;
+    if ((window as unknown as Record<string, unknown>).mpegts) return (window as unknown as Record<string, unknown>).mpegts as typeof MpegtsPlayer;
+    mpegtsReadyRef.current = new Promise<typeof MpegtsPlayer | null>((resolve) => {
+      const s = document.createElement('script');
+      s.src = '/mpegts.min.js';
+      s.crossOrigin = 'anonymous';
+      s.onload = () => resolve((window as unknown as Record<string, unknown>).mpegts as typeof MpegtsPlayer | null);
+      s.onerror = () => resolve(null);
+      document.head.appendChild(s);
+    });
+    return mpegtsReadyRef.current;
   }, []);
   const retryRef = useRef<(() => void) | null>(null);
   const networkCapRef = useRef(-1);
