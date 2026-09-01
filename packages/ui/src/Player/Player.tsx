@@ -255,13 +255,17 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let warmupTimer: ReturnType<typeof setTimeout> | null = null;
+    // Sonde de démarrage mpegts : attend un vrai matelas de buffer avant le
+    // premier play (le direct TS n'a pas d'équivalent FRAG_BUFFERED pour
+    // déclencher la lecture au bon moment).
+    let startupPoll: ReturnType<typeof setInterval> | null = null;
     startupAtRef.current = performance.now();
     rebufferCountRef.current = 0;
     stallPauseRef.current = false;
     liveEdgeRef.current = 0;
     setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
-    const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); deadlineTimer = retryTimer = warmupTimer = null; };
+    const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); if (startupPoll) clearInterval(startupPoll); deadlineTimer = retryTimer = warmupTimer = null; startupPoll = null; };
     const destroy = (): void => {
       const hls = hlsRef.current;
       if (hls) {
@@ -333,16 +337,40 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         started = false;
         playbackInitiated = false;
         mediaRecoveries = 0;
-        deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) attemptPlayback(); else advance(); } }, STARTUP_DEADLINE_MS);
+        const profile = networkProfile();
+        startBufferRef.current = profile.startBuffer;
+        // Profil adaptatif TS : connexion faible = matelas de démarrage plus
+        // épais (le débit amont est la ressource rare, pas la latence) ;
+        // chasing plus tolérant pour éviter de rattraper le live trop
+        // souvent (chaque rattrapage = pic de débit = stall en cascade).
+        const weak = profile.capHeight === 360 || profile.estimate <= 750_000;
+        const tsLatencyTarget = weak ? 8 : 4;
+        deadlineTimer = setTimeout(() => { if (!cancelled && !started) advance(); }, STARTUP_DEADLINE_MS);
         void loadMpegts().then((mpegts) => {
-          if (cancelled || !mpegts) { if (!mpegts) advance(); return; }
+          if (cancelled) return;
+          if (!mpegts) { advance(); return; }
           if (mpegtsRef.current || hlsRef.current) return;
           if (!mpegts.getFeatureList().mseLivePlayback) { advance(); return; }
           const mplayer = mpegts.createPlayer(
             { type: 'mpegts', isLive: true, url },
-            // Stash désactivé + chasing : on reste collé au direct d'un flux
-            // infini (pas de fenêtre manifest à ménager, contrairement à HLS).
-            { enableStashBuffer: false, lazyLoad: false, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 30, liveBufferLatencyMinRemain: 0.5 },
+            {
+              // Stash activé : le décodeur reçoit des paquets par paquets
+              // réguliers au lieu de rafales — moins de stalls sur réseau
+              // instable (le stash desactive lisse les pics d'arrivée).
+              enableStashBuffer: true,
+              stashInitialSize: weak ? 512 * 1024 : 384 * 1024,
+              // LazyLoad hors sujet en live (fenêtre manifest n'existe pas).
+              lazyLoad: false,
+              // Rattrapage du direct : on tolère jusqu'à target*2,5 de
+              // retard avant de chaser — en dessous, le chase consomme du
+              // débit et provoque les saccades qu'il prétend éviter.
+              liveBufferLatencyChasing: true,
+              liveBufferLatencyMaxLatency: tsLatencyTarget * 2.5,
+              liveBufferLatencyMinRemain: tsLatencyTarget,
+              // Auto-correctif silencieux d'horloge PTS (panneaux IPTV aux
+              // timestamps approximatifs) : évite les micro-sauts d'image.
+              accurateSeek: false,
+            },
           );
           mpegtsRef.current = mplayer;
           retryRef.current = loadCurrent;
@@ -353,7 +381,18 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
             advance();
           });
           mplayer.load();
-          attemptPlayback();
+          // Sonde de démarrage : le direct TS n'a pas d'équivalent
+          // FRAG_BUFFERED — on attend un vrai matelas (1,5× segment estimé,
+          // borné) avant le premier play, sinon la lecture démarre dans le
+          // vide et stalle immédiatement.
+          startupPoll = setInterval(() => {
+            if (cancelled || started || !el.isConnected) { if (startupPoll) { clearInterval(startupPoll); startupPoll = null; } return; }
+            if (bufferAhead() >= startupBufferTarget()) {
+              if (startupPoll) { clearInterval(startupPoll); startupPoll = null; }
+              attemptPlayback();
+            }
+          }, 250);
+          return;
         });
         return;
       }
@@ -433,15 +472,26 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (ahead <= STALL_PAUSE_THRESHOLD_SECONDS && !el.paused) { el.pause(); stallPauseRef.current = true; }
       setBuffering(true);
     };
+    // Reprise après stall partagée HLS/mpegts : FRAG_BUFFERED n'existe que
+    // chez hls.js — côté MPEG-TS, « canplay » signale que le décodeur a de
+    // nouveau de quoi lire. Sans ce pont, la première saccade laissait la
+    // lecture en pause pour toujours (l'utilisateur devait relancer à la main).
     const resumeIfBuffered = (): void => {
       if (cancelled || !started || !stallPauseRef.current) return;
       if (bufferAhead() >= RESUME_BUFFER_SECONDS) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
     };
+    const resumeCheck = (): void => {
+      networkRetries = 0;
+      updateStats();
+      if (!playbackInitiated && bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) { playbackInitiated = true; void el.play().catch(() => undefined); }
+      else resumeIfBuffered();
+    };
+    const onStalledOrCanplay = (): void => { if (!Hls.isSupported() && mpegtsRef.current) resumeCheck(); };
     const onPlayingReset = (): void => { if (started && !stallPauseRef.current) { setBuffering(false); updateStats(); } };
     const onError = (): void => { if (Hls.isSupported()) return; advance(); };
     el.addEventListener('playing', onPlaying); el.addEventListener('canplay', onCanPlay); el.addEventListener('waiting', onWaiting); el.addEventListener('playing', onPlayingReset); el.addEventListener('error', onError);
-    if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else setStatus('error');
-    return () => { cancelled = true; retryRef.current = null; clearTimers(); destroy(); el.removeEventListener('playing', onPlaying); el.removeEventListener('canplay', onCanPlay); el.removeEventListener('waiting', onWaiting); el.removeEventListener('playing', onPlayingReset); el.removeEventListener('error', onError); };
+    el.addEventListener('canplay', onStalledOrCanplay); el.addEventListener('stalled', onStalledOrCanplay); el.addEventListener('progress', onStalledOrCanplay);
+    return () => { cancelled = true; retryRef.current = null; clearTimers(); destroy(); el.removeEventListener('playing', onPlaying); el.removeEventListener('canplay', onCanPlay); el.removeEventListener('waiting', onWaiting); el.removeEventListener('playing', onPlayingReset); el.removeEventListener('error', onError); el.removeEventListener('canplay', onStalledOrCanplay); el.removeEventListener('stalled', onStalledOrCanplay); el.removeEventListener('progress', onStalledOrCanplay); };
   }, [urlsKey]);
 
   const activeHeight = levels.find((l) => l.index === activeLevel)?.height;
