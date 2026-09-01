@@ -150,13 +150,17 @@ export async function fetchMacPortalEntries(env, connection) {
   const entries = [];
   for (const channel of channelList) {
     if (channel.id == null) continue;
-    const rawGenres = Array.isArray(channel.genres) ? channel.genres : channel.genre_id != null ? [channel.genre_id] : [];
+    // Genre du panel : « tv_genre_id » est le champ standard des portails
+    // Ministra/Stalker (« genre_id » seul n'existe pas) — sans lui, aucune
+    // catégorie n'est attachée et la page d'accueil (100 % rangées) reste
+    // vide côté public.
+    const rawGenres = Array.isArray(channel.genres) ? channel.genres : channel.tv_genre_id != null ? [channel.tv_genre_id] : channel.genre_id != null ? [channel.genre_id] : [];
     const genreName = rawGenres.length > 0 ? genresById.get(Number(rawGenres[0])) : undefined;
     const logo = typeof channel.logo === "string" ? (channel.logo.startsWith("//") ? "https:" + channel.logo : channel.logo) : undefined;
     entries.push({
       title: String(channel.name ?? "Chaîne " + (channel.number ?? channel.id)).trim(),
       tvgLogo: logo || undefined,
-      groupTitle: genreName,
+      groupTitle: genreName ?? "Chaînes TV",
       url: playbackBase + "|" + mac + "|" + channel.id,
     });
   }
