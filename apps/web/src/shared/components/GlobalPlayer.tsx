@@ -60,7 +60,11 @@ export function GlobalPlayer() {
 
   const channelQuery = useChannel(channelId ?? '', Boolean(channelId));
   const playQuery = usePlayUrl(channelId ?? '', Boolean(channelId));
-  const playUrls = useMemo(() => (playQuery.data?.url ? [playQuery.data.url] : []), [playQuery.data?.url]);
+  const playUrls = useMemo(() => {
+    const urls = playQuery.data?.url ? [playQuery.data.url] : [];
+    try { (window as unknown as Record<string, unknown>).__gpDiag = { channelId, hasUrl: !!playQuery.data?.url, url: playQuery.data?.url?.slice(0, 80), urlsLen: urls.length, isLoading: playQuery.isLoading, t: Date.now() }; } catch { /* ignore */ }
+    return urls;
+  }, [playQuery.data?.url]);
   const playErrorMessage = playQuery.error instanceof Error ? playQuery.error.message : null;
   const refetchPlayUrl = useCallback(async (): Promise<boolean> => {
     try {
