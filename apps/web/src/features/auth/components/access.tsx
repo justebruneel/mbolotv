@@ -102,14 +102,12 @@ async function redeem(code: string): Promise<AccessStatus> {
 }
 
 /** Écran de vérification plein écran, aux couleurs de la marque. */
-export function AccessChecking({ label = 'Vérification de votre accès…' }: { label?: string }) {
+export function AccessChecking() {
   return (
     <div className="relative flex min-h-dvh flex-col items-center justify-center gap-5 overflow-hidden px-6">
       <div aria-hidden className="pointer-events-none absolute -top-40 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-accent/10 blur-[120px]" />
       <Logo />
-      <div className="flex items-center gap-3 text-sm font-semibold text-muted">
-        <Spinner /> {label}
-      </div>
+      <Spinner />
     </div>
   );
 }
@@ -210,7 +208,7 @@ export function AccessGuard({ children }: { children: ReactNode }) {
   }, [router]);
 
   if (loading || expired) {
-    return <AccessChecking label={loading ? 'Vérification de votre accès…' : 'Accès expiré — retour au portail…'} />;
+    return <AccessChecking />;
   }
   return <>{children}</>;
 }

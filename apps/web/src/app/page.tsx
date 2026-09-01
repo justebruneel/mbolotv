@@ -70,7 +70,7 @@ export default function EntryPage() {
 
   // Vérification en cours, ou bascule vers /live : écran de marque.
   if (loading || active) {
-    return <AccessChecking label={active ? 'Accès validé — ouverture du direct…' : 'Vérification de votre accès…'} />;
+    return <AccessChecking />;
   }
 
   return (
