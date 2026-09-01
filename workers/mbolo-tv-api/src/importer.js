@@ -76,8 +76,11 @@ export async function runSourceImport(env, sourceId, importRunId) {
     const metrics = { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0 };
     const seenInput = new Set();
     const seenChannelIds = new Set();
+    // Heartbeat embarqué dans metrics : permet au Cron de distinguer un run
+    // réellement actif d'un run orphelin (waitUntil tué) sans migration de schéma.
+    const metricsPayload = () => JSON.stringify({ ...metrics, heartbeatAt: new Date().toISOString() });
     const persistMetrics = () =>
-      q(`UPDATE "ImportRun" SET metrics = $2 WHERE id = $1`, [importRunId, JSON.stringify(metrics)]).catch(() => undefined);
+      q(`UPDATE "ImportRun" SET metrics = $2 WHERE id = $1`, [importRunId, metricsPayload()]).catch(() => undefined);
 
     if (source.kind === 'M3U') {
       const url = connection.url ?? connection.playlistUrl;

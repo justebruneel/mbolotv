@@ -1,7 +1,9 @@
 // Réplique de xtream.connector.ts : catégories + live_streams, URLs
 // {base}/live/{user}/{pass}/{stream_id}.m3u8, rejet d'auth {"user_info":{"auth":0}}.
 const MAX_API_BYTES = 50 * 1024 * 1024;
-const CONNECTOR_TIMEOUT_MS = 60_000;
+// Les panels IPTV débittent souvent à ~0,3 Mo/s : un catalogue de 24k chaînes
+// (~11 Mo de JSON) prend ~40 s. 180 s laisse une marge confortable.
+const CONNECTOR_TIMEOUT_MS = 180_000;
 
 function isFolderMarker(title) {
   return /^#{2,}.+#{2,}$/.test(title.trim());

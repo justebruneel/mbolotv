@@ -56,12 +56,27 @@ function fromFlag(value) {
   return null;
 }
 
+// Memoïsation de fromName : c'est l'étape coûteuse (scan de ~150 noms de pays
+// par appel) et ses entrées se répètent massivement — les playlists regroupent
+// les chaînes par catégorie, le même groupTitle revient des milliers de fois.
+// Cache au niveau de l'isolate, borné pour éviter la dérive mémoire.
+const NAME_CACHE_MAX = 100_000;
+const nameCache = new Map();
+
 function fromName(value) {
+  let cached = nameCache.get(value);
+  if (cached !== undefined) return cached;
   const normalized = normalizeUpper(value);
+  let match = null;
   for (const [name, iso] of Object.entries(NAME_TO_ISO)) {
-    if (normalized.includes(name)) return ISO_TO_NAME[iso];
+    if (normalized.includes(name)) { match = iso; break; }
   }
-  return null;
+  if (nameCache.size >= NAME_CACHE_MAX) {
+    const first = nameCache.keys().next().value;
+    nameCache.delete(first);
+  }
+  nameCache.set(value, match);
+  return match;
 }
 
 // Réplique de common/normalize/country.ts : [FR] → drapeau → nom de pays.

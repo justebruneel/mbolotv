@@ -9,7 +9,7 @@ import * as access from "./access.js";
 import * as favorites from "./favorites.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
-import { handleOwnerRoute, resumeQueuedImports } from "./owner-routes.js";
+import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
 import { scanDueVariants } from "./healthcheck.js";
 import { discoverMatches } from "./discovery.js";
 import { runEpgImportForSource } from "./epgimport.js";
@@ -494,6 +494,8 @@ export async function scheduled(event, env) {
     if (cron === "*/2 * * * *") {
       const resumed = await resumeQueuedImports(env);
       console.log("[cron] imports repris:", resumed);
+      const orphaned = await failStaleImports(env);
+      if (orphaned > 0) console.log("[cron] imports orphelins marqués FAILED:", orphaned);
     } else if (cron === "*/10 * * * *") {
       const key = await importKey(env.ENCRYPTION_KEY);
       console.log("[cron] health:", JSON.stringify(await scanDueVariants(env, key, Number(env.HEALTH_CHECK_BATCH_SIZE ?? 10))));
