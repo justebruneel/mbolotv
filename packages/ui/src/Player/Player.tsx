@@ -154,6 +154,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const isIosRef = useRef(false);
   const startBufferRef = useRef(2);
+  // Timestamp du dernier avancement de currentTime : détecte les flux TS
+  // « morts » (segment panel consommé) qui se figent sans émettre d'erreur.
+  const lastProgressRef = useRef(0);
+  const deadSinceRef = useRef(0);
+  const refreshingRef = useRef(false);
   // Durée d'un segment du flux courant (LEVEL_UPDATED) : sert à caler le
   // seuil de démarrage sur la granularité réelle du flux.
   const fragDurationRef = useRef(0);
@@ -206,6 +211,25 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       const latency = Math.max(0, edge - video.currentTime);
       setLiveProgress(clamp((1 - latency / LIVE_LATENCY_WINDOW_SECONDS) * 100, 0, 100));
       setStats((c) => (c.bufferAhead === ahead && c.latency === latency ? c : { ...c, bufferAhead: ahead, latency }));
+      // Chien de garde flux TS « mort » : les panels envoient des segments
+      // finis — une fois consommé, la vidéo se fige sans qu'aucune erreur
+      // mpegts ne soit émise. Si le temps ne progresse plus depuis 8 s avec
+      // un buffer vide, on force un rafraîchissement de l'URL (nouveau
+      // segment). Évite le gel permanent en rafraîchissant avant le prochain
+      // segment, sans intervention.
+      if (mpegtsRef.current && !video.paused) {
+        if (video.currentTime > lastProgressRef.current + 0.1) {
+          lastProgressRef.current = video.currentTime;
+          deadSinceRef.current = 0;
+        } else if (ahead < 1) {
+          deadSinceRef.current = deadSinceRef.current === 0 ? Date.now() : deadSinceRef.current;
+          if (Date.now() - deadSinceRef.current > 8000 && !refreshingRef.current) {
+            refreshingRef.current = true;
+            console.warn('[player] flux TS figé — rafraîchissement de l\'URL');
+            void onRefreshSource?.().finally(() => { refreshingRef.current = false; });
+          }
+        }
+      }
     };
     const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
@@ -388,6 +412,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
             mplayer.on(mpegts.Events.ERROR, (errorType: string) => {
               if (cancelled || mpegtsRef.current !== mplayer) return;
               setErrorInfo({ type: errorType.toLowerCase(), httpCode: null });
+              // Le panel envoie un segment TS fini (pas un flux infini) :
+              // une fois consommé, rafraîchir l'URL directement est plus
+              // rapide que le cycle retry → exhausted → refresh.
               advance();
             });
             mplayer.load();
