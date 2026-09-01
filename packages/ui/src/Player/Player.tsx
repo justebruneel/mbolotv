@@ -420,9 +420,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
               advance();
             });
             mplayer.load();
+            // Sonde de démarrage mpegts : hls.js attend un matelas d'ABR,
+            // mais un flux TS live (chasing actif) garde currentTime près du
+            // live edge — le buffer « devant » reste petit. Le bon signal est
+            // simplement l'arrivée de données (buffered non vide) ; mpegts
+            // gère lui-même le remplissage.
             startupPoll = setInterval(() => {
               if (cancelled || started || !el.isConnected) { if (startupPoll) { clearInterval(startupPoll); startupPoll = null; } return; }
-              if (bufferAhead() >= startupBufferTarget()) {
+              if (el.buffered.length > 0 && bufferAhead() >= 0.5) {
                 if (startupPoll) { clearInterval(startupPoll); startupPoll = null; }
                 attemptPlayback();
               }
