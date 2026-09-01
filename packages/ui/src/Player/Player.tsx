@@ -212,22 +212,24 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       setLiveProgress(clamp((1 - latency / LIVE_LATENCY_WINDOW_SECONDS) * 100, 0, 100));
       setStats((c) => (c.bufferAhead === ahead && c.latency === latency ? c : { ...c, bufferAhead: ahead, latency }));
       // Chien de garde flux TS « mort » : les panels envoient des segments
-      // finis — une fois consommé, la vidéo se fige sans qu'aucune erreur
-      // mpegts ne soit émise. Si le temps ne progresse plus depuis 8 s avec
-      // un buffer vide, on force un rafraîchissement de l'URL (nouveau
-      // segment). Évite le gel permanent en rafraîchissant avant le prochain
-      // segment, sans intervention.
-      if (mpegtsRef.current && !video.paused) {
+      // finis — une fois consommé, la vidéo se fige (stall natif = paused,
+      // buffer vide) sans qu'aucune erreur mpegts ne soit émise. Si le temps
+      // ne progresse plus depuis 8 s avec un buffer vide, on force un
+      // rafraîchissement de l'URL. Une pause utilisateur garde le buffer
+      // plein (ahead >= 1) : elle ne déclenche jamais le refresh.
+      if (mpegtsRef.current) {
         if (video.currentTime > lastProgressRef.current + 0.1) {
           lastProgressRef.current = video.currentTime;
           deadSinceRef.current = 0;
         } else if (ahead < 1) {
-          deadSinceRef.current = deadSinceRef.current === 0 ? Date.now() : deadSinceRef.current;
+          if (deadSinceRef.current === 0) deadSinceRef.current = Date.now();
           if (Date.now() - deadSinceRef.current > 8000 && !refreshingRef.current) {
             refreshingRef.current = true;
             console.warn('[player] flux TS figé — rafraîchissement de l\'URL');
             void onRefreshSource?.().finally(() => { refreshingRef.current = false; });
           }
+        } else {
+          deadSinceRef.current = 0;
         }
       }
     };
