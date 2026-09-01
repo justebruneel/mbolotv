@@ -157,11 +157,16 @@ export async function fetchMacPortalEntries(env, connection) {
     const rawGenres = Array.isArray(channel.genres) ? channel.genres : channel.tv_genre_id != null ? [channel.tv_genre_id] : channel.genre_id != null ? [channel.genre_id] : [];
     const genreName = rawGenres.length > 0 ? genresById.get(Number(rawGenres[0])) : undefined;
     const logo = typeof channel.logo === "string" ? (channel.logo.startsWith("//") ? "https:" + channel.logo : channel.logo) : undefined;
+    const cmd = typeof channel.cmd === "string" ? channel.cmd.trim() : "";
+    if (!cmd) continue;
+    // Locator : base|mac|id|cmd — le cmd brut du panel est indispensable à la
+    // lecture (create_link le résout ; il est propre à chaque panel, il ne
+    // peut pas être reconstruit hors listage).
     entries.push({
       title: String(channel.name ?? "Chaîne " + (channel.number ?? channel.id)).trim(),
       tvgLogo: logo || undefined,
       groupTitle: genreName ?? "Chaînes TV",
-      url: playbackBase + "|" + mac + "|" + channel.id,
+      url: `${playbackBase}|${mac}|${channel.id}|${cmd}`,
     });
   }
   if (entries.length === 0) throw new Error("Le portail Stalker ne contient aucune chaîne");

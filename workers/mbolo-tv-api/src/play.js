@@ -122,19 +122,9 @@ export async function stalkerHandshake(env, base, mac) {
   return null;
 }
 
-// Résolution dynamique des locataires Stalker MAC : le locator stocké est
-// « {playbackBase}|{mac}|{channelId} » — on fait handshake + create_link à
-// chaque lecture pour obtenir une URL fraîche avec un jeton non expiré.
-export async function resolveStalkerLocator(env, locator) {
-  const separator = locator.indexOf("|");
-  if (separator === -1) return null;
-  const parts = locator.split("|");
-  if (parts.length !== 3) return null;
-  const [base, mac, channelId] = parts;
-
-  const handshake = await stalkerHandshake(env, base, mac);
-  if (!handshake) return null;
-  const { token, endpoint } = handshake;
+// create_link : le cmd fourni DOIT être celui du panel (stocké dans le
+// locator à l'import) — la réécriture du cmd est propre à chaque portail.
+async function stalkerCreateLink(env, endpoint, cmd, token, mac) {
   const authHeaders = {
     "MAC": mac,
     "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`,
@@ -144,18 +134,57 @@ export async function resolveStalkerLocator(env, locator) {
     "Authorization": `Bearer ${token}`,
   };
   try {
-    const relayed = resolveRelay(env, `${endpoint}/portal.php?type=itv&action=create_link&cmd=http://45.159.94.49:8080/play/live/${token}/${channelId}.ts&JsHttpRequest=1-json`);
+    const relayed = resolveRelay(env, `${endpoint}/portal.php?type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&JsHttpRequest=1-json`);
     const linkResponse = await fetch(
       relayed.url,
       { headers: { ...authHeaders, ...relayed.headers }, signal: AbortSignal.timeout(15_000) },
     );
     const linkBody = await linkResponse.text();
     const linkPayload = JSON.parse(linkBody);
-    const cmd = linkPayload.js?.cmd ?? "";
-    // Le cmd contient l'URL de lecture après le préfixe ffmpeg.
-    const match = /ffmpeg\s+(\S+)/.exec(cmd);
+    const cmdOut = linkPayload.js?.cmd ?? "";
+    // Le cmd contient l'URL de lecture après le préfixe ffmpeg ; un stream
+    // vide (`stream=&`) signifie que le panel n'a pas résolu le lien.
+    const match = /ffmpeg\s+(\S+)/.exec(cmdOut);
     if (!match) return null;
-    return match[1].replace(/\\\//g, "/");
+    const url = match[1].replace(/\\\//g, "/");
+    return /(\?|&)stream=&/.test(url) ? null : url;
+  } catch {
+    return null;
+  }
+}
+
+// Résolution dynamique des locataires Stalker MAC :
+//   « {base}|{mac}|{id}|{cmd} » (import courant) → handshake + create_link(cmd).
+//   « {base}|{mac}|{id} » (anciens imports) → handshake + get_all_channels
+//   pour retrouver le cmd, puis create_link — lourd, en repli uniquement.
+export async function resolveStalkerLocator(env, locator) {
+  const parts = locator.split("|");
+  if (parts.length < 3) return null;
+  const [base, mac, channelId, storedCmd] = parts;
+
+  const handshake = await stalkerHandshake(env, base, mac);
+  if (!handshake) return null;
+  const { token, endpoint } = handshake;
+
+  if (storedCmd) {
+    const direct = await stalkerCreateLink(env, endpoint, storedCmd, token, mac);
+    if (direct) return direct;
+  }
+
+  // Repli : retrouver le cmd réel de la chaîne dans le listage complet.
+  const listUrl = `${endpoint}/portal.php?type=itv&action=get_all_channels&token=${encodeURIComponent(token)}&JsHttpRequest=1-json`;
+  try {
+    const relayed = resolveRelay(env, listUrl);
+    const response = await fetch(relayed.url, {
+      headers: { "MAC": mac, "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`, "Accept": "application/json", "User-Agent": "Model: MAG254; Link: Ethernet", "X-User-Agent": "Model: MAG254; Link: Ethernet", "Authorization": `Bearer ${token}`, ...relayed.headers },
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = JSON.parse(await response.text());
+    const list = Array.isArray(payload.js) ? payload.js : payload.js?.data ?? [];
+    const channel = list.find((item) => String(item.id) === String(channelId));
+    const cmd = typeof channel?.cmd === "string" ? channel.cmd.trim() : "";
+    if (!cmd) return null;
+    return await stalkerCreateLink(env, endpoint, cmd, token, mac);
   } catch {
     return null;
   }

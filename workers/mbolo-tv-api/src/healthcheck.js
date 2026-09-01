@@ -24,7 +24,8 @@ const STALKER_HEALTH_TTL_MS = 30 * 60_000;
 
 async function stalkerVariantHealth(env, locator) {
   const parts = locator.split("|");
-  if (parts.length !== 3) return null;
+  // base|mac|id (ancien format) ou base|mac|id|cmd (import courant).
+  if (parts.length < 3) return null;
   const cacheKey = `${parts[0]}|${parts[1]}`;
   const cached = stalkerHealthCache.get(cacheKey);
   if (cached && Date.now() - cached.at < STALKER_HEALTH_TTL_MS) return cached.ok;
