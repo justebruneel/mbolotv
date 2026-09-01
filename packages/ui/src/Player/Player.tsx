@@ -372,12 +372,13 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
                 enableStashBuffer: true,
                 stashInitialSize: weak ? 1024 * 1024 : 512 * 1024,
                 lazyLoad: false,
-                // PAS de « rattrapage du direct » : chaque chase est un seek
-                // qui gèle l'image quelques instants — sur un flux TS infini
-                // regardé en continu, il provoque les coupures récurrentes.
-                // Le buffer s'accumule naturellement (débit > lecture), la
-                // latence croît légèrement mais la lecture reste fluide.
-                liveBufferLatencyChasing: false,
+                // Chasing nécessaire : certains panels émettent des PTS
+                // énormes (décalage de plusieurs heures) — sans le
+                // positionnement sur le live edge, la vidéo reste à t=0
+                // sans rien à lire. Tolérant (30 s) pour éviter les sauts.
+                liveBufferLatencyChasing: true,
+                liveBufferLatencyMaxLatency: 30,
+                liveBufferLatencyMinRemain: weak ? 6 : 4,
                 accurateSeek: false,
               },
             );
