@@ -354,50 +354,41 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         deadlineTimer = setTimeout(() => { if (!cancelled && !started) advance(); }, STARTUP_DEADLINE_MS);
         void loadMpegts().then((mpegts) => {
           if (cancelled) return;
-          if (!mpegts) { advance(); return; }
+          if (!mpegts) { console.warn('[player] mpegts.js introuvable'); advance(); return; }
           if (mpegtsRef.current || hlsRef.current) return;
-          if (!mpegts.getFeatureList().mseLivePlayback) { advance(); return; }
-          const mplayer = mpegts.createPlayer(
-            { type: 'mpegts', isLive: true, url },
-            {
-              // Stash activé : le décodeur reçoit des paquets par paquets
-              // réguliers au lieu de rafales — moins de stalls sur réseau
-              // instable (le stash desactive lisse les pics d'arrivée).
-              enableStashBuffer: true,
-              stashInitialSize: weak ? 512 * 1024 : 384 * 1024,
-              // LazyLoad hors sujet en live (fenêtre manifest n'existe pas).
-              lazyLoad: false,
-              // Rattrapage du direct : on tolère jusqu'à target*2,5 de
-              // retard avant de chaser — en dessous, le chase consomme du
-              // débit et provoque les saccades qu'il prétend éviter.
-              liveBufferLatencyChasing: true,
-              liveBufferLatencyMaxLatency: tsLatencyTarget * 2.5,
-              liveBufferLatencyMinRemain: tsLatencyTarget,
-              // Auto-correctif silencieux d'horloge PTS (panneaux IPTV aux
-              // timestamps approximatifs) : évite les micro-sauts d'image.
-              accurateSeek: false,
-            },
-          );
-          mpegtsRef.current = mplayer;
-          retryRef.current = loadCurrent;
-          mplayer.attachMediaElement(el);
-          mplayer.on(mpegts.Events.ERROR, (errorType: string) => {
-            if (cancelled || mpegtsRef.current !== mplayer) return;
-            setErrorInfo({ type: errorType.toLowerCase(), httpCode: null });
+          if (!mpegts.getFeatureList().mseLivePlayback) { console.warn('[player] MSE TS indisponible'); advance(); return; }
+          try {
+            const mplayer = mpegts.createPlayer(
+              { type: 'mpegts', isLive: true, url },
+              {
+                enableStashBuffer: true,
+                stashInitialSize: weak ? 512 * 1024 : 384 * 1024,
+                lazyLoad: false,
+                liveBufferLatencyChasing: true,
+                liveBufferLatencyMaxLatency: tsLatencyTarget * 2.5,
+                liveBufferLatencyMinRemain: tsLatencyTarget,
+                accurateSeek: false,
+              },
+            );
+            mpegtsRef.current = mplayer;
+            retryRef.current = loadCurrent;
+            mplayer.attachMediaElement(el);
+            mplayer.on(mpegts.Events.ERROR, (errorType: string) => {
+              if (cancelled || mpegtsRef.current !== mplayer) return;
+              setErrorInfo({ type: errorType.toLowerCase(), httpCode: null });
+              advance();
+            });
+            mplayer.load();
+            startupPoll = setInterval(() => {
+              if (cancelled || started || !el.isConnected) { if (startupPoll) { clearInterval(startupPoll); startupPoll = null; } return; }
+              if (bufferAhead() >= startupBufferTarget()) {
+                if (startupPoll) { clearInterval(startupPoll); startupPoll = null; }
+                attemptPlayback();
+              }
+            }, 250);
+          } catch {
             advance();
-          });
-          mplayer.load();
-          // Sonde de démarrage : le direct TS n'a pas d'équivalent
-          // FRAG_BUFFERED — on attend un vrai matelas (1,5× segment estimé,
-          // borné) avant le premier play, sinon la lecture démarre dans le
-          // vide et stalle immédiatement.
-          startupPoll = setInterval(() => {
-            if (cancelled || started || !el.isConnected) { if (startupPoll) { clearInterval(startupPoll); startupPoll = null; } return; }
-            if (bufferAhead() >= startupBufferTarget()) {
-              if (startupPoll) { clearInterval(startupPoll); startupPoll = null; }
-              attemptPlayback();
-            }
-          }, 250);
+          }
           return;
         });
         return;
