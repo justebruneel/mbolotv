@@ -10,7 +10,8 @@
   "dependencies": {
     "@mbolo/contracts": "workspace:*",
     "hls.js": "^1.5.17",
-    "lucide-react": "^1.31.0"
+    "lucide-react": "^1.31.0",
+    "mpegts.js": "^1.7.3"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

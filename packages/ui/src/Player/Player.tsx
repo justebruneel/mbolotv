@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls, { ErrorTypes } from 'hls.js';
 import type { ErrorData } from 'hls.js';
+import type MpegtsPlayer from 'mpegts.js';
 import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
 import styles from './Player.module.css';
@@ -90,6 +91,22 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  // Flux MPEG-TS bruts (portails Stalker) : lus par mpegts.js (MSE) — hls.js
+  // n'accepte qu'un manifest .m3u8 et bouclerait en erreur sur un TS direct.
+  // Import dynamique : le paquet touche `self` au top-level (SSR interdit).
+  const mpegtsRef = useRef<ReturnType<typeof MpegtsPlayer.createPlayer> | null>(null);
+  const mpegtsLibRef = useRef<typeof MpegtsPlayer | null>(null);
+  const loadMpegts = useCallback(async (): Promise<typeof MpegtsPlayer | null> => {
+    if (mpegtsLibRef.current) return mpegtsLibRef.current;
+    try {
+      const mod = await import('mpegts.js');
+      const lib = (mod as unknown as { default?: typeof MpegtsPlayer }).default ?? (mod as unknown as typeof MpegtsPlayer);
+      mpegtsLibRef.current = lib;
+      return lib;
+    } catch {
+      return null;
+    }
+  }, []);
   const retryRef = useRef<(() => void) | null>(null);
   const networkCapRef = useRef(-1);
   const startupAtRef = useRef(0);
@@ -256,6 +273,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         try { hls.destroy(); } catch { /* ignore */ }
       }
       hlsRef.current = null;
+      const mplayer = mpegtsRef.current;
+      if (mplayer) {
+        try { mplayer.pause(); } catch { /* ignore */ }
+        try { mplayer.unload(); } catch { /* ignore */ }
+        try { mplayer.detachMediaElement(); } catch { /* ignore */ }
+        try { mplayer.destroy(); } catch { /* ignore */ }
+      }
+      mpegtsRef.current = null;
       try { el.pause(); } catch { /* ignore */ }
       try { el.removeAttribute('src'); el.load(); } catch { /* ignore */ }
     };
@@ -283,10 +308,6 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (cancelled) return;
       clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
       fragDurationRef.current = 0;
-      if (!Hls.isSupported()) { el.src = urls[urlIndex]; el.load(); return; }
-      started = false;
-      playbackInitiated = false;
-      mediaRecoveries = 0;
       // Si le navigateur refuse la lecture audible (politique autoplay), on
       // retente en muet pour ne jamais rester bloqué sur le spinner ; l'UI
       // propose ensuite de réactiver le son.
@@ -304,6 +325,42 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           void el.play().catch(() => setAutoplayBlocked(true));
         });
       };
+      const url = urls[urlIndex];
+      const isHlsStream = /m3u8/i.test(url);
+      // Flux MPEG-TS brut (portails Stalker MAC) : mpegts.js via MSE —
+      // hls.js exigerait un manifest .m3u8 et n'en sortirait jamais.
+      if (!isHlsStream) {
+        started = false;
+        playbackInitiated = false;
+        mediaRecoveries = 0;
+        deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) attemptPlayback(); else advance(); } }, STARTUP_DEADLINE_MS);
+        void loadMpegts().then((mpegts) => {
+          if (cancelled || !mpegts) { if (!mpegts) advance(); return; }
+          if (mpegtsRef.current || hlsRef.current) return;
+          if (!mpegts.getFeatureList().mseLivePlayback) { advance(); return; }
+          const mplayer = mpegts.createPlayer(
+            { type: 'mpegts', isLive: true, url },
+            // Stash désactivé + chasing : on reste collé au direct d'un flux
+            // infini (pas de fenêtre manifest à ménager, contrairement à HLS).
+            { enableStashBuffer: false, lazyLoad: false, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 30, liveBufferLatencyMinRemain: 0.5 },
+          );
+          mpegtsRef.current = mplayer;
+          retryRef.current = loadCurrent;
+          mplayer.attachMediaElement(el);
+          mplayer.on(mpegts.Events.ERROR, (errorType: string) => {
+            if (cancelled || mpegtsRef.current !== mplayer) return;
+            setErrorInfo({ type: errorType.toLowerCase(), httpCode: null });
+            advance();
+          });
+          mplayer.load();
+          attemptPlayback();
+        });
+        return;
+      }
+      if (!Hls.isSupported()) { el.src = urls[urlIndex]; el.load(); return; }
+      started = false;
+      playbackInitiated = false;
+      mediaRecoveries = 0;
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) attemptPlayback(); else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
       startBufferRef.current = profile.startBuffer;
