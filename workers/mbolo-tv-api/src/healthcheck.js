@@ -8,9 +8,31 @@
 // suivies manuellement saut par saut.
 import { decryptLocator } from './crypto.js';
 import { resolveRelay } from './relay.js';
+import { stalkerHandshake } from './play.js';
 
 const MAX_BYTES = 1024 * 1024;
 const TIMEOUT_MS = Number(process.env.HEALTH_CHECK_TIMEOUT_MS ?? 6000);
+
+// Locator Stalker (« base|mac|channelId ») : un GET direct ne peut jamais
+// renvoyer #EXTM3U (lecture = handshake + jeton Bearer à la volée). On sonde
+// donc le PORTAL : un handshake accepté = portail joignable + MAC valide.
+// Verdict partagé par couple base|mac (cache TTL) : toutes les variantes
+// d'un même portail héritent du résultat sans marteler le panel de
+// handshakes — une MAC = une session sondée par fenêtre.
+const stalkerHealthCache = new Map();
+const STALKER_HEALTH_TTL_MS = 30 * 60_000;
+
+async function stalkerVariantHealth(env, locator) {
+  const parts = locator.split("|");
+  if (parts.length !== 3) return null;
+  const cacheKey = `${parts[0]}|${parts[1]}`;
+  const cached = stalkerHealthCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < STALKER_HEALTH_TTL_MS) return cached.ok;
+  const handshake = await stalkerHandshake(env, parts[0], parts[1]);
+  const ok = Boolean(handshake);
+  stalkerHealthCache.set(cacheKey, { ok, at: Date.now() });
+  return ok;
+}
 
 async function fetchThroughRelay(env, url, timeoutMs = TIMEOUT_MS) {
   // Le load-balancer du panel peut attribuer un serveur média injoignable :
@@ -51,6 +73,13 @@ export async function checkVariant(env, cryptoKey, variant) {
     return 'DOWN';
   }
   try {
+    // Variantes Stalker : sonde portail au lieu du GET manifest.
+    const stalkerOk = await stalkerVariantHealth(env, url);
+    if (stalkerOk !== null) {
+      const status = stalkerOk ? 'OK' : 'DOWN';
+      await env.db.query(env, `UPDATE "StreamVariant" SET "healthStatus" = $2, "healthCheckedAt" = now() WHERE id = $1`, [variant.id, status]);
+      return status;
+    }
     const response = await fetchThroughRelay(env, url);
     if (!response.ok || response.status >= 400) throw new Error(`HTTP ${response.status}`);
     const buffer = await response.arrayBuffer();

@@ -68,7 +68,11 @@ export class HealthCheckService {
     this.scanning = true;
     try {
       const since = new Date(Date.now() - this.recentDays * 86_400_000);
-      const variants = await this.prisma.streamVariant.findMany({ where: { OR: [{ lastPlayedAt: { gte: since } }, { healthCheckedAt: null }, { healthStatus: 'DOWN' }] }, orderBy: { healthCheckedAt: 'asc' }, take: this.batchSize });
+      // Les locators Stalker MAC ne peuvent jamais passer un GET manifest :
+      // leur santé (sonde handshake via le relais) est portée par le Worker.
+      // On les exclut ici, sinon ce scan les marquerait DOWN en masse et
+      // dépublierait tout le catalogue MAC côté public.
+      const variants = await this.prisma.streamVariant.findMany({ where: { AND: [{ OR: [{ lastPlayedAt: { gte: since } }, { healthCheckedAt: null }, { healthStatus: 'DOWN' }] }, { source: { kind: { not: 'MAC_PORTAL' } } }] }, orderBy: { healthCheckedAt: 'asc' }, take: this.batchSize });
       if (variants.length === 0) return;
       this.logger.log(`Health-check de ${variants.length} variantes`);
       for (const variant of variants) {

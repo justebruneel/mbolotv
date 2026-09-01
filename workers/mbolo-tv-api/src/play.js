@@ -85,15 +85,17 @@ export async function channelIsVisible(env, channelId) {
   return result.rows.length > 0;
 }
 
-// Résolution dynamique des locataires Stalker MAC : le locator stocké est
-// « {playbackBase}|{mac}|{channelId} » — on fait handshake + create_link à
-// chaque lecture pour obtenir une URL fraîche avec un jeton non expiré.
-export async function resolveStalkerLocator(env, locator) {
-  const separator = locator.indexOf("|");
-  if (separator === -1) return null;
-  const parts = locator.split("|");
-  if (parts.length !== 3) return null;
-  const [base, mac, channelId] = parts;
+// Handshake Stalker partagé (résolution de lecture ET sonde santé) :
+// teste les candidats d'endpoint et renvoie { token, endpoint }, ou null.
+export async function stalkerHandshake(env, base, mac) {
+  let url;
+  try {
+    url = new URL(base);
+  } catch {
+    return null;
+  }
+  const origin = url.origin;
+  const endpoints = [...new Set([base.replace(/\/$/, ""), `${origin}/stalker_portal/server`, `${origin}/stalker_portal`, origin].map((v) => v.replace(/\/$/, "")))];
 
   const headers = {
     "MAC": mac,
@@ -105,18 +107,6 @@ export async function resolveStalkerLocator(env, locator) {
     "X-User-Agent": "Model: MAG254; Link: Ethernet",
   };
 
-  // Endpoints candidats pour le portail.
-  let url;
-  try {
-    url = new URL(base);
-  } catch {
-    return null;
-  }
-  const origin = url.origin;
-  const endpoints = [...new Set([base.replace(/\/$/, ""), `${origin}/stalker_portal/server`, `${origin}/stalker_portal`, origin].map((v) => v.replace(/\/$/, "")))];
-
-  let token = "";
-  let endpoint = "";
   for (const candidate of endpoints) {
     try {
       const relayed = resolveRelay(env, `${candidate}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-json`);
@@ -126,12 +116,33 @@ export async function resolveStalkerLocator(env, locator) {
       });
       const body = await response.text();
       const payload = JSON.parse(body);
-      if (payload.js?.token) { token = payload.js.token; endpoint = candidate; break; }
+      if (payload.js?.token) return { token: String(payload.js.token), endpoint: candidate };
     } catch { continue; }
   }
-  if (!token) return null;
+  return null;
+}
 
-  const authHeaders = { ...headers, Authorization: `Bearer ${token}` };
+// Résolution dynamique des locataires Stalker MAC : le locator stocké est
+// « {playbackBase}|{mac}|{channelId} » — on fait handshake + create_link à
+// chaque lecture pour obtenir une URL fraîche avec un jeton non expiré.
+export async function resolveStalkerLocator(env, locator) {
+  const separator = locator.indexOf("|");
+  if (separator === -1) return null;
+  const parts = locator.split("|");
+  if (parts.length !== 3) return null;
+  const [base, mac, channelId] = parts;
+
+  const handshake = await stalkerHandshake(env, base, mac);
+  if (!handshake) return null;
+  const { token, endpoint } = handshake;
+  const authHeaders = {
+    "MAC": mac,
+    "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`,
+    "Accept": "application/json",
+    "User-Agent": "Model: MAG254; Link: Ethernet",
+    "X-User-Agent": "Model: MAG254; Link: Ethernet",
+    "Authorization": `Bearer ${token}`,
+  };
   try {
     const relayed = resolveRelay(env, `${endpoint}/portal.php?type=itv&action=create_link&cmd=http://45.159.94.49:8080/play/live/${token}/${channelId}.ts&JsHttpRequest=1-json`);
     const linkResponse = await fetch(
