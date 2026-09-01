@@ -263,7 +263,10 @@ export default function WatchPage() {
   const channel = channelQuery.data;
 
   return (
-    <main className="animate-fade-in pb-16">
+    // Pas d'animate-fade-in ici : l'animation d'opacité (fill-mode both) fait
+    // de <main> un stacking context permanent, ce qui empêche le chrome z-40
+    // (retour, chips) de passer au-dessus du conteneur fixe z-30 du GlobalPlayer.
+    <main className="pb-16">
       {/* ===== PLAYER + FILE « À SUIVRE » : deux colonnes sur desktop, façon YouTube ===== */}
       {/* En théâtre le wrapper passe pleine largeur et la file latérale disparaît. */}
       <div className={`mx-auto ${theatre ? 'max-w-none' : 'max-w-[1600px] lg:flex lg:items-start lg:gap-5'}`}>
