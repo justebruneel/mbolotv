@@ -106,11 +106,8 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       const s = document.createElement('script');
       s.src = '/mpegts.min.js';
       s.crossOrigin = 'anonymous';
-      s.onload = () => {
-        try { (window as unknown as Record<string, unknown>).__playerDiag = { ...(window as unknown as Record<string, unknown>).__playerDiag as object, mpegtsLoaded: !!((window as unknown as Record<string, unknown>).mpegts), t: Date.now() }; } catch { /* ignore */ }
-        resolve((window as unknown as Record<string, unknown>).mpegts as typeof MpegtsPlayer | null);
-      };
-      s.onerror = () => { try { (window as unknown as Record<string, unknown>).__playerDiag = { ...(window as unknown as Record<string, unknown>).__playerDiag as object, mpegtsError: true, t: Date.now() }; } catch { /* ignore */ } resolve(null); };
+      s.onload = () => resolve((window as unknown as Record<string, unknown>).mpegts as typeof MpegtsPlayer | null);
+      s.onerror = () => resolve(null);
       document.head.appendChild(s);
     });
     return mpegtsReadyRef.current;
@@ -339,7 +336,6 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       };
       const url = urls[urlIndex];
       const isHlsStream = /m3u8/i.test(url);
-      try { (window as unknown as Record<string, unknown>).__playerDiag = { url, isHlsStream, urls: urls.length, urlIndex, t: Date.now() }; } catch { /* ignore */ }
       // Seuil de démarrage : au moins le plancher du profil, sinon 1,5× la
       // durée d'un segment (bornée) dès que la playlist la révèle.
       const startupBufferTarget = (): number => {
@@ -349,7 +345,6 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       // Flux MPEG-TS brut (portails Stalker MAC) : mpegts.js via MSE —
       // hls.js exigerait un manifest .m3u8 et n'en sortirait jamais.
       if (!isHlsStream) {
-        try { (window as unknown as Record<string, unknown>).__playerDiag = { ...(window as unknown as Record<string, unknown>).__playerDiag as object, mpegtsBranch: true, t: Date.now() }; } catch { /* ignore */ }
         started = false;
         playbackInitiated = false;
         mediaRecoveries = 0;
