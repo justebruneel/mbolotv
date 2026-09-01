@@ -122,6 +122,17 @@ export async function stalkerHandshake(env, base, mac) {
   return null;
 }
 
+// Extraction de l'URL de lecture depuis un cmd Stalker (« ffmpeg http://… »),
+// en échappant les « \/ » que certains panels renvoient. Une URL avec un
+// `stream=` vide (panel n'ayant pas résolu le lien) est refusée.
+function cmdToUrl(cmd) {
+  if (!cmd) return null;
+  const match = /ffmpeg\s+(\S+)/.exec(cmd.trim());
+  const url = match ? match[1].replace(/\\\//g, "/") : cmd.trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+  return /(\?|&)stream=&/.test(url) ? null : url;
+}
+
 // create_link : le cmd fourni DOIT être celui du panel (stocké dans le
 // locator à l'import) — la réécriture du cmd est propre à chaque portail.
 async function stalkerCreateLink(env, endpoint, cmd, token, mac) {
@@ -141,37 +152,15 @@ async function stalkerCreateLink(env, endpoint, cmd, token, mac) {
     );
     const linkBody = await linkResponse.text();
     const linkPayload = JSON.parse(linkBody);
-    const cmdOut = linkPayload.js?.cmd ?? "";
-    // Le cmd contient l'URL de lecture après le préfixe ffmpeg ; un stream
-    // vide (`stream=&`) signifie que le panel n'a pas résolu le lien.
-    const match = /ffmpeg\s+(\S+)/.exec(cmdOut);
-    if (!match) return null;
-    const url = match[1].replace(/\\\//g, "/");
-    return /(\?|&)stream=&/.test(url) ? null : url;
+    return cmdToUrl(linkPayload.js?.cmd ?? "");
   } catch {
     return null;
   }
 }
 
-// Résolution dynamique des locataires Stalker MAC :
-//   « {base}|{mac}|{id}|{cmd} » (import courant) → handshake + create_link(cmd).
-//   « {base}|{mac}|{id} » (anciens imports) → handshake + get_all_channels
-//   pour retrouver le cmd, puis create_link — lourd, en repli uniquement.
-export async function resolveStalkerLocator(env, locator) {
-  const parts = locator.split("|");
-  if (parts.length < 3) return null;
-  const [base, mac, channelId, storedCmd] = parts;
-
-  const handshake = await stalkerHandshake(env, base, mac);
-  if (!handshake) return null;
-  const { token, endpoint } = handshake;
-
-  if (storedCmd) {
-    const direct = await stalkerCreateLink(env, endpoint, storedCmd, token, mac);
-    if (direct) return direct;
-  }
-
-  // Repli : retrouver le cmd réel de la chaîne dans le listage complet.
+// Récupère le cmd le plus frais de la chaîne (get_all_channels) — son
+// play_token est tout juste émis, plus valide que celui stocké à l'import.
+async function fetchFreshCmd(env, endpoint, token, mac, channelId) {
   const listUrl = `${endpoint}/portal.php?type=itv&action=get_all_channels&token=${encodeURIComponent(token)}&JsHttpRequest=1-json`;
   try {
     const relayed = resolveRelay(env, listUrl);
@@ -182,10 +171,50 @@ export async function resolveStalkerLocator(env, locator) {
     const payload = JSON.parse(await response.text());
     const list = Array.isArray(payload.js) ? payload.js : payload.js?.data ?? [];
     const channel = list.find((item) => String(item.id) === String(channelId));
-    const cmd = typeof channel?.cmd === "string" ? channel.cmd.trim() : "";
-    if (!cmd) return null;
-    return await stalkerCreateLink(env, endpoint, cmd, token, mac);
+    return typeof channel?.cmd === "string" ? channel.cmd.trim() : "";
   } catch {
-    return null;
+    return "";
   }
+}
+
+// Résolution dynamique des locataires Stalker MAC :
+//   « {base}|{mac}|{id}|{cmd} » (import courant) → handshake + create_link(cmd).
+//   « {base}|{mac}|{id} » (anciens imports) → handshake + get_all_channels
+//   pour retrouver le cmd, puis create_link — lourd, en repli uniquement.
+// Quand create_link échoue (stream vide — certains panels, ex. strongsat,
+// refusent la réécriture), on tente la lecture DIRECTE du cmd frais : le
+// proxy vidéo ira chercher cette URL telle quelle. Cela permet de lire les
+// panels qui servent l'URL du cmd sans passer par create_link.
+export async function resolveStalkerLocator(env, locator) {
+  const parts = locator.split("|");
+  if (parts.length < 3) return null;
+  const [base, mac, channelId, storedCmd] = parts;
+
+  const handshake = await stalkerHandshake(env, base, mac);
+  if (!handshake) return null;
+  const { token, endpoint } = handshake;
+
+  // 1) create_link sur le cmd stocké à l'import (play_token potentiellement
+  //    périmé, mais c'est le plus rapide — certains panels le réécrivent).
+  if (storedCmd) {
+    const direct = await stalkerCreateLink(env, endpoint, storedCmd, token, mac);
+    if (direct) return direct;
+  }
+
+  // 2) Cmd FRAIS (play_token neuf, émis il y a un instant) : create_link
+  //    d'abord, puis lecture directe de l'URL en dernier recours.
+  const freshCmd = await fetchFreshCmd(env, endpoint, token, mac, channelId);
+  if (freshCmd) {
+    const link = await stalkerCreateLink(env, endpoint, freshCmd, token, mac);
+    if (link) return link;
+    const directUrl = cmdToUrl(freshCmd);
+    if (directUrl) return directUrl;
+  }
+
+  // 3) Dernier recours : lecture directe du cmd stocké à l'import.
+  if (storedCmd) {
+    const directUrl = cmdToUrl(storedCmd);
+    if (directUrl) return directUrl;
+  }
+  return null;
 }
