@@ -470,10 +470,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (!started) return;
       rebufferCountRef.current += 1;
       setStats((c) => ({ ...c, rebufferCount: rebufferCountRef.current }));
-      const ahead = bufferAhead();
-      // Pause préventive à 0,5 s pour HLS ; pour un flux TS continu (mpegts)
-      // on laisse un peu plus de marge avant de couper la lecture.
-      if (ahead <= (mpegtsRef.current ? 1.0 : STALL_PAUSE_THRESHOLD_SECONDS) && !el.paused) { el.pause(); stallPauseRef.current = true; }
+      // Flux TS continu (mpegts) : on NE met pas la vidéo en pause — mpegts
+      // continue d'append au buffer et le <video> reprend tout seul dès que
+      // les données arrivent (comportement natif, sans le gel d'un cycle
+      // pause/reprise manuel conçu pour la gestion de live edge de hls.js).
+      if (!mpegtsRef.current) {
+        const ahead = bufferAhead();
+        if (ahead <= STALL_PAUSE_THRESHOLD_SECONDS && !el.paused) { el.pause(); stallPauseRef.current = true; }
+      }
       setBuffering(true);
     };
     // Reprise après stall partagée HLS/mpegts : FRAG_BUFFERED n'existe que
