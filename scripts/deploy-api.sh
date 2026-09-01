@@ -9,7 +9,9 @@
 # Usage : sudo bash scripts/deploy-api.sh [id-ou-nom-du-conteneur]
 set -euo pipefail
 
-CONTAINER="${1:-f42b1e919e0a}"
+# Conteneur par défaut : nom compose (mbolotv-api-1) — l'ancien id figé
+# survivait au remplacement du conteneur et finissait en « No such container ».
+CONTAINER="${1:-mbolotv-api-1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 WORKDIR="$(docker exec "$CONTAINER" pwd)"
@@ -28,10 +30,12 @@ docker cp "$ROOT/apps/api/package.json" "$CONTAINER:$WORKDIR/apps/api/package.js
 docker cp "$ROOT/pnpm-lock.yaml" "$CONTAINER:$WORKDIR/pnpm-lock.yaml"
 
 echo "→ Installation des dépendances dans le conteneur (no-op si à jour)…"
-# CI=true : pnpm n'affiche aucune invite (sinon il sort sans rien faire en
-# mode non interactif) ; sans --prod car la chaîne de boot du conteneur
+# NODE_ENV=development : le conteneur tourne en production, mais sans ça pnpm
+# SAUTE les devDependencies (et prune le CLI prisma déjà installé) — le boot
 # lance `prisma migrate deploy` (CLI en devDependencies).
-docker exec "$CONTAINER" sh -c "cd '$WORKDIR' && CI=true pnpm install --no-frozen-lockfile"
+# CI=true : pnpm n'affiche aucune invite (sinon il sort sans rien faire en
+# mode non interactif).
+docker exec "$CONTAINER" sh -c "cd '$WORKDIR' && NODE_ENV=development CI=true pnpm install --no-frozen-lockfile"
 
 echo "→ Régénération du client Prisma dans le conteneur…"
 docker exec "$CONTAINER" sh -c "cd '$WORKDIR' && pnpm --filter @mbolo/api exec prisma generate"
