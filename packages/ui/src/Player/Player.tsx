@@ -355,7 +355,6 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         // chasing plus tolérant pour éviter de rattraper le live trop
         // souvent (chaque rattrapage = pic de débit = stall en cascade).
         const weak = profile.capHeight === 360 || profile.estimate <= 750_000;
-        const tsLatencyTarget = weak ? 8 : 4;
         deadlineTimer = setTimeout(() => { if (!cancelled && !started) advance(); }, STARTUP_DEADLINE_MS);
         void loadMpegts().then((mpegts) => {
           if (cancelled) return;
@@ -363,15 +362,22 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           if (mpegtsRef.current || hlsRef.current) return;
           if (!mpegts.getFeatureList().mseLivePlayback) { console.warn('[player] MSE TS indisponible'); advance(); return; }
           try {
+            // Connexion faible : matelas de démarrage et de reprise plus épais
+            // (le débit amont est la ressource rare — on sacrifie la latence).
             const mplayer = mpegts.createPlayer(
               { type: 'mpegts', isLive: true, url },
               {
+                // Stash actif : lisse les rafales réseau avant l'append MSE
+                // (descripteur de saisie = moins de micro-stalls).
                 enableStashBuffer: true,
-                stashInitialSize: weak ? 512 * 1024 : 384 * 1024,
+                stashInitialSize: weak ? 1024 * 1024 : 512 * 1024,
                 lazyLoad: false,
-                liveBufferLatencyChasing: true,
-                liveBufferLatencyMaxLatency: tsLatencyTarget * 2.5,
-                liveBufferLatencyMinRemain: tsLatencyTarget,
+                // PAS de « rattrapage du direct » : chaque chase est un seek
+                // qui gèle l'image quelques instants — sur un flux TS infini
+                // regardé en continu, il provoque les coupures récurrentes.
+                // Le buffer s'accumule naturellement (débit > lecture), la
+                // latence croît légèrement mais la lecture reste fluide.
+                liveBufferLatencyChasing: false,
                 accurateSeek: false,
               },
             );
@@ -465,7 +471,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       rebufferCountRef.current += 1;
       setStats((c) => ({ ...c, rebufferCount: rebufferCountRef.current }));
       const ahead = bufferAhead();
-      if (ahead <= STALL_PAUSE_THRESHOLD_SECONDS && !el.paused) { el.pause(); stallPauseRef.current = true; }
+      // Pause préventive à 0,5 s pour HLS ; pour un flux TS continu (mpegts)
+      // on laisse un peu plus de marge avant de couper la lecture.
+      if (ahead <= (mpegtsRef.current ? 1.0 : STALL_PAUSE_THRESHOLD_SECONDS) && !el.paused) { el.pause(); stallPauseRef.current = true; }
       setBuffering(true);
     };
     // Reprise après stall partagée HLS/mpegts : FRAG_BUFFERED n'existe que
@@ -474,7 +482,10 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     // lecture en pause pour toujours (l'utilisateur devait relancer à la main).
     const resumeIfBuffered = (): void => {
       if (cancelled || !started || !stallPauseRef.current) return;
-      if (bufferAhead() >= RESUME_BUFFER_SECONDS) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
+      // TS : buffer plus épais avant reprise pour éviter une nouvelle stall
+      // immédiate (le prochain cycle couperait à nouveau l'image).
+      const target = mpegtsRef.current ? 6 : RESUME_BUFFER_SECONDS;
+      if (bufferAhead() >= target) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
     };
     const resumeCheck = (): void => {
       networkRetries = 0;
@@ -482,7 +493,10 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (!playbackInitiated && bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) { playbackInitiated = true; void el.play().catch(() => undefined); }
       else resumeIfBuffered();
     };
-    const onStalledOrCanplay = (): void => { if (!Hls.isSupported() && mpegtsRef.current) resumeCheck(); };
+    // Reprise : les événements média (stalled/canplay/progress) sont levés
+    // quel que soit le moteur (hls.js ou mpegts) — contrairement à
+    // FRAG_BUFFERED qui est spécifique à hls.js.
+    const onStalledOrCanplay = (): void => { resumeCheck(); };
     const onPlayingReset = (): void => { if (started && !stallPauseRef.current) { setBuffering(false); updateStats(); } };
     const onError = (): void => { if (Hls.isSupported()) return; advance(); };
     el.addEventListener('playing', onPlaying); el.addEventListener('canplay', onCanPlay); el.addEventListener('waiting', onWaiting); el.addEventListener('playing', onPlayingReset); el.addEventListener('error', onError);
