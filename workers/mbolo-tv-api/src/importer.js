@@ -1,8 +1,8 @@
 import pg from 'pg';
-import { importKey, encryptLocator, decryptLocator } from './crypto.js';
+import { importKey, encryptLocator, decryptLocator, sha256Hex } from './crypto.js';
 import { slugify, detectCountry } from './normalize.js';
 import { parseM3uStream } from './m3u.js';
-import { fetchXtreamEntries } from './xtream.js';
+import { fetchXtreamEntries, fetchXtreamVodEntries } from './xtream.js';
 import { fetchMacPortalEntries } from './macportal.js';
 
 const BATCH = 5000;
@@ -20,6 +20,13 @@ function catalogKey(title, country, group) {
   const scope = [country, group].filter(Boolean).map((value) => slugify(value)).filter(Boolean).join('--');
   const titleKey = slugify(title);
   return scope ? `${titleKey}--${scope}` : titleKey;
+}
+
+// Clé VOD stable par source : hash de l'URL du panel (le stream_id Xtream
+// n'est unique que chez un fournisseur donné) + identifiant externe.
+// Indépendant du titre : pas de churn quand le fournisseur renomme un film.
+function vodNormalizedKey(kind, externalId, baseHash) {
+  return `vod-${kind.toLowerCase()}-${baseHash}-${externalId}`;
 }
 
 class ImportError extends Error {
@@ -57,7 +64,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
 
   try {
     const runRows = await q(`SELECT state FROM "ImportRun" WHERE id = $1`, [importRunId]);
-    const sourceRows = await q(`SELECT id, kind, status, "connectionEncrypted" FROM "Source" WHERE id = $1`, [sourceId]);
+    const sourceRows = await q(`SELECT id, kind, status, "vodEnabled", "connectionEncrypted" FROM "Source" WHERE id = $1`, [sourceId]);
     const run = runRows.rows[0];
     const source = sourceRows.rows[0];
     if (!run || !source || run.state === 'CANCELED') return null;
@@ -73,9 +80,10 @@ export async function runSourceImport(env, sourceId, importRunId) {
       throw new ImportError('DECRYPT_ERROR', 'Connexion source illisible (clé de chiffrement différente)');
     }
 
-    const metrics = { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0 };
+    const metrics = { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0, vodRead: 0, vodCreated: 0, vodUpdated: 0, vodDuplicates: 0, vodErrors: 0 };
     const seenInput = new Set();
     const seenChannelIds = new Set();
+    const seenVodKeys = new Set();
     // Heartbeat embarqué dans metrics : permet au Cron de distinguer un run
     // réellement actif d'un run orphelin (waitUntil tué) sans migration de schéma.
     const metricsPayload = () => JSON.stringify({ ...metrics, heartbeatAt: new Date().toISOString() });
@@ -126,11 +134,34 @@ export async function runSourceImport(env, sourceId, importRunId) {
       throw new ImportError('UNSUPPORTED_KIND', 'Type de source non pris en charge dans le Worker');
     }
 
+    // VOD (films/séries) : uniquement les sources XTREAM activées
+    // (Source.vodEnabled). Ingestion dans VodItem — la purge des variantes
+    // live ci-dessous n'est pas affectée (tables et cycles séparés).
+    if (source.kind === 'XTREAM' && source.vodEnabled) {
+      await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
+      let vodEntries;
+      try {
+        vodEntries = await fetchXtreamVodEntries(connection);
+      } catch (error) {
+        throw new ImportError('VOD_CONNECTOR_ERROR', error.message);
+      }
+      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
+      const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
+      await ingestVodEntries(q, key, source, vodEntries, metrics, persistMetrics, baseHash);
+    }
+
     // Prune : variantes actives de la source absentes du dernier flux.
     const active = await q(`SELECT id, "channelId" FROM "StreamVariant" WHERE "sourceId" = $1 AND "isActive"`, [sourceId]);
     const toPrune = active.rows.filter((variant) => !seenChannelIds.has(variant.channelId));
     for (const part of chunks(toPrune, 500)) {
       const result = await q(`UPDATE "StreamVariant" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((variant) => variant.id)]);
+      metrics.pruned += result.rowCount;
+    }
+    // Prune VOD : items actifs de la source absents du dernier flux.
+    const activeVod = await q(`SELECT id, "normalizedKey" FROM "VodItem" WHERE "sourceId" = $1 AND "isActive"`, [sourceId]);
+    const toPruneVod = activeVod.rows.filter((item) => !seenVodKeys.has(item.normalizedKey));
+    for (const part of chunks(toPruneVod, 500)) {
+      const result = await q(`UPDATE "VodItem" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((item) => item.id)]);
       metrics.pruned += result.rowCount;
     }
     metrics.processed = metrics.read;
@@ -337,5 +368,129 @@ async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, 
   metrics.updated += updates.length + variantUpdates.length;
   metrics.processed = metrics.read;
   metrics.ignored = Math.max(0, metrics.read - metrics.created - metrics.updated - metrics.duplicates - metrics.errors);
+  await persistMetrics();
+}
+
+// Ingestion VOD (films + séries) dans VodItem — même mécanique de diff que
+// ingestEntries mais table dédiée : pas de conflit de clé avec le live, pas
+// de catégorie Category partagée (categoryTitle texte libre), pas de
+// health-check (un mp4/mkv n'est pas un manifest #EXTM3U).
+async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metrics, persistMetrics, baseHash) {
+  const entries = [...movies, ...series];
+  const metas = [];
+
+  for (const entry of entries) {
+    try {
+      const normalizedKey = vodNormalizedKey(entry.kind, entry.externalId, baseHash);
+      if (seenVodKeys.has(normalizedKey)) { metrics.vodDuplicates += 1; continue; }
+      seenVodKeys.add(normalizedKey);
+      metas.push({ ...entry, key: normalizedKey });
+    } catch {
+      metrics.vodErrors += 1;
+    }
+  }
+  if (metrics.vodDuplicates > 0) await persistMetrics();
+
+  const existingByKey = new Map();
+  for (const part of chunks(metas.map((meta) => meta.key), QUERY_BATCH)) {
+    const rows = await q(`SELECT id, kind, title, "normalizedKey", "posterUrl", rating, "categoryTitle", "containerExt", "isActive", "encryptedLocator" FROM "VodItem" WHERE "normalizedKey" = ANY($1::text[])`, [part]);
+    for (const row of rows.rows) existingByKey.set(row.normalizedKey, row);
+  }
+
+  const creates = [];
+  const updates = [];
+  const locatorUpdates = [];
+  const decryptPairs = [];
+
+  for (const entry of metas) {
+    const existing = existingByKey.get(entry.key);
+    if (!existing) {
+      creates.push(entry);
+      continue;
+    }
+    const update = { id: existing.id };
+    let changed = false;
+    if (existing.title !== entry.title) { update.title = entry.title; changed = true; }
+    if ((existing.posterUrl ?? null) !== entry.posterUrl) { update.posterUrl = entry.posterUrl; changed = true; }
+    if ((existing.rating ?? null) !== entry.rating) { update.rating = entry.rating; changed = true; }
+    if ((existing.categoryTitle ?? null) !== entry.categoryTitle) { update.categoryTitle = entry.categoryTitle; changed = true; }
+    if ((existing.containerExt ?? null) !== entry.containerExt) { update.containerExt = entry.containerExt; changed = true; }
+    const existingAdded = existing.addedAt ? new Date(existing.addedAt).getTime() : null;
+    if (existingAdded !== (entry.addedAt ? entry.addedAt.getTime() : null)) { update.addedAt = entry.addedAt; changed = true; }
+    if (changed) updates.push(update);
+    // Locator : re-chiffré seulement s'il a réellement changé (IV aléatoire).
+    decryptPairs.push({ existing, entry });
+  }
+
+  for (const part of chunks(decryptPairs, CRYPTO_PARALLEL)) {
+    const currentLocators = await Promise.all(part.map((pair) => decryptLocator(cryptoKey, pair.existing.encryptedLocator).catch(() => null)));
+    part.forEach((pair, index) => {
+      if (currentLocators[index] !== pair.entry.locator) locatorUpdates.push({ id: pair.existing.id, locator: pair.entry.locator });
+    });
+  }
+
+  metrics.vodRead = entries.length;
+  metrics.vodCreated = metrics.vodCreated ?? 0;
+  await persistMetrics();
+
+  for (const part of chunks(creates, BATCH)) {
+    const locators = await Promise.all(part.map((entry) => encryptLocator(cryptoKey, entry.locator)));
+    const values = [];
+    const params = [];
+    part.forEach((entry, position) => {
+      const base = position * 11;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`);
+      params.push(crypto.randomUUID(), entry.kind, entry.title, entry.key, entry.posterUrl, entry.rating, entry.categoryTitle, entry.containerExt, entry.addedAt, source.id, locators[position]);
+    });
+    const inserted = await q(
+      `INSERT INTO "VodItem" (id, kind, title, "normalizedKey", "posterUrl", rating, "categoryTitle", "containerExt", "addedAt", "sourceId", "encryptedLocator") VALUES ${values.join(', ')}
+       ON CONFLICT ("normalizedKey") DO NOTHING RETURNING id`,
+      params,
+    );
+    metrics.vodCreated += inserted.rows.length;
+    await persistMetrics();
+  }
+
+  // Mises à jour métadonnées en masse (+ réactivation des items revenue).
+  for (const part of chunks(updates, 1000)) {
+    const values = [];
+    const params = [];
+    part.forEach((update, position) => {
+      const base = position * 7;
+      values.push(`($${base + 1}::text, $${base + 2}::text, $${base + 3}::text, $${base + 4}::float8, $${base + 5}::text, $${base + 6}::text, $${base + 7}::timestamptz)`);
+      params.push(update.id, update.title ?? null, update.posterUrl ?? null, update.rating ?? null, update.categoryTitle ?? null, update.containerExt ?? null, update.addedAt ?? null);
+    });
+    await q(
+      `UPDATE "VodItem" AS v SET
+         title = COALESCE(v2.title, v.title),
+         "posterUrl" = COALESCE(v2."posterUrl", v."posterUrl"),
+         rating = COALESCE(v2.rating, v.rating),
+         "categoryTitle" = COALESCE(v2."categoryTitle", v."categoryTitle"),
+         "containerExt" = COALESCE(v2."containerExt", v."containerExt"),
+         "addedAt" = COALESCE(v2."addedAt", v."addedAt"),
+         "isActive" = true
+       FROM (VALUES ${values.join(', ')}) AS v2(id, title, "posterUrl", rating, "categoryTitle", "containerExt", "addedAt")
+       WHERE v.id = v2.id`,
+      params,
+    );
+  }
+  metrics.vodUpdated += updates.length;
+
+  // Locators re-chiffrés en masse.
+  for (const part of chunks(locatorUpdates, CRYPTO_PARALLEL)) {
+    const locators = await Promise.all(part.map((update) => encryptLocator(cryptoKey, update.locator)));
+    const values = [];
+    const params = [];
+    part.forEach((update, position) => {
+      values.push(`($${position * 2 + 1}::text, $${position * 2 + 2}::bytea)`);
+      params.push(update.id, locators[position]);
+    });
+    await q(
+      `UPDATE "VodItem" AS v SET "encryptedLocator" = v2.loc, "isActive" = true
+       FROM (VALUES ${values.join(', ')}) AS v2(id, loc) WHERE v.id = v2.id`,
+      params,
+    );
+  }
+
   await persistMetrics();
 }

@@ -56,7 +56,7 @@ async function hmacHex(secret, payload) {
   return [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function playResponse(env, providerUrl, maxHeight, { qualityCap } = {}) {
+export async function playResponse(env, providerUrl, maxHeight, { qualityCap, direct } = {}) {
   const proxyUrl = (env.VIDEO_PROXY_URL ?? "").trim().replace(/\/+$/, "");
   if (!proxyUrl) throw new Error("VIDEO_PROXY_URL non configurée");
   const secret = typeof env.PROXY_URL_SECRET === "string" ? env.PROXY_URL_SECRET.trim() : "";
@@ -64,6 +64,9 @@ export async function playResponse(env, providerUrl, maxHeight, { qualityCap } =
   const expiry = nextExpiry();
   const signature = await hmacHex(secret, `${providerUrl}|${expiry}`);
   let url = `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}&x-exp=${expiry}&x-sig=${signature}`;
+  // direct=1 : sortie Cloudflare sans relais résidentiel (VOD). Param non
+  // signé, même statut que maxh (la signature ne couvre que url|expiry).
+  if (direct) url += "&direct=1";
   if (maxHeight) url += `&maxh=${maxHeight}`;
   const response = {
     url,

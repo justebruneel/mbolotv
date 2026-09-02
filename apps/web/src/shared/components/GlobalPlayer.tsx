@@ -2,9 +2,9 @@
 
 import { Button, EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChannel, usePlayUrl, useActivityHeartbeat } from '../api/queries';
-import { usePlayerStore } from '../stores/player';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useChannel, usePlayUrl, useVodItem, useVodPlayUrl, useActivityHeartbeat } from '../../shared/api/queries';
+import { usePlayerStore, useVodPlayerStore } from '../stores/player';
 import { useSettingsStore } from '../stores/settings';
 import { internalNavigationCount } from './RouteTracker';
 
@@ -19,34 +19,41 @@ const PLAYER_HIDDEN = 'fixed left-0 top-0 z-30 overflow-hidden bg-black invisibl
 
 type Mode = 'follow' | 'mini' | 'hidden';
 
-/**
- * Lecteur global : unique instance de <Player> de l'application, montée au
- * niveau du layout pour que la lecture survive à une navigation vers /live ou
- * /favorites (et uniquement elles). Sur /watch il recouvre l'emplacement
- * réservé par la page ; ailleurs sur ces pages il devient une vignette fixe.
- * Le <video> n'est jamais démonté tant que la source ne change pas — c'est ce
- * qui évite de recréer les problèmes de lecture en arrière-plan.
- */
-export function GlobalPlayer() {
+// Position persistée toutes les 5 s : plus fréquent serait marteler
+// localStorage à chaque tick du player (500 ms).
+const VOD_PROGRESS_WRITE_INTERVAL_MS = 5_000;
+
+function GlobalPlayerInner() {
   const pathname = usePathname();
   const router = useRouter();
   const storeChannelId = usePlayerStore((state) => state.channelId);
   const watchHref = usePlayerStore((state) => state.watchHref);
   const clearSource = usePlayerStore((state) => state.clear);
+  const storeVodId = useVodPlayerStore((state) => state.vodItemId);
+  const storeVodSeason = useVodPlayerStore((state) => state.season);
+  const storeVodEpisode = useVodPlayerStore((state) => state.episode);
+  const clearVod = useVodPlayerStore((state) => state.clearVod);
 
   const watchId = pathname?.match(/^\/watch\/([^/]+)/)?.[1] ?? null;
+  const routeVodId = pathname?.match(/^\/vod\/([^/]+)/)?.[1] ?? null;
   const isWatch = Boolean(watchId);
+  const isVodRoute = Boolean(routeVodId);
   // La lecture ne survit à une navigation vers live / favoris que si
   // l'option « Mini-lecteur sur l'accueil » est activée (Préférences).
   const miniPlayerOnBrowse = useSettingsStore((state) => state.miniPlayerOnBrowse);
-  const keepAlive = Boolean(pathname && (isWatch || (miniPlayerOnBrowse && (pathname.startsWith('/live') || pathname.startsWith('/favorites')))));
-  const channelId = watchId ?? (keepAlive ? storeChannelId : null);
+  const keepAlive = Boolean(pathname && (isWatch || isVodRoute || (miniPlayerOnBrowse && (pathname.startsWith('/live') || pathname.startsWith('/favorites') || pathname.startsWith('/vod')))));
+  // Priorité : watch > vod (route) > vod (mini) > chaîne. Le heartbeat
+  // d'activité ne suit que les chaînes live : l'éco adaptatif mesure la
+  // charge du relais résidentiel, que le VOD (sortie directe) n'utilise pas.
+  const vodId = routeVodId ?? (keepAlive && !isWatch && !storeChannelId ? storeVodId : null);
+  const channelId = watchId ?? (!vodId && keepAlive ? storeChannelId : null);
 
   // Hors pages keep-alive : la lecture s'arrête (démontage du Player) et la
   // source est oubliée — revenir sur live ne doit pas la ressusciter.
   useEffect(() => {
     if (!keepAlive && storeChannelId) clearSource();
-  }, [keepAlive, storeChannelId, clearSource]);
+    if (!keepAlive && storeVodId) clearVod();
+  }, [keepAlive, storeChannelId, storeVodId, clearSource, clearVod]);
 
   useActivityHeartbeat(channelId ?? undefined);
 
@@ -57,19 +64,58 @@ export function GlobalPlayer() {
   const setVolume = useSettingsStore((state) => state.setVolume);
   const setPreferredLevel = useSettingsStore((state) => state.setPreferredLevel);
   const setDataSaver = useSettingsStore((state) => state.setDataSaver);
+  const vodProgress = useSettingsStore((state) => state.vodProgress);
+  const recordVodProgress = useSettingsStore((state) => state.recordVodProgress);
 
   const channelQuery = useChannel(channelId ?? '', Boolean(channelId));
   const playQuery = usePlayUrl(channelId ?? '', Boolean(channelId));
-  const playUrls = useMemo(() => (playQuery.data?.url ? [playQuery.data.url] : []), [playQuery.data?.url]);
-  const playErrorMessage = playQuery.error instanceof Error ? playQuery.error.message : null;
+  const vodItemQuery = useVodItem(vodId ?? '', Boolean(vodId));
+  const vodPlayQuery = useVodPlayUrl(vodId ?? '', { s: storeVodSeason, e: storeVodEpisode }, Boolean(vodId));
+
+  const playUrls = useMemo(() => {
+    if (vodId) return vodPlayQuery.data?.url ? [vodPlayQuery.data.url] : [];
+    return playQuery.data?.url ? [playQuery.data.url] : [];
+  }, [vodId, vodPlayQuery.data?.url, playQuery.data?.url]);
+  const activeQuery = vodId ? vodPlayQuery : playQuery;
+  const playErrorMessage = activeQuery.error instanceof Error ? activeQuery.error.message : null;
   const refetchPlayUrl = useCallback(async (): Promise<boolean> => {
     try {
-      const result = await playQuery.refetch();
+      const result = await activeQuery.refetch();
       return result.isSuccess;
     } catch {
       return false;
     }
-  }, [playQuery]);
+  }, [activeQuery]);
+
+  // Reprise VOD : au-delà de 30 s et avant la fin, on repart de la position
+  // enregistrée (sinon du début).
+  const progressEntry = vodId ? vodProgress[vodId] : undefined;
+  const initialTime = useMemo(() => {
+    if (!progressEntry || progressEntry.duration <= 0) return undefined;
+    if (progressEntry.position < 30 || progressEntry.position >= progressEntry.duration - 30) return undefined;
+    return progressEntry.position;
+  }, [progressEntry]);
+  const lastProgressWriteRef = useRef(0);
+  const handleVodProgress = useCallback(
+    (seconds: number, duration: number) => {
+      if (!vodId) return;
+      const now = Date.now();
+      if (now - lastProgressWriteRef.current < VOD_PROGRESS_WRITE_INTERVAL_MS) return;
+      lastProgressWriteRef.current = now;
+      const item = vodItemQuery.data;
+      recordVodProgress({
+        id: vodId,
+        kind: item?.kind ?? 'MOVIE',
+        title: item?.title ?? 'Vidéo',
+        posterUrl: item?.posterUrl ?? null,
+        category: item?.category ?? null,
+        position: seconds,
+        duration,
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    [vodId, vodItemQuery.data, recordVodProgress],
+  );
 
   // Bascule Éco = changement réel de source : on re-demande l'URL de play.
   const handleDataSaverChange = useCallback(
@@ -94,7 +140,7 @@ export function GlobalPlayer() {
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [mobileViewport, setMobileViewport] = useState(false);
-  // Sur /watch, « follow » tant que l'emplacement est visible ; mini en
+  // Sur watch/vod, « follow » tant que l'emplacement est visible ; mini en
   // dessous (mobile) ou hidden (desktop, lecture audio hors écran).
   const [mode, setMode] = useState<Mode>('hidden');
 
@@ -106,10 +152,11 @@ export function GlobalPlayer() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  const isMini = Boolean(channelId) && (!isWatch || mode === 'mini');
+  const isMini = Boolean(channelId || vodId) && mode === 'mini';
+  const slotId = isVodRoute ? 'vod-player-slot' : 'watch-player-slot';
 
   useEffect(() => {
-    if (!mounted || !isWatch || !channelId) return;
+    if (!mounted || (!isWatch && !isVodRoute) || (!channelId && !vodId)) return;
     let raf = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let observedSlot: Element | null = null;
@@ -129,9 +176,9 @@ export function GlobalPlayer() {
     };
     const update = (): void => {
       raf = 0;
-      const slot = document.getElementById('watch-player-slot');
+      const slot = document.getElementById(slotId);
       if (!slot) {
-        // Page watch en cours de chargement (emplacement pas encore monté).
+        // Page en cours de chargement (emplacement pas encore monté).
         apply('hidden');
         if (!retryTimer) retryTimer = setTimeout(schedule, 200);
         return;
@@ -165,36 +212,41 @@ export function GlobalPlayer() {
         el.style.width = '';
       }
     };
-  }, [mounted, isWatch, channelId, mobileViewport]);
+  }, [mounted, isWatch, isVodRoute, channelId, vodId, mobileViewport, slotId]);
 
   const onMiniExpand = useCallback((): void => {
-    if (isWatch) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    router.push(watchHref ?? `/watch/${channelId}`);
-  }, [isWatch, router, watchHref, channelId]);
+    if (vodId) router.push(`/vod/${vodId}`);
+    else if (isWatch) window.scrollTo({ top: 0, behavior: 'smooth' });
+    else router.push(watchHref ?? `/watch/${channelId}`);
+  }, [vodId, isWatch, router, watchHref, channelId]);
 
   const onMiniClose = useCallback((): void => {
+    if (vodId) { if (isVodRoute) router.back(); clearVod(); return; }
     if (isWatch) goBack();
     else clearSource();
-  }, [isWatch, goBack, clearSource]);
+  }, [vodId, isVodRoute, isWatch, goBack, clearSource, clearVod, router]);
 
-  if (!mounted || !channelId) return null;
+  if (!mounted || (!channelId && !vodId)) return null;
 
-  const containerClass = !isWatch || mode === 'mini' ? PLAYER_MINI : mode === 'hidden' ? PLAYER_HIDDEN : PLAYER_FOLLOW;
+  const playerTitle = vodId ? (vodItemQuery.data?.title ?? 'Mbolo TV') : (channelQuery.data?.name ?? 'Mbolo TV');
+  const playerKey = vodId ? `${vodId}-${storeVodSeason}-${storeVodEpisode}` : `${channelId}`;
+
+  const containerClass = !isWatch && !isVodRoute ? PLAYER_MINI : mode === 'hidden' ? PLAYER_HIDDEN : mode === 'mini' ? PLAYER_MINI : PLAYER_FOLLOW;
 
   return (
     <div ref={containerRef} className={containerClass} data-player-root>
-      {playQuery.isLoading ? (
+      {activeQuery.isLoading ? (
         <div className="flex aspect-video w-full items-center justify-center">
           <Spinner />
         </div>
       ) : playUrls.length > 0 ? (
         <Player
-          key={channelId}
+          key={playerKey}
           urls={playUrls}
-          title={channelQuery.data?.name ?? 'Mbolo TV'}
+          title={playerTitle}
+          mode={vodId ? 'vod' : 'live'}
+          initialTime={initialTime}
+          onProgress={vodId ? handleVodProgress : undefined}
           initialVolume={volume}
           initialLevel={preferredLevel}
           initialDataSaver={dataSaver}
@@ -206,12 +258,12 @@ export function GlobalPlayer() {
         />
       ) : (
         <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 p-4 text-center">
-          <EmptyState title="Lecture indisponible" hint={playErrorMessage ?? 'Impossible de récupérer un flux pour cette chaîne.'} />
+          <EmptyState title="Lecture indisponible" hint={playErrorMessage ?? 'Impossible de récupérer un flux pour ce contenu.'} />
           <div className="flex items-center gap-2">
             <Button variant="primary" onClick={() => void refetchPlayUrl()}>
               Réessayer
             </Button>
-            <Button variant="ghost" onClick={goBack}>
+            <Button variant="ghost" onClick={vodId ? () => router.back() : goBack}>
               ← Retour
             </Button>
           </div>
@@ -240,5 +292,13 @@ export function GlobalPlayer() {
         </>
       )}
     </div>
+  );
+}
+
+export function GlobalPlayer() {
+  return (
+    <Suspense fallback={null}>
+      <GlobalPlayerInner />
+    </Suspense>
   );
 }

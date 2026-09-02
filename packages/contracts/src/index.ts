@@ -94,6 +94,21 @@ export const matchListResponseSchema = z.object({ items: z.array(matchSchema), t
 export type MatchListResponse = z.infer<typeof matchListResponseSchema>;
 export const playResponseSchema = z.object({ url: z.string().url(), expiresAt: z.string(), qualityCap: z.number().int().optional() });
 export type PlayResponse = z.infer<typeof playResponseSchema>;
+// ---- VOD (films & séries) ----
+export const vodKindSchema = z.enum(['MOVIE', 'SERIES']);
+export type VodKind = z.infer<typeof vodKindSchema>;
+export const vodItemSchema = z.object({ id: z.string(), kind: vodKindSchema, title: z.string(), posterUrl: z.string().nullable(), rating: z.number().nullable(), category: z.string().nullable(), addedAt: z.string().nullable() });
+export type VodItem = z.infer<typeof vodItemSchema>;
+export const vodListResponseSchema = z.object({ items: z.array(vodItemSchema), total: z.number(), hasMore: z.boolean() });
+export type VodListResponse = z.infer<typeof vodListResponseSchema>;
+export const vodCategorySchema = z.object({ name: z.string(), count: z.number() });
+export type VodCategory = z.infer<typeof vodCategorySchema>;
+export const vodEpisodeSchema = z.object({ id: z.string(), num: z.number(), title: z.string().nullable(), containerExt: z.string().optional() });
+export type VodEpisode = z.infer<typeof vodEpisodeSchema>;
+export const vodSeasonSchema = z.object({ number: z.number(), episodes: z.array(vodEpisodeSchema) });
+export type VodSeason = z.infer<typeof vodSeasonSchema>;
+export const vodSeasonsResponseSchema = z.object({ seasons: z.array(vodSeasonSchema) });
+export type VodSeasonsResponse = z.infer<typeof vodSeasonsResponseSchema>;
 
 export const ownerLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;

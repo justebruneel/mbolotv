@@ -74,3 +74,16 @@ fournisseur — la requête apparaît comme venant directement de la maison.
 - Fallback « swap » borné (2 max/chaîne) : si un saut aboutit sur une IP brute
   refusée type Cloudflare 1003, on réessaie avec l'autorité du domaine précédent.
 - Trace des sauts incluse dans le détail 502 (`detail.erreur`) pour diagnostic.
+## Bypass direct (VOD)
+
+Les URL de lecture VOD portent `&direct=1` (paramètre non signé, voir
+`docs/security/proxy-url-signature.md`) : le proxy vidéo sort alors
+directement des IP Cloudflare, **sans passer par le relais résidentiel** —
+même pour les hôtes explicitement mappés dans `RELAY_MAP`. Motif : un film
+mp4/mkv pèse plusieurs Go et génère des requêtes Range en rafale à chaque
+seek ; la ligne résidentielle (~10 Mbps d'upload) ne doit porter que le live.
+En cas d'échec total en direct (panel bloquant les IP datacenter), un seul
+repli via le relais est tenté avant de renoncer.
+
+Le VOD ne participe pas non plus à l'éco adaptatif : le compteur de chaînes
+actives (heartbeats live) mesure la charge du relais, que le VOD n'utilise pas.

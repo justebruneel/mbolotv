@@ -47,7 +47,7 @@ function serializeRun(row) {
 }
 
 function serializeSource(row) {
-  return { id: row.id, name: row.name, kind: row.kind, status: row.status, priority: row.priority, lastSyncedAt: iso(row.lastSyncedAt), createdAt: iso(row.createdAt) };
+  return { id: row.id, name: row.name, kind: row.kind, status: row.status, priority: row.priority, vodEnabled: Boolean(row.vodEnabled), lastSyncedAt: iso(row.lastSyncedAt), createdAt: iso(row.createdAt) };
 }
 
 export async function handleOwnerRoute(ctx, url, path, method) {
@@ -279,13 +279,20 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     if (name.length < 2 || name.length > 80 || !kind || typeof body.connection !== 'object' || body.connection === null) return ctx.fail(400, 'Validation failed');
     const key = await importKey(env.ENCRYPTION_KEY);
     const sourceId = crypto.randomUUID();
+    const vodEnabled = body?.vodEnabled === true;
     await env.db.query(
       env,
-      `INSERT INTO "Source" (id, "ownerId", name, kind, status, priority, "connectionEncrypted") VALUES ($1,$2,$3,$4,'PENDING',100,$5)`,
-      [sourceId, owner.userId, name, kind, await encryptLocator(key, JSON.stringify(body.connection))],
+      `INSERT INTO "Source" (id, "ownerId", name, kind, status, priority, "connectionEncrypted", "vodEnabled") VALUES ($1,$2,$3,$4,'PENDING',100,$5,$6)`,
+      [sourceId, owner.userId, name, kind, await encryptLocator(key, JSON.stringify(body.connection)), vodEnabled],
     );
-    await audit(ctx, owner.userId, 'source.create', 'source', sourceId, { kind, name });
+    await audit(ctx, owner.userId, 'source.create', 'source', sourceId, { kind, name, vodEnabled });
     if (kind === 'M3U' && (body.connection.url || body.connection.playlistUrl)) {
+      const runId = await startImportRun(ctx, sourceId);
+      ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId));
+    }
+    // XTREAM avec VOD activée : import immédiat aussi (le live seul ne se
+    // déclenchait pas à la création — l'owner lanceait POST /import).
+    if (kind === 'XTREAM' && vodEnabled && body.connection.url && body.connection.username && body.connection.password) {
       const runId = await startImportRun(ctx, sourceId);
       ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId));
     }
@@ -367,7 +374,14 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     const name = typeof body.name === 'string' && body.name.trim().length >= 2 && body.name.trim().length <= 80 ? body.name.trim() : source.name;
     const priority = Number.isInteger(body.priority) && body.priority >= 1 && body.priority <= 1000 ? body.priority : source.priority;
     const status = ['READY', 'DEGRADED', 'FAILED', 'DISABLED'].includes(body.status) ? body.status : source.status;
-    await env.db.query(env, `UPDATE "Source" SET name = $2, priority = $3, status = $4 WHERE id = $1`, [source.id, name, priority, status]);
+    const vodEnabled = typeof body.vodEnabled === 'boolean' ? body.vodEnabled : Boolean(source.vodEnabled);
+    await env.db.query(env, `UPDATE "Source" SET name = $2, priority = $3, status = $4, "vodEnabled" = $5 WHERE id = $1`, [source.id, name, priority, status, vodEnabled]);
+    // Activer le VOD déclenche un import immédiat pour remplir VodItem.
+    if (vodEnabled && !source.vodEnabled) {
+      const runId = await startImportRun(ctx, source.id);
+      await audit(ctx, owner.userId, 'source.vod_enabled', 'source', source.id, { importRunId: runId });
+      ctx.waitUntil(runImportAndEpg(ctx, source.id, runId));
+    }
     const updated = await env.db.query(env, `SELECT * FROM "Source" WHERE id = $1`, [source.id]);
     return ctx.json(serializeSource(updated.rows[0]));
   }

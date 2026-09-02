@@ -39,11 +39,14 @@ model Source {
   priority Int @default(100)
   connectionEncrypted Bytes
   epgUrl String?
+  // Importer aussi films/séries (Xtream : get_vod_streams + get_series).
+  vodEnabled Boolean @default(false)
   lastSyncedAt DateTime?
   createdAt DateTime @default(now())
   owner User @relation(fields:[ownerId], references:[id], onDelete:Cascade)
   importRuns ImportRun[]
   variants StreamVariant[]
+  vodItems VodItem[]
   @@index([ownerId, status])
 }
 model ImportRun {
@@ -154,6 +157,38 @@ model Favorite {
   channel   Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
 
   @@id([deviceId, channelId])
+  @@index([deviceId, createdAt])
+}
+// VOD (films/séries) importée depuis les sources Xtream (vodEnabled).
+// kind : "MOVIE" (locator = /movie/...) ou "SERIES" (locator = JSON
+// xtream-series ; épisodes résolus à la lecture via get_series_info).
+model VodItem {
+  id String @id @default(cuid())
+  kind String
+  title String
+  normalizedKey String @unique
+  posterUrl String?
+  rating Float?
+  categoryTitle String?
+  containerExt String?
+  addedAt DateTime?
+  sourceId String
+  encryptedLocator Bytes
+  isActive Boolean @default(true)
+  isVisible Boolean @default(true)
+  createdAt DateTime @default(now())
+  source Source @relation(fields:[sourceId], references:[id], onDelete:Cascade)
+  favorites VodFavorite[]
+  @@index([kind, categoryTitle, isActive])
+  @@index([sourceId, isActive])
+}
+model VodFavorite {
+  deviceId  String
+  vodItemId String
+  createdAt DateTime @default(now())
+  vodItem   VodItem @relation(fields:[vodItemId], references:[id], onDelete:Cascade)
+
+  @@id([deviceId, vodItemId])
   @@index([deviceId, createdAt])
 }
 model AuditLog {

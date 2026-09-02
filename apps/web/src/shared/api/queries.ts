@@ -13,6 +13,11 @@ import type {
   Programme,
   ProgrammeSearchResponse,
   ReminderList,
+  VodCategory,
+  VodItem,
+  VodKind,
+  VodListResponse,
+  VodSeasonsResponse,
 } from '@mbolo/contracts';
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
@@ -256,5 +261,70 @@ export function useFeatured(limit = 5) {
     queryKey: ['featured', limit],
     queryFn: () => apiGet<{ channelId: string; programme: { title: string; description: string | null; startsAt: string; endsAt: string; imageUrl: string | null; posterUrl: string | null; backdropUrl: string | null; trailerUrl: string | null; type: string | null } }[]>(`/epg/featured?limit=${limit}`),
     staleTime: 5 * 60_000,
+  });
+}
+
+// ---- VOD (films & séries) ---------------------------------------------------
+
+export function useInfiniteVod(params: { kind?: VodKind; category?: string; q?: string }, pageSize = 48) {
+  const { kind, category, q } = params;
+  return useInfiniteQuery({
+    queryKey: ['vod', kind ?? 'all', category ?? '', q ?? ''],
+    queryFn: ({ pageParam }) =>
+      apiGet<VodListResponse>('/vod', { kind, category, q, limit: pageSize, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.reduce((count, page) => count + page.items.length, 0) : undefined,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useVodCategories(kind?: VodKind) {
+  return useQuery({
+    queryKey: ['vod-categories', kind ?? 'all'],
+    queryFn: () => apiGet<VodCategory[]>('/vod/categories', { kind }),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useVodItem(id: string, enabled = true) {
+  return useQuery({
+    queryKey: ['vod-item', id],
+    queryFn: () => apiGet<VodItem>(`/vod/${id}`),
+    enabled: enabled && Boolean(id),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useVodEpisodes(id: string, enabled = true) {
+  return useQuery({
+    queryKey: ['vod-episodes', id],
+    queryFn: () => apiGet<VodSeasonsResponse>(`/vod/${id}/episodes`),
+    enabled: enabled && Boolean(id),
+    staleTime: 10 * 60_000,
+  });
+}
+
+// L'URL de lecture VOD embarque le couple saison/épisode dans la clé : changer
+// d'épisode relance une requête (nouvelle URL signée, nouveau fichier).
+export function useVodPlayUrl(id: string, params: { s?: number; e?: number }, enabled = true) {
+  return useQuery({
+    queryKey: ['vod-play', id, params.s ?? 1, params.e ?? 1],
+    queryFn: () =>
+      apiGet<PlayResponse>(
+        `/vod/${id}/play`,
+        params.s || params.e ? { s: params.s, e: params.e } : undefined,
+      ),
+    staleTime: 60_000,
+    enabled: enabled && Boolean(id),
+  });
+}
+
+export function useVodFavorites(enabled = true) {
+  return useQuery({
+    queryKey: ['vod-favorites'],
+    queryFn: () => apiGet<{ items: VodItem[] }>('/vod/favorites'),
+    staleTime: 30_000,
+    enabled,
   });
 }

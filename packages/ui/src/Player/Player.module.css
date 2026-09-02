@@ -91,7 +91,7 @@
   right: 0;
   bottom: 0;
   left: 0;
-  height: 3px;
+  height: 2px;
   overflow: hidden;
   background: var(--mbolo-border);
   z-index: 10;
@@ -102,6 +102,46 @@
   border-radius: 0 999px 999px 0;
   background: var(--mbolo-accent);
   transition: width 0.3s linear;
+}
+
+/* ---------- VOD seek bar ---------- */
+.seekBar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(transparent, oklch(0.10 0.018 260 / 0.72));
+  z-index: 10;
+}
+
+.seekSlider {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.seekFill {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--mbolo-accent);
+  pointer-events: none;
+}
+
+.seekTime {
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--mbolo-text);
+  pointer-events: none;
 }
 
 /* ---------- Buffering overlay ---------- */

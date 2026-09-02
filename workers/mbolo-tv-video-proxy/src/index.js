@@ -272,10 +272,16 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
     // master (plafonné ou complet) servi à tous les suivants depuis le cache.
     // Les segments ne portent jamais maxh : leur mutualisation reste intacte.
     const maxHeightParam = Number(url.searchParams.get("maxh")) || null;
+    // Sortie directe Cloudflare (VOD) : contourne le relais résidentiel pour
+    // cette requête — les fichiers VOD sont lourds et volumineux en seek, la
+    // ligne résidentielle ne doit pas les porter. Change le chemin réseau :
+    // fait partie de la clé pour qu'un fetcher direct n'impose pas son egress
+    // aux viewers en relais (et inversement).
+    const directParam = url.searchParams.get("direct") === "1";
     // Clé de cache STABLE : l'URL du fournisseur + le plafond (sans x-exp/x-sig,
     // qui tournent chaque heure) — deux viewers d'une même chaîne partagent le
     // même cache quel que soit l'heure de leur signature.
-    const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}&maxh=${maxHeightParam ?? ""}`;
+    const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}&maxh=${maxHeightParam ?? ""}${directParam ? "&direct=1" : ""}`;
     const cacheKey = new Request(stableKey, { method: "GET" });
 
     const cached = await cache.match(cacheKey);
@@ -317,7 +323,7 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
       }
     }
 
-    const runAttempts = async (useDefaultRelay) => {
+    const runAttempts = async (useDefaultRelay, { skipRelay = false } = {}) => {
       let lastFailure = null;
       // Activé dès qu'un saut vers une IP brute se solde par un refus type
       // Cloudflare 1003 : les tentatives suivantes préfèrent l'autorité du domaine.
@@ -326,7 +332,7 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
       for (let attempt = 0; attempt < MAX_CHAIN_ATTEMPTS; attempt += 1) {
         let outcome;
         try {
-          outcome = await fetchChain(env, target, headers, { preferHostAuthority, useDefaultRelay });
+          outcome = await fetchChain(env, target, headers, { preferHostAuthority, useDefaultRelay, skipRelay });
         } catch (error) {
           lastFailure = { reason: "relais indisponible", erreur: String(error?.message ?? error).slice(0, 200) };
           continue;
@@ -405,9 +411,10 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
       // TTL aligné sur la durée réelle du segment (3 × target duration) :
       // un segment terminé est immutable, mais un redémarrage de session
       // fournisseur réutilise les mêmes noms de fichier — un TTL court évite
-      // de servir un segment périmé après un restart.
+      // de servir un segment périmé après un restart. En direct (VOD), le
+      // fichier est immuable : TTL long pour absorber replays et re-seeks.
       const dParam = Number(url.searchParams.get("d")) || null;
-      responseHeaders.set("cache-control", `public, max-age=${segmentMaxAge(dParam)}, immutable`);
+      responseHeaders.set("cache-control", directParam ? "public, max-age=3600, immutable" : `public, max-age=${segmentMaxAge(dParam)}, immutable`);
       const response = new Response(outcome.resp.body, {
         status: outcome.resp.status,
         headers: responseHeaders,
@@ -424,9 +431,18 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
     };
 
     try {
-      let result = await runAttempts(true);
-      if (!result.response && !explicitlyMapped && env.RELAY_DEFAULT_ORIGIN)
-        result = await runAttempts(false);
+      let result;
+      if (directParam) {
+        // VOD : sortie directe d'abord (relais court-circuité, hôtes mappés
+        // compris) ; repli UNE fois via le relais résidentiel si le fournisseur
+        // refuse les IP datacenter.
+        result = await runAttempts(true, { skipRelay: true });
+        if (!result.response) result = await runAttempts(true);
+      } else {
+        result = await runAttempts(true);
+        if (!result.response && !explicitlyMapped && env.RELAY_DEFAULT_ORIGIN)
+          result = await runAttempts(false);
+      }
       if (result.response) return result.response;
 
       return new Response(
@@ -488,8 +504,10 @@ function isPrivateHostname(hostname) {
 // relay-dns, aucune config à ajouter lors de l'import d'une nouvelle playlist.
 // L'autorité d'origine transite via « x-upstream-authority », authentifiée
 // par « x-relay-token » (secret partagé avec le forwarder local).
-function applyRelay(env, targetUrl, { allowDefault = true } = {}) {
+function applyRelay(env, targetUrl, { allowDefault = true, skipRelay = false } = {}) {
   const noRelay = { url: targetUrl, upstreamAuthority: null };
+  // Mode direct (VOD) : aucun egress résidentiel, hôtes mappés compris.
+  if (skipRelay) return noRelay;
   try {
     const parsed = new URL(targetUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return noRelay;
@@ -515,14 +533,14 @@ function applyRelay(env, targetUrl, { allowDefault = true } = {}) {
   }
 }
 
-async function fetchChain(env, target, headers, { preferHostAuthority = false, useDefaultRelay = true } = {}) {
+async function fetchChain(env, target, headers, { preferHostAuthority = false, useDefaultRelay = true, skipRelay = false } = {}) {
   let currentUrl = target;
   let hops = 0;
   let swaps = 0;
   const trace = [];
   const relayToken = env.RELAY_TOKEN ? String(env.RELAY_TOKEN).trim() : "";
   for (;;) {
-    const relayed = applyRelay(env, currentUrl, { allowDefault: useDefaultRelay });
+    const relayed = applyRelay(env, currentUrl, { allowDefault: useDefaultRelay, skipRelay });
     const requestHeaders = relayed.upstreamAuthority
       ? { ...headers, "x-upstream-authority": relayed.upstreamAuthority, ...(relayToken ? { "x-relay-token": relayToken } : {}) }
       : headers;

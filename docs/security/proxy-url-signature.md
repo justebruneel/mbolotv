@@ -31,8 +31,18 @@ https://<proxy>/?url=<fournisseur encodé>&x-exp=<expiry ms>&x-sig=<hex 64>
 - **Refus** : `403` (absente, expirée, invalide), `400` (URL invalide),
   `403` (schéma non http/https), `503` si le proxy n'a pas de secret configuré.
 
-`maxh` (plafond Éco) n'est pas signé : ce paramètre ne peut que réduire la
-qualité, il n'élargit rien.
+`maxh` (plafond Éco) et `direct` (VOD) ne sont pas signés : ils ne peuvent
+que réduire la qualité ou changer le chemin de sortie, jamais élargir l'accès.
+
+- `maxh=<h>` : filtre les variantes du master au-delà de `h` pixels (éco).
+- `direct=1` : sortie **directe Cloudflare** — le relais résidentiel est
+  court-circuité (hôtes RELAY_MAP/RELAY_DOMAIN_MAP compris), avec repli
+  unique via le relais si le fournisseur refuse les IP datacenter. Utilisé
+  pour le VOD (`/api/vod/:id/play`) : les fichiers mp4/mkv, lourds et
+  fortement seekés, ne doivent pas transiter par la ligne résidentielle.
+  Cache binaire long TTL (1 h, immutable) au lieu du TTL segment court.
+  `direct` fait partie de la clé de cache (un fetcher direct n'impose pas
+  son egress aux viewers en relais).
 
 ## Déploiement (l'ordre compte)
 

@@ -13,7 +13,7 @@ import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/acc
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
-  { href: '/epg', label: 'Programmes', icon: <Icon.CalendarDays size={20} /> },
+  { href: '/vod', label: 'Films & Séries', icon: <Icon.Clapperboard size={20} /> },
   { href: '/favorites', label: 'Favoris', icon: <Icon.Heart size={20} /> },
 ];
 // Menu ⋮ / « Plus » : uniquement des pages internes (liens SPA). La navigation
@@ -61,7 +61,7 @@ function ShellContent({ children }: { children: ReactNode }) {
         navItems={NAV_ITEMS}
         menuSections={buildMenuSections(unreadWhatsNew)}
         menuBadge={unreadWhatsNew}
-        searchSlot={pathname?.startsWith('/live') ? (
+        searchSlot={pathname?.startsWith('/live') || pathname?.startsWith('/vod') ? (
           <div className="flex items-center gap-2">
             <Suspense fallback={<div className="h-10 w-10" />}>
               <HeaderSearch />

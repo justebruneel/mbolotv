@@ -8,7 +8,7 @@ import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
 import styles from './Player.module.css';
 
-export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; }
+export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; mode?: 'live' | 'vod'; initialTime?: number; onProgress?: (seconds: number, duration: number) => void; }
 interface QualityLevel { index: number; height: number; bitrate?: number; }
 interface PlaybackStats { startupMs: number | null; rebufferCount: number; bufferAhead: number; bitrate: number | null; latency: number | null; }
 interface GestureState { startX: number; startY: number; startTime: number; }
@@ -90,6 +90,7 @@ function targetDurationOf(details: unknown): number {
 }
 function formatDuration(ms: number | null): string { return ms === null ? '…' : `${(ms / 1000).toFixed(1)} s`; }
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
+function formatTime(seconds: number): string { const s = Math.max(0, Math.floor(seconds)); const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
 /** Index du niveau le plus haut ≤ hauteur demandée (le plus bas si la demande est sous le min) ; -1 = Auto. */
 function resolveHeightIndex(levels: QualityLevel[], height: number): number {
@@ -124,7 +125,8 @@ function getErrorMessage(errorType: string | null, httpCode: number | null): str
   return 'Le fournisseur ne répond pas ou la session a expiré.';
 }
 
-export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource }: PlayerProps) {
+export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource, mode = 'live', initialTime, onProgress }: PlayerProps) {
+  const isVod = mode === 'vod';
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -194,6 +196,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isPip, setIsPip] = useState(false);
   const [liveProgress, setLiveProgress] = useState(0);
+  // VOD : position et durée pour la barre de progression seekable.
+  const [vodPosition, setVodPosition] = useState(0);
+  const [vodDuration, setVodDuration] = useState(0);
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
   const [bandwidth, setBandwidth] = useState<number | null>(null);
   const [gestureOverlay, setGestureOverlay] = useState<{ type: 'volume'; value: number } | null>(null);
   const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -251,6 +258,16 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     if (!video) return;
     const tick = (): void => {
       if (video.buffered.length === 0) return;
+      // VOD : progression currentTime/duration pour la barre seekable +
+      // remontée de position (reprise de lecture, throttlée au tick 500 ms).
+      if (isVod) {
+        setVodPosition(video.currentTime);
+        if (video.duration > 0 && Number.isFinite(video.duration)) {
+          setVodDuration(video.duration);
+          onProgressRef.current?.(video.currentTime, video.duration);
+        }
+        return;
+      }
       const bufferedEnd = video.buffered.end(video.buffered.length - 1);
       const ahead = Math.max(0, bufferedEnd - video.currentTime);
       const edge = Math.max(liveEdgeRef.current, bufferedEnd);
@@ -285,7 +302,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     };
     const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
-  }, [status]);
+  }, [status, isVod]);
   // Onglet/appareil en arrière-plan : on stoppe le chargement des segments
   // (le buffer se fige, zéro bande passante gaspillée) et on reprend au
   // retour — hls.js se resynchronise au live edge de lui-même.
@@ -319,7 +336,15 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   // les flux IPTV) et iOS ignore video.volume (contrôle physique uniquement).
   if (absDx > absDy || isIosRef.current) return; const video = videoRef.current; if (!video) return; const ratio = clamp(-dy / rect.height, -0.5, 0.5); const newVol = clamp(video.volume + ratio, 0, 1); video.volume = newVol; video.muted = newVol === 0; setVolume(newVol); setMuted(newVol === 0); onVolumeChange?.(newVol); setGestureOverlay({ type: 'volume', value: Math.round(newVol * 100) }); }, [status, onVolumeChange]);
   const handleTouchEnd = useCallback(() => { gestureRef.current = null; if (gestureTimerRef.current) clearTimeout(gestureTimerRef.current); gestureTimerRef.current = setTimeout(() => setGestureOverlay(null), 600); }, []);
-  useEffect(() => { if (status !== 'ready') return; const handleKey = (e: KeyboardEvent) => { const tag = (e.target as HTMLElement).tagName; if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return; switch (e.key) { case ' ': case 'k': case 'K': e.preventDefault(); togglePlayback(); showControls(); break; case 'f': case 'F': e.preventDefault(); toggleFullscreen(); break; case 'm': case 'M': e.preventDefault(); toggleMute(); showControls(); break; case 'p': case 'P': e.preventDefault(); void togglePip(); break; case 'ArrowUp': { e.preventDefault(); const video = videoRef.current; if (video) { const newVol = Math.min(1, video.volume + 0.1); video.volume = newVol; if (newVol > 0) { video.muted = false; setMuted(false); } setVolume(newVol); onVolumeChange?.(newVol); } showControls(); break; } case 'ArrowDown': { e.preventDefault(); const video = videoRef.current; if (video) { const newVol = Math.max(0, video.volume - 0.1); video.volume = newVol; if (newVol > 0) { video.muted = false; setMuted(false); } setVolume(newVol); onVolumeChange?.(newVol); } showControls(); break; } case 'Escape': if (activePopup) { setActivePopup(null); showControls(); } else if (isPseudoFullscreen) exitPseudoFullscreen(); else if (document.fullscreenElement) void document.exitFullscreen(); break; } }; window.addEventListener('keydown', handleKey); return () => window.removeEventListener('keydown', handleKey); }, [status, togglePlayback, toggleFullscreen, toggleMute, togglePip, showControls, onVolumeChange, activePopup, isPseudoFullscreen, exitPseudoFullscreen]);
+  const seekTo = useCallback((seconds: number): void => {
+    const video = videoRef.current;
+    if (!video || !isVod || !Number.isFinite(seconds)) return;
+    const target = clamp(seconds, 0, Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.5) : seconds);
+    video.currentTime = target;
+    setVodPosition(target);
+  }, [isVod]);
+
+  useEffect(() => { if (status !== 'ready') return; const handleKey = (e: KeyboardEvent) => { const tag = (e.target as HTMLElement).tagName; if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return; switch (e.key) { case ' ': case 'k': case 'K': e.preventDefault(); togglePlayback(); showControls(); break; case 'f': case 'F': e.preventDefault(); toggleFullscreen(); break; case 'm': case 'M': e.preventDefault(); toggleMute(); showControls(); break; case 'p': case 'P': e.preventDefault(); void togglePip(); break; case 'ArrowLeft': if (isVod) { e.preventDefault(); const video = videoRef.current; if (video) seekTo(video.currentTime - 10); showControls(); break; } break; case 'ArrowRight': if (isVod) { e.preventDefault(); const video = videoRef.current; if (video) seekTo(video.currentTime + 10); showControls(); break; } break; case 'ArrowUp': { e.preventDefault(); const video = videoRef.current; if (video) { const newVol = Math.min(1, video.volume + 0.1); video.volume = newVol; if (newVol > 0) { video.muted = false; setMuted(false); } setVolume(newVol); onVolumeChange?.(newVol); } showControls(); break; } case 'ArrowDown': { e.preventDefault(); const video = videoRef.current; if (video) { const newVol = Math.max(0, video.volume - 0.1); video.volume = newVol; if (newVol > 0) { video.muted = false; setMuted(false); } setVolume(newVol); onVolumeChange?.(newVol); } showControls(); break; } case 'Escape': if (activePopup) { setActivePopup(null); showControls(); } else if (isPseudoFullscreen) exitPseudoFullscreen(); else if (document.fullscreenElement) void document.exitFullscreen(); break; } }; window.addEventListener('keydown', handleKey); return () => window.removeEventListener('keydown', handleKey); }, [status, togglePlayback, toggleFullscreen, toggleMute, togglePip, showControls, onVolumeChange, activePopup, isPseudoFullscreen, exitPseudoFullscreen, isVod, seekTo]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -449,6 +474,45 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       };
       const url = urls[urlIndex];
       const isHlsStream = /m3u8/i.test(url);
+      // VOD : lecture d'un fichier à la demande (mp4/mkv natif ; hls.js si le
+      // fournisseur sert du .m3u8). Pas de chasing de latence ni de chien de
+      // garde live — c'est un fichier, pas un direct. La lecture démarre via
+      // attemptPlayback (politique autoplay respectée) une fois les métadonnées
+      // prêtes, après repositionnement sur initialTime (reprise de lecture).
+      if (isVod) {
+        started = false;
+        playbackInitiated = false;
+        const onMeta = (): void => {
+          if (initialTime && Number.isFinite(initialTime) && el.duration > 0)
+            el.currentTime = clamp(initialTime, 0, Math.max(0, el.duration - 5));
+          attemptPlayback();
+        };
+        const onFileError = (): void => { if (!cancelled) { setErrorInfo({ type: 'networkError', httpCode: null }); advance(); } };
+        el.addEventListener('loadedmetadata', onMeta, { once: true });
+        el.addEventListener('error', onFileError, { once: true });
+        if (isHlsStream && Hls.isSupported()) {
+          const hls = new Hls({ enableWorker: true, backBufferLength: 90, maxBufferLength: 60, maxBufferSize: 120 * 1000 * 1000, startLevel: -1 });
+          hlsRef.current = hls;
+          retryRef.current = loadCurrent;
+          hls.loadSource(url);
+          hls.attachMedia(el);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (cancelled || hlsRef.current !== hls) return;
+            setLevels(hls.levels.map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate), bitrate: level.bitrate })));
+          });
+          hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
+            if (cancelled || !data.fatal || hlsRef.current !== hls) return;
+            setErrorInfo({ type: data.type, httpCode: data.response?.code ?? null });
+            advance();
+          });
+        } else {
+          el.src = url;
+          el.load();
+        }
+        // Cache navigateur : loadedmetadata peut déjà être derrière nous.
+        if (el.readyState >= 1) onMeta();
+        return;
+      }
       // Seuil de démarrage : au moins le plancher du profil, sinon 1,5× la
       // durée d'un segment (bornée) dès que la playlist la révèle.
       // Fast-start : un SEUL segment téléchargé suffit — la cible devient la
@@ -644,7 +708,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       // continue d'append au buffer et le <video> reprend tout seul dès que
       // les données arrivent (comportement natif, sans le gel d'un cycle
       // pause/reprise manuel conçu pour la gestion de live edge de hls.js).
-      if (!mpegtsRef.current) {
+      // VOD : pas de pause auto non plus — un fichier se bufferise, il ne
+      // « rattrape » rien.
+      if (!mpegtsRef.current && !isVod) {
         const ahead = bufferAhead();
         if (ahead <= STALL_PAUSE_THRESHOLD_SECONDS && !el.paused) { el.pause(); stallPauseRef.current = true; }
       }
@@ -717,15 +783,18 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
 
   return <div ref={containerRef} className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''} ${isPseudoFullscreen ? styles.pseudoFullscreen : ''}`} data-state={status} onMouseMove={!isMobile ? showControls : undefined} onMouseLeave={() => { if (!isMobile && status === 'ready') setControlsVisible(false); }} onTouchStart={(e) => { showControls(); handleTouchStart(e); }} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
     <video ref={videoRef} className={styles.video} playsInline preload="auto" onClick={handleVideoClick} aria-label={`Lecteur ${title}`} />
-    {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : 'Connexion au direct'}</span></div>{status === 'loading' && (autoplayBlocked ? <><h2 className={styles.title}>Lecture en attente</h2><button type="button" className={styles.retryButton} onClick={startPlayback}>Lancer la lecture</button></> : <><Spinner />{retrying && <p className={styles.hint}>Nouvelle tentative…</p>}</>)}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
-    {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>{stallPauseRef.current ? `Lissage du flux… reprise à ${RESUME_BUFFER_SECONDS} s de marge` : 'Rattrapage du direct…'}</span></div>}
+    {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : isVod ? 'Chargement du fichier' : 'Connexion au direct'}</span></div>{status === 'loading' && (autoplayBlocked ? <><h2 className={styles.title}>Lecture en attente</h2><button type="button" className={styles.retryButton} onClick={startPlayback}>Lancer la lecture</button></> : <><Spinner />{retrying && <p className={styles.hint}>Nouvelle tentative…</p>}</>)}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
+    {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner /><span>{isVod ? 'Mise en mémoire tampon…' : stallPauseRef.current ? `Lissage du flux… reprise à ${RESUME_BUFFER_SECONDS} s de marge` : 'Rattrapage du direct…'}</span></div>}
     {bandwidth !== null && controlsVisible && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && (autoplayBlocked || mutedAutoplay) && <button type="button" className={styles.playPrompt} onClick={startPlayback}>{autoplayBlocked ? 'Lancer la lecture' : 'Activer le son'}</button>}
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}><Icon.Volume2 size={28} /></span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
-    {status === 'ready' && <div className={styles.progressBar} title={stats.latency !== null ? `Latence au direct : ${formatBuffer(stats.latency)}` : undefined}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}
-    {status === 'ready' && !isMobile && <div className={styles.controlRail} aria-label="Contrôles du lecteur"><button type="button" className={styles.iconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={16} /> : <Icon.Pause size={16} />}</button><span className={styles.liveBadge}>DIRECT</span><span className={styles.stat}>Qualité {qualityLabel}</span><span className={styles.statWrap}><span className={styles.statHint}>Buffer {formatBuffer(stats.bufferAhead)}</span><span className={styles.statTooltip}>Secondes de vidéo en mémoire tampon</span></span><span className={styles.statWrap}><span className={styles.statHint}>Démarrage {formatDuration(stats.startupMs)}</span><span className={styles.statTooltip}>Temps de chargement initial</span></span>{stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}<div className={styles.volumeControl}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={16} /></button><input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /></div>{levels.length > 1 && <select className={styles.qualitySelect} value={resolvedIndex} aria-label="Qualité vidéo" onChange={(e) => { const idx = Number(e.target.value); const height = idx === -1 ? -1 : (levels.find((l) => l.index === idx)?.height ?? -1); // Un choix manuel hors Auto quitte Éco (sources différentes).
+    {status === 'ready' && !isVod && <div className={styles.progressBar} title={stats.latency !== null ? `Latence au direct : ${formatBuffer(stats.latency)}` : undefined}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}
+    {status === 'ready' && isVod && vodDuration > 0 && <div className={styles.seekBar} aria-label="Progression de la vidéo"><input type="range" className={styles.seekSlider} min={0} max={vodDuration} step={1} value={Math.min(vodPosition, vodDuration)} onChange={(e) => seekTo(Number(e.target.value))} aria-label="Position de lecture" /><div className={styles.seekFill} style={{ width: `${clamp((vodPosition / vodDuration) * 100, 0, 100)}%` }} /><span className={styles.seekTime}>{formatTime(vodPosition)} / {formatTime(vodDuration)}</span></div>}
+    {status === 'ready' && !isVod && !isMobile && <div className={styles.controlRail} aria-label="Contrôles du lecteur"><button type="button" className={styles.iconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={16} /> : <Icon.Pause size={16} />}</button><span className={styles.liveBadge}>DIRECT</span><span className={styles.stat}>Qualité {qualityLabel}</span><span className={styles.statWrap}><span className={styles.statHint}>Buffer {formatBuffer(stats.bufferAhead)}</span><span className={styles.statTooltip}>Secondes de vidéo en mémoire tampon</span></span><span className={styles.statWrap}><span className={styles.statHint}>Démarrage {formatDuration(stats.startupMs)}</span><span className={styles.statTooltip}>Temps de chargement initial</span></span>{stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}<div className={styles.volumeControl}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={16} /></button><input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /></div>{levels.length > 1 && <select className={styles.qualitySelect} value={resolvedIndex} aria-label="Qualité vidéo" onChange={(e) => { const idx = Number(e.target.value); const height = idx === -1 ? -1 : (levels.find((l) => l.index === idx)?.height ?? -1); // Un choix manuel hors Auto quitte Éco (sources différentes).
   if (height !== -1 && dataSaver) { setDataSaver(false); onDataSaverChange?.(false); } setSelectedHeight(height); onLevelChange?.(height); }}><option value={-1}>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</option>{levels.map((level) => <option key={level.index} value={level.index}>{level.height}p — {formatBitrate(level.bitrate)}</option>)}</select>}<label className={styles.dataSaverToggle}><input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} />Éco</label>{pipSupported && <button type="button" className={styles.iconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={16} /></button>}{fsSupported && <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}</button>}</div>}
-    {status === 'ready' && isMobile && <div className={styles.mobileTopBar}><span className={styles.liveBadge}>DIRECT</span><span className={styles.mobileQualityLabel}>{qualityLabel}</span></div>}
+    {status === 'ready' && isVod && !isMobile && <div className={styles.controlRail} aria-label="Contrôles du lecteur"><button type="button" className={styles.iconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={16} /> : <Icon.Pause size={16} />}</button><span className={styles.stat}>{title}</span><div className={styles.volumeControl}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={16} /></button><input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /></div>{levels.length > 1 && <select className={styles.qualitySelect} value={resolvedIndex} aria-label="Qualité vidéo" onChange={(e) => { const idx = Number(e.target.value); const height = idx === -1 ? -1 : (levels.find((l) => l.index === idx)?.height ?? -1); setSelectedHeight(height); onLevelChange?.(height); }}><option value={-1}>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</option>{levels.map((level) => <option key={level.index} value={level.index}>{level.height}p — {formatBitrate(level.bitrate)}</option>)}</select>}{pipSupported && <button type="button" className={styles.iconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={16} /></button>}{fsSupported && <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}</button>}</div>}
+    {status === 'ready' && isVod && isMobile && <div className={styles.mobileBottomBar} aria-label="Contrôles du lecteur"><button type="button" className={styles.mobileIconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={20} /> : <Icon.Pause size={20} />}</button><button type="button" className={styles.mobileIconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={20} /></button><button type="button" className={styles.mobileIconBtn} onClick={() => seekTo((videoRef.current?.currentTime ?? 0) - 10)} aria-label="Reculer de 10 secondes"><Icon.RotateCcw size={20} /></button><button type="button" className={styles.mobileIconBtn} onClick={() => seekTo((videoRef.current?.currentTime ?? 0) + 10)} aria-label="Avancer de 10 secondes"><Icon.RotateCw size={20} /></button>{pipSupported && <button type="button" className={styles.mobileIconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={20} /></button>}{fsSupported && <button type="button" className={styles.mobileIconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={20} /> : <Icon.Maximize size={20} />}</button>}</div>}
+    {status === 'ready' && !isVod && isMobile && <div className={styles.mobileTopBar}><span className={styles.liveBadge}>DIRECT</span><span className={styles.mobileQualityLabel}>{qualityLabel}</span></div>}
     {status === 'ready' && isMobile && <div className={styles.mobileBottomBar} aria-label="Contrôles du lecteur"><button type="button" className={styles.mobileIconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={20} /> : <Icon.Pause size={20} />}</button><button type="button" className={styles.mobileIconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={20} /></button>{levels.length > 1 && <button type="button" className={`${styles.mobileIconBtn} ${activePopup === 'quality' ? styles.mobileIconBtnActive : ''}`} onClick={() => setActivePopup(activePopup === 'quality' ? null : 'quality')} aria-label="Qualité vidéo"><Icon.Settings2 size={20} /></button>}<label className={styles.mobileIconBtn}><input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} className={styles.mobileCheckbox} /><span className={dataSaver ? styles.mobileEcoActive : ''}>Éco</span></label>{pipSupported && <button type="button" className={styles.mobileIconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={20} /></button>}{fsSupported && <button type="button" className={styles.mobileIconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={20} /> : <Icon.Maximize size={20} />}</button>}</div>}
     {isMobile && activePopup && <div className={styles.popupBackdrop} onClick={closePopup} />}
     {isMobile && activePopup === 'quality' && <div className={styles.mobilePopup} role="dialog" aria-label="Choisir la qualité"><div className={styles.popupHeader}><span className={styles.popupTitle}>Qualité vidéo</span><button type="button" className={styles.popupClose} onClick={closePopup} aria-label="Fermer"><Icon.X size={18} /></button></div><div className={styles.popupOptions}><button type="button" className={`${styles.popupOption} ${selectedHeight === -1 ? styles.popupOptionActive : ''}`} onClick={() => { setSelectedHeight(-1); onLevelChange?.(-1); closePopup(); }}><span>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</span>{selectedHeight === -1 && <Icon.Check size={16} />}</button>{levels.map((level) => <button key={level.index} type="button" className={`${styles.popupOption} ${resolvedIndex === level.index ? styles.popupOptionActive : ''}`} onClick={() => { if (dataSaver) { setDataSaver(false); onDataSaverChange?.(false); } setSelectedHeight(level.height); onLevelChange?.(level.height); closePopup(); }}><span className={styles.popupOptionLeft}><span>{level.height}p</span>{level.bitrate && <span className={styles.bitrateBadge}>{formatBitrate(level.bitrate)}</span>}</span>{resolvedIndex === level.index && <Icon.Check size={16} />}</button>)}</div></div>}

@@ -1,5 +1,5 @@
 import { withClient } from "./db.js";
-import { decryptLocatorWithSecret } from "./crypto.js";
+import { decryptLocatorWithSecret, importKey } from "./crypto.js";
 import * as categoriesRepo from "./categories.js";
 import * as channels from "./channels.js";
 import * as matches from "./matches.js";
@@ -7,6 +7,7 @@ import * as epg from "./epg.js";
 import * as activity from "./activity.js";
 import * as access from "./access.js";
 import * as favorites from "./favorites.js";
+import * as vod from "./vod.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
@@ -457,6 +458,84 @@ async function route(ctx, url) {
     );
     if (result.status !== 200) return ctx.fail(result.status, result.message);
     return ctx.json(result.value);
+  }
+
+  // ---- VOD (films & séries) ----------------------------------------------
+  // Catalogue public (visible/actif uniquement) ; lecture protégée par le
+  // même mur DeviceGrant que le live. Pas d'éco adaptatif : le VOD sort en
+  // direct de Cloudflare (direct=1) et ne charge pas le relais résidentiel.
+
+  if (path === "/api/vod/categories" && method === "GET")
+    return ctx.json(await vod.vodCategories(env, url.searchParams.get("kind") ?? undefined));
+
+  if (path === "/api/vod/favorites" && method === "GET") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    return ctx.json({ items: await vod.listVodFavorites(env, deviceId) });
+  }
+
+  if (path === "/api/vod" && method === "GET")
+    return ctx.json(
+      await vod.listVodItems(env, {
+        kind: url.searchParams.get("kind") ?? undefined,
+        category: url.searchParams.get("category") ?? undefined,
+        q: url.searchParams.get("q") ?? undefined,
+        limit: intParam(url.searchParams.get("limit"), 48, 1, 100),
+        offset: intParam(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER),
+      }),
+    );
+
+  const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
+
+  if (vodMatch && vodMatch[3] === "favorite" && (method === "PUT" || method === "DELETE")) {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    const vodItemId = decodeURIComponent(vodMatch[1]);
+    const ok =
+      method === "PUT"
+        ? await vod.addVodFavorite(env, deviceId, vodItemId)
+        : (await vod.removeVodFavorite(env, deviceId, vodItemId), true);
+    if (!ok) return ctx.fail(404, "Item VOD introuvable");
+    return ctx.json({ ok: true });
+  }
+
+  if (vodMatch && vodMatch[3] === "episodes" && method === "GET") {
+    const item = await vod.findVodItemById(env, decodeURIComponent(vodMatch[1]));
+    if (!item) return ctx.fail(404, "Item VOD introuvable");
+    if (item.kind !== "SERIES") return ctx.json({ seasons: [] });
+    try {
+      const key = await importKey(env.ENCRYPTION_KEY);
+      return ctx.json(await vod.listSeriesEpisodes(env, key, item));
+    } catch {
+      return ctx.fail(502, "Épisodes indisponibles pour le moment");
+    }
+  }
+
+  if (vodMatch && vodMatch[3] === "play" && method === "GET") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    const item = await vod.findVodItemById(env, decodeURIComponent(vodMatch[1]));
+    if (!item) return ctx.fail(404, "Item VOD introuvable");
+    let providerUrl;
+    try {
+      if (item.kind === "SERIES") {
+        const season = intParam(url.searchParams.get("s"), 0, 0, 200);
+        const episode = intParam(url.searchParams.get("e"), 0, 0, 5000);
+        providerUrl = await vod.resolveVodProviderUrl(env, await importKey(env.ENCRYPTION_KEY), item, { season, episode });
+        if (!providerUrl) return ctx.fail(404, "Épisode introuvable");
+      } else {
+        providerUrl = await vod.resolveVodProviderUrl(env, await importKey(env.ENCRYPTION_KEY), item);
+      }
+    } catch {
+      return ctx.fail(502, "Lecture indisponible pour le moment");
+    }
+    // VOD : sortie directe Cloudflare (le film ne passe pas par la box).
+    return ctx.json(await playResponse(env, providerUrl, undefined, { direct: true }));
   }
 
   // Favoris par appareil — même garde que la lecture : grant actif requis.
