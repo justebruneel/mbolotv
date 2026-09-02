@@ -4,9 +4,34 @@ const MAX_API_BYTES = 50 * 1024 * 1024;
 // Les panels IPTV débittent souvent à ~0,3 Mo/s : un catalogue de 24k chaînes
 // (~11 Mo de JSON) prend ~40 s. 180 s laisse une marge confortable.
 const CONNECTOR_TIMEOUT_MS = 180_000;
+// Certains panels (anti-flood) réinitialisent la connexion quand les appels
+// se suivent trop vite : retries avec backoff sur les erreurs RÉSEAU (un
+// refus d'authentification, lui, ne se corrige jamais en re-essayant).
+const FETCH_RETRIES = 3;
+const FETCH_RETRY_DELAYS_MS = [800, 2500, 6000];
+// Pause anti-flood entre deux appels API consécutifs au même panel.
+const INTER_CALL_DELAY_MS = 1_200;
 
-function isFolderMarker(title) {
-  return /^#{2,}.+#{2,}$/.test(title.trim());
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchJson(url) {
+  let lastError;
+  for (let attempt = 0; attempt <= FETCH_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(CONNECTOR_TIMEOUT_MS), headers: { 'user-agent': 'Mozilla/5.0' } });
+      const text = await response.text();
+      if (text.length > MAX_API_BYTES) throw new Error('Réponse Xtream trop volumineuse');
+      return JSON.parse(text);
+    } catch (error) {
+      lastError = error;
+      // Refus d'authentification explicite : inutile de réessayer.
+      if (String(error.message).includes('identifiants')) throw error;
+      if (attempt < FETCH_RETRIES) await sleep(FETCH_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Échec Xtream inconnu');
 }
 
 function normalizeIcon(icon) {
@@ -15,17 +40,14 @@ function normalizeIcon(icon) {
   return icon;
 }
 
+function isFolderMarker(title) {
+  return /^#{2,}.+#{2,}$/.test(title.trim());
+}
+
 function isAuthRejected(payload) {
   if (typeof payload !== 'object' || payload === null) return false;
   const info = payload.user_info;
   return typeof info === 'object' && info !== null && Number(info.auth) === 0;
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(CONNECTOR_TIMEOUT_MS), headers: { 'user-agent': 'Mozilla/5.0' } });
-  const text = await response.text();
-  if (text.length > MAX_API_BYTES) throw new Error('Réponse Xtream trop volumineuse');
-  return JSON.parse(text);
 }
 
 export async function fetchXtreamEntries(connection) {
@@ -46,6 +68,7 @@ export async function fetchXtreamEntries(connection) {
 
   let payload;
   try {
+    await sleep(INTER_CALL_DELAY_MS);
     payload = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_live_streams`);
   } catch (error) {
     throw new Error(error instanceof SyntaxError ? 'Réponse Xtream invalide (JSON attendu)' : `Échec de récupération du flux Xtream : ${error.message}`);
@@ -83,7 +106,7 @@ export async function fetchXtreamEntries(connection) {
 // le locator stocké est un JSON résolu À LA LECTURE (cf. vod-play dans
 // index.js), ce qui garde l'import léger quel que soit le nombre d'épisodes.
 
-async function fetchCategoryMap(base, user, pass, action, connection) {
+async function fetchCategoryMap(base, user, pass, action) {
   try {
     const payload = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=${action}`);
     if (isAuthRejected(payload)) throw new Error('Identifiants Xtream invalides (authentification refusée)');
@@ -95,7 +118,6 @@ async function fetchCategoryMap(base, user, pass, action, connection) {
   } catch (error) {
     // Catégories optionnelles : seul un refus d'authentification est bloquant.
     if (String(error.message).includes('identifiants')) throw error;
-    void connection;
     return new Map();
   }
 }
@@ -115,11 +137,14 @@ export async function fetchXtreamVodEntries(connection) {
   const user = encodeURIComponent(connection.username);
   const pass = encodeURIComponent(connection.password);
 
-  const movieCategories = await fetchCategoryMap(base, user, pass, 'get_vod_categories', connection);
-  const seriesCategories = await fetchCategoryMap(base, user, pass, 'get_series_categories', connection);
+  const movieCategories = await fetchCategoryMap(base, user, pass, 'get_vod_categories');
+  await sleep(INTER_CALL_DELAY_MS);
+  const seriesCategories = await fetchCategoryMap(base, user, pass, 'get_series_categories');
+  await sleep(INTER_CALL_DELAY_MS);
 
   const vodPayload = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_vod_streams`);
   if (isAuthRejected(vodPayload)) throw new Error('Identifiants Xtream invalides (authentification refusée)');
+  await sleep(INTER_CALL_DELAY_MS);
   const seriesPayload = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_series`);
   if (isAuthRejected(seriesPayload)) throw new Error('Identifiants Xtream invalides (authentification refusée)');
 

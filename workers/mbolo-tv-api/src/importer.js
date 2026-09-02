@@ -375,8 +375,18 @@ async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, 
 // ingestEntries mais table dédiée : pas de conflit de clé avec le live, pas
 // de catégorie Category partagée (categoryTitle texte libre), pas de
 // health-check (un mp4/mkv n'est pas un manifest #EXTM3U).
+// PHASES MÉMOIRE-BORNÉES : un gros catalogue Xtream VOD peut dépasser
+// 100 000 items — tout bufferiser en tableaux d'ingestion ferait exploser
+// l'isolate. Chaque phase (films, puis séries) est entièrement consommée
+// avant la suivante ; les tableaux intermédiaires sont libérés entre deux.
 async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metrics, persistMetrics, baseHash) {
-  const entries = [...movies, ...series];
+  await ingestVodPhase(q, cryptoKey, source, movies, 'MOVIE', metrics, persistMetrics, baseHash);
+  await ingestVodPhase(q, cryptoKey, source, series, 'SERIES', metrics, persistMetrics, baseHash);
+  await persistMetrics();
+}
+
+async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, persistMetrics, baseHash) {
+  if (!entries || entries.length === 0) return;
   const metas = [];
 
   for (const entry of entries) {
@@ -429,8 +439,7 @@ async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metric
     });
   }
 
-  metrics.vodRead = entries.length;
-  metrics.vodCreated = metrics.vodCreated ?? 0;
+  metrics.vodRead += entries.length;
   await persistMetrics();
 
   for (const part of chunks(creates, BATCH)) {
