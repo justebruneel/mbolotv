@@ -16,6 +16,11 @@ interface NetworkInformationLike { effectiveType?: string; downlink?: number; sa
 
 const MAX_RETRIES = 2;
 const MAX_NETWORK_RETRIES = 3;
+// Erreurs fatales manifest/level : on retente hls.startLoad (léger, ne détruit
+// pas le player) avec backoff 500 ms → 1 s → 2 s AVANT le reload destructeur
+// de advance() — la majorité de ces erreurs sont des à-coups réseau passagers.
+const MAX_LEVEL_RETRIES = 3;
+const LEVEL_RETRY_BASE_MS = 500;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const STARTUP_DEADLINE_MS = 15_000;
 const MIN_VIABLE_BUFFER_SECONDS = 2;
@@ -46,6 +51,8 @@ const LIVE_LATENCY_WINDOW_SECONDS = 60;
 const LEGACY_LEVEL_INDEX_MAX = 10;
 
 function exponentialDelay(attempt: number): number { return Math.min(1000 * 2 ** attempt, 8000); }
+/** Backoff léger pour les retries de niveau : 500 ms → 1 s → 2 s → … */
+function levelRetryDelay(attempt: number): number { return LEVEL_RETRY_BASE_MS * 2 ** (attempt - 1); }
 function formatBitrate(bps: number | undefined): string { if (!bps) return ''; if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`; return `${Math.round(bps / 1000)} kbps`; }
 function heightFromBitrate(bps: number | undefined): number { if (!bps) return 0; if (bps < 500_000) return 360; if (bps < 1_500_000) return 480; if (bps < 3_500_000) return 720; if (bps < 6_000_000) return 1080; return 1440; }
 /** Durée cible d'un segment telle que publiée par la playlist (0 si inconnue). */
@@ -63,16 +70,18 @@ function resolveHeightIndex(levels: QualityLevel[], height: number): number {
   const below = sorted.filter((l) => l.height <= height);
   return below.length > 0 ? below[below.length - 1].index : sorted[0].index;
 }
-function networkProfile(): { estimate: number; capHeight: number | null; buffer: number; liveSyncCount: number; startBuffer: number } {
+function networkProfile(): { estimate: number; capHeight: number | null; buffer: number; liveSyncSeconds: number; liveMaxLatencySeconds: number; startBuffer: number } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   const type = conn?.effectiveType;
   const downlink = conn?.downlink ?? 0;
-  // Buffer max < fenêtre live (liveSync+7 segments) : au-delà, hls.js charge
-  // des segments que le manifest retire déjà → expulsion du live edge, gaps,
-  // saccades. 22-28 s reste sous la fenêtre sur toutes les gammes.
-  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 22, liveSyncCount: 7, startBuffer: 3 };
-  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 28, liveSyncCount: 8, startBuffer: 3 };
-  return { estimate: 1_200_000, capHeight: null, buffer: 28, liveSyncCount: 5, startBuffer: 2 };
+  // Priorité STABILITÉ sur latence (TV classique, 15-20 s de retard acceptables).
+  // Réglage EN SECONDES (liveSyncDuration) et non en nombre de segments : les
+  // panels servent des segments de 2 à 10 s — un compte fixe donnerait 10 s
+  // de retard sur du 2 s et 2 min sur du 10 s. 20-24 s derrière le live edge
+  // = matelas de protection ; liveMaxLatency ≈ 2× déclenche la resynchronisation.
+  if (conn?.saveData || type === 'slow-2g' || type === '2g' || (downlink > 0 && downlink < 1)) return { estimate: 350_000, capHeight: 360, buffer: 40, liveSyncSeconds: 24, liveMaxLatencySeconds: 45, startBuffer: 6 };
+  if (type === '3g' || (downlink > 0 && downlink < 3)) return { estimate: 750_000, capHeight: 720, buffer: 50, liveSyncSeconds: 22, liveMaxLatencySeconds: 42, startBuffer: 6 };
+  return { estimate: 1_200_000, capHeight: null, buffer: 60, liveSyncSeconds: 20, liveMaxLatencySeconds: 40, startBuffer: 5 };
 }
 function getNetworkInfo(): { effectiveType: string; downlink: number; saveData: boolean } {
   const conn = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
@@ -116,6 +125,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const networkCapRef = useRef(-1);
   const startupAtRef = useRef(0);
   const rebufferCountRef = useRef(0);
+  // Journal de session (tâche 5) : rebuffer/erreurs/retries horodatés —
+  // déversé en console au démontage pour mesurer l'effet des réglages en prod
+  // (grep "[player-session]" dans les logs navigateur).
+  const sessionLogRef = useRef<Array<{ ts: number; type: string; detail: string }>>([]);
+  const sessionStartRef = useRef(0);
+  const logSession = useCallback((type: string, detail: string): void => {
+    sessionLogRef.current.push({ ts: Date.now() - sessionStartRef.current, type, detail });
+  }, []);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gestureRef = useRef<GestureState | null>(null);
 
@@ -279,6 +296,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let urlIndex = 0;
     let retries = 0;
     let networkRetries = 0;
+    let levelRetries = 0;
     let started = false;
     let playbackInitiated = false;
     let mediaRecoveries = 0;
@@ -294,6 +312,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     rebufferCountRef.current = 0;
     stallPauseRef.current = false;
     liveEdgeRef.current = 0;
+    sessionStartRef.current = Date.now();
+    sessionLogRef.current = [];
+    logSession('session-start', urls[urlIndex] ? `source ${urlIndex + 1}/${urls.length}` : 'aucune source');
     setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); if (startupPoll) clearInterval(startupPoll); deadlineTimer = retryTimer = warmupTimer = null; startupPoll = null; };
@@ -321,7 +342,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     };
     const bufferAhead = (): number => el.buffered.length === 0 ? 0 : Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
     const updateStats = (latency: number | null = null): void => setStats((c) => ({ ...c, bufferAhead: bufferAhead(), latency }));
-    const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); setStats((c) => ({ ...c, startupMs: c.startupMs ?? performance.now() - startupAtRef.current, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); if (deadlineTimer) clearTimeout(deadlineTimer); };
+    const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; levelRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); setStats((c) => ({ ...c, startupMs: c.startupMs ?? performance.now() - startupAtRef.current, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); if (deadlineTimer) clearTimeout(deadlineTimer); };
     // Épuisement des retries et des URL : on demande une URL fraîche à la page
     // (le jeton fournisseur a pu expirer) avant d'abandonner sur l'erreur.
     const exhausted = (): void => {
@@ -331,14 +352,14 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         setRetrying(true);
         void Promise.resolve(onRefreshSource()).then((refreshed) => {
           if (cancelled) return;
-          if (refreshed) { urlIndex = 0; retries = 0; networkRetries = 0; loadCurrent(); return; }
+          if (refreshed) { urlIndex = 0; retries = 0; networkRetries = 0; levelRetries = 0; loadCurrent(); return; }
           setStatus('error'); setRetrying(false);
         });
         return;
       }
       setStatus('error'); setRetrying(false);
     };
-    const advance = (): void => { if (cancelled) return; retries += 1; setRetrying(true); if (retries <= MAX_RETRIES) { retryTimer = setTimeout(loadCurrent, exponentialDelay(retries)); return; } if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrent(); return; } exhausted(); };
+    const advance = (): void => { if (cancelled) return; retries += 1; logSession('advance', `tentative locale ${retries}/${MAX_RETRIES + 1}`); setRetrying(true); if (retries <= MAX_RETRIES) { retryTimer = setTimeout(loadCurrent, exponentialDelay(retries)); return; } if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; levelRetries = 0; logSession('advance', `source suivante ${urlIndex + 1}/${urls.length}`); loadCurrent(); return; } logSession('exhausted', 'retries épuisés, refresh source demandé'); exhausted(); };
     function loadCurrent(): void {
       if (cancelled) return;
       clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
@@ -401,10 +422,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
                 // Chasing nécessaire : certains panels émettent des PTS
                 // énormes (décalage de plusieurs heures) — sans le
                 // positionnement sur le live edge, la vidéo reste à t=0
-                // sans rien à lire. Tolérant (30 s) pour éviter les sauts.
+                // sans rien à lire. Tolérant (25 s) pour éviter les sauts ;
+                // marge de reprise étoffée (6/10 s) = moins de rattrapages
+                // en cascade sur connexion instable.
                 liveBufferLatencyChasing: true,
-                liveBufferLatencyMaxLatency: 30,
-                liveBufferLatencyMinRemain: weak ? 6 : 4,
+                liveBufferLatencyMaxLatency: 25,
+                liveBufferLatencyMinRemain: weak ? 10 : 6,
                 accurateSeek: false,
               },
             );
@@ -448,17 +471,32 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       startBufferRef.current = profile.startBuffer;
       // startLevel -1 : l'ABR choisit le niveau de départ selon l'estimation
       // réseau (plus de démarrage forcé en 360p sur bonne connexion).
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 45, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDurationCount: profile.liveSyncCount, liveMaxLatencyDurationCount: profile.liveSyncCount + 7, startLevel: -1, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 4 });
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 90, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDuration: profile.liveSyncSeconds, liveMaxLatencyDuration: profile.liveMaxLatencySeconds, startLevel: -1, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 8 });
       hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
+        logSession('hls-error', `${data.type}/${data.details}${data.response ? ` http ${data.response.code}` : ''}${data.fatal ? ' [fatal]' : ''}`);
         if (data.type === ErrorTypes.MEDIA_ERROR) { mediaRecoveries += 1; if (mediaRecoveries > 3) { advance(); return; } if (el.buffered.length > 0 && el.currentTime + 0.5 < el.buffered.end(el.buffered.length - 1)) el.currentTime += 0.5; try { hls.recoverMediaError(); } catch { advance(); } return; }
         if (data.type === ErrorTypes.NETWORK_ERROR) {
           const code = data.response?.code ?? null;
           // 401/403 = jeton expiré, 404 = flux retiré : inutile d'insister sur
           // la même URL (le proxy a déjà retenté sa chaîne en amont).
-          if (code === 401 || code === 403 || code === 404) { setErrorInfo({ type: 'networkError', httpCode: code }); if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; loadCurrent(); } else exhausted(); return; }
-          if ([Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT, Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT].includes(data.details)) { setErrorInfo({ type: 'networkError', httpCode: code }); advance(); return; }
+          if (code === 401 || code === 403 || code === 404) { setErrorInfo({ type: 'networkError', httpCode: code }); if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; levelRetries = 0; loadCurrent(); } else exhausted(); return; }
+          // Erreurs fatales manifest/level : retry LÉGER (startLoad ne détruit
+          // pas le player, reprend au live edge) avec backoff 500 ms → 1 s →
+          // 2 s avant le reload destructeur de advance().
+          if ([Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT, Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT].includes(data.details)) {
+            levelRetries += 1;
+            if (levelRetries <= MAX_LEVEL_RETRIES) {
+              logSession('level-retry', `${data.details} tentative ${levelRetries}/${MAX_LEVEL_RETRIES}`);
+              setRetrying(true);
+              retryTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) { setRetrying(false); hls.startLoad(-1); } }, levelRetryDelay(levelRetries));
+              return;
+            }
+            setErrorInfo({ type: 'networkError', httpCode: code });
+            advance();
+            return;
+          }
           networkRetries += 1; if (networkRetries <= MAX_NETWORK_RETRIES) { retryTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) hls.startLoad(-1); }, Math.min(1000 * networkRetries, 4000)); return; }
         }
         setErrorInfo({ type: data.type, httpCode: null }); advance();
@@ -504,6 +542,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     const onWaiting = (): void => {
       if (!started) return;
       rebufferCountRef.current += 1;
+      logSession('rebuffer', `#${rebufferCountRef.current} buffer ${bufferAhead().toFixed(1)} s`);
       setStats((c) => ({ ...c, rebufferCount: rebufferCountRef.current }));
       // Flux TS continu (mpegts) : on NE met pas la vidéo en pause — mpegts
       // continue d'append au buffer et le <video> reprend tout seul dès que
@@ -541,7 +580,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     el.addEventListener('playing', onPlaying); el.addEventListener('canplay', onCanPlay); el.addEventListener('waiting', onWaiting); el.addEventListener('playing', onPlayingReset); el.addEventListener('error', onError);
     el.addEventListener('canplay', onStalledOrCanplay); el.addEventListener('stalled', onStalledOrCanplay); el.addEventListener('progress', onStalledOrCanplay);
     if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else setStatus('error');
-    return () => { cancelled = true; retryRef.current = null; clearTimers(); destroy(); el.removeEventListener('playing', onPlaying); el.removeEventListener('canplay', onCanPlay); el.removeEventListener('waiting', onWaiting); el.removeEventListener('playing', onPlayingReset); el.removeEventListener('error', onError); el.removeEventListener('canplay', onStalledOrCanplay); el.removeEventListener('stalled', onStalledOrCanplay); el.removeEventListener('progress', onStalledOrCanplay); };
+    return () => { cancelled = true; retryRef.current = null; clearTimers(); destroy(); logSession('session-end', `rebuffers ${rebufferCountRef.current}`); console.info('[player-session]', title, sessionLogRef.current); el.removeEventListener('playing', onPlaying); el.removeEventListener('canplay', onCanPlay); el.removeEventListener('waiting', onWaiting); el.removeEventListener('playing', onPlayingReset); el.removeEventListener('error', onError); el.removeEventListener('canplay', onStalledOrCanplay); el.removeEventListener('stalled', onStalledOrCanplay); el.removeEventListener('progress', onStalledOrCanplay); };
   }, [urlsKey]);
 
   const activeHeight = levels.find((l) => l.index === activeLevel)?.height;
