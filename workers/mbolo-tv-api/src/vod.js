@@ -136,7 +136,7 @@ export async function listSeriesEpisodes(env, encryptionKey, item) {
 
   const connection = JSON.parse(await decryptLocatorWithSecret(encryptionKey, item.encryptedLocator));
   if (connection.type !== 'xtream-series') throw new Error('Locator série invalide');
-  const info = await fetchXtreamSeriesInfo(connection, connection.seriesId);
+  const info = await fetchXtreamSeriesInfo(env, connection, connection.seriesId);
 
   const payload = {
     seasons: info.seasons.map((season) => ({

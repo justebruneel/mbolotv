@@ -107,7 +107,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
       let entries;
       try {
-        ({ entries } = await fetchXtreamEntries(connection));
+        ({ entries } = await fetchXtreamEntries(env, connection));
       } catch (error) {
         throw new ImportError('CONNECTOR_ERROR', error.message);
       }
@@ -141,7 +141,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
       let vodEntries;
       try {
-        vodEntries = await fetchXtreamVodEntries(connection);
+        vodEntries = await fetchXtreamVodEntries(env, connection);
       } catch (error) {
         throw new ImportError('VOD_CONNECTOR_ERROR', error.message);
       }
