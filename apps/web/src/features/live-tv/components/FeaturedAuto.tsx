@@ -3,8 +3,10 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import type { Programme } from '@mbolo/contracts';
 import { apiGet } from '../../../shared/api/client';
 import { Icon } from '@mbolo/ui';
+import { ProgrammeDetail, type SelectedProgramme } from '../../epg/components/ProgrammeDetail';
 
 const ROTATE_MS = 6_000;
 
@@ -37,6 +39,7 @@ export function FeaturedAuto() {
 
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [selected, setSelected] = useState<SelectedProgramme | null>(null);
   const startXRef = useRef<number | null>(null);
   const items = query.data ?? [];
 
@@ -181,9 +184,13 @@ export function FeaturedAuto() {
           <Link href={`/watch/${item.channelId}`} className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-black text-black shadow-lg hover:bg-white/90">
             <Icon.Play size={16} aria-hidden /> Voir
           </Link>
-          <Link href={`/watch/${item.channelId}`} className="inline-flex items-center gap-2 rounded-full bg-foreground/10 px-6 py-3 text-sm font-bold text-foreground hover:bg-foreground/20 md:bg-white/15 md:text-white md:hover:bg-white/25">
+          <button
+            type="button"
+            onClick={() => setSelected({ programme: item.programme as Programme, channelName })}
+            className="inline-flex items-center gap-2 rounded-full bg-foreground/10 px-6 py-3 text-sm font-bold text-foreground hover:bg-foreground/20 md:bg-white/15 md:text-white md:hover:bg-white/25"
+          >
             Plus d'infos
-          </Link>
+          </button>
           {trailer && (
             <a href={trailer} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-danger px-6 py-3 text-sm font-bold text-white hover:bg-danger/90">
               <Icon.Play size={14} aria-hidden /> Bande-annonce
@@ -191,6 +198,12 @@ export function FeaturedAuto() {
           )}
         </div>
       </div>
+      {selected && (
+        <ProgrammeDetail
+          selected={selected}
+          onClose={() => setSelected(null)}
+        />
+      )}
       <style>{`@keyframes heroFill { from { width: 0% } to { width: 100% } } @keyframes featuredFade { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } } .featured-fade { animation: featuredFade 500ms ease-out } @media (prefers-reduced-motion: reduce) { .featured-fade { animation: none !important } }`}</style>
     </section>
   );
