@@ -15,7 +15,7 @@ export type ImportState = z.infer<typeof importStateSchema>;
 export const matchStateSchema = z.enum(['SCHEDULED', 'LIVE', 'FINISHED', 'POSTPONED']);
 export type MatchState = z.infer<typeof matchStateSchema>;
 
-export const sourceCreateSchema = z.object({ name: z.string().min(2).max(80), kind: sourceKindSchema, connection: z.record(z.string()) });
+export const sourceCreateSchema = z.object({ name: z.string().min(2).max(80), kind: sourceKindSchema, connection: z.record(z.string()), vodEnabled: z.boolean().optional() });
 export type SourceCreateInput = z.infer<typeof sourceCreateSchema>;
 export type StreamAccess = { playbackUrl: string; expiresAt: string; selectedServer?: string };
 
@@ -121,13 +121,13 @@ export type OwnerProfileUpdateInput = z.infer<typeof ownerProfileUpdateSchema>;
 export const ownerSessionSchema = z.object({ id: z.string(), userAgent: z.string().nullable(), ipHash: z.string().nullable(), createdAt: z.string(), expiresAt: z.string(), current: z.boolean() });
 export type OwnerSession = z.infer<typeof ownerSessionSchema>;
 
-export const sourceResponseSchema = z.object({ id: z.string(), name: z.string(), kind: sourceKindSchema, status: sourceStatusSchema, priority: z.number(), lastSyncedAt: z.string().nullable(), createdAt: z.string() });
+export const sourceResponseSchema = z.object({ id: z.string(), name: z.string(), kind: sourceKindSchema, status: sourceStatusSchema, priority: z.number(), vodEnabled: z.boolean().optional(), lastSyncedAt: z.string().nullable(), createdAt: z.string() });
 export type SourceResponse = z.infer<typeof sourceResponseSchema>;
 export const sourceDetailSchema = sourceResponseSchema.extend({ connectionMasked: z.record(z.string()), variantsCount: z.number() });
 export type SourceDetail = z.infer<typeof sourceDetailSchema>;
 export const sourceCredentialsSchema = z.object({ connection: z.record(z.string()) });
 export type SourceCredentials = z.infer<typeof sourceCredentialsSchema>;
-export const sourceUpdateSchema = z.object({ name: z.string().min(2).max(80).optional(), priority: z.number().int().min(1).max(1000).optional(), status: z.enum(['READY', 'DEGRADED', 'FAILED', 'DISABLED']).optional() });
+export const sourceUpdateSchema = z.object({ name: z.string().min(2).max(80).optional(), priority: z.number().int().min(1).max(1000).optional(), status: z.enum(['READY', 'DEGRADED', 'FAILED', 'DISABLED']).optional(), vodEnabled: z.boolean().optional() });
 export type SourceUpdateInput = z.infer<typeof sourceUpdateSchema>;
 export const connectTestResponseSchema = z.object({ ok: z.boolean(), latencyMs: z.number().nullable(), error: z.string().nullable() });
 export type ConnectTestResponse = z.infer<typeof connectTestResponseSchema>;
