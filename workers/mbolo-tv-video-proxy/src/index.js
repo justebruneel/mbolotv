@@ -267,10 +267,15 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
     const isPlaylist = /\.m3u8?$/i.test(targetUrl.pathname);
 
     const cache = caches.default;
-    // Clé de cache STABLE : l'URL du fournisseur seule (sans x-exp/x-sig, qui
-    // tournent chaque heure) — deux viewers d'une même chaîne partagent le
+    // Plafond de qualité demandé (maxh, éco) : il change le CORPS des masters,
+    // il fait donc partie de la clé — sinon le premier viewer déciderait du
+    // master (plafonné ou complet) servi à tous les suivants depuis le cache.
+    // Les segments ne portent jamais maxh : leur mutualisation reste intacte.
+    const maxHeightParam = Number(url.searchParams.get("maxh")) || null;
+    // Clé de cache STABLE : l'URL du fournisseur + le plafond (sans x-exp/x-sig,
+    // qui tournent chaque heure) — deux viewers d'une même chaîne partagent le
     // même cache quel que soit l'heure de leur signature.
-    const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}`;
+    const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}&maxh=${maxHeightParam ?? ""}`;
     const cacheKey = new Request(stableKey, { method: "GET" });
 
     const cached = await cache.match(cacheKey);
@@ -351,7 +356,6 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
         // segments (#EXT-X-TARGETDURATION du manifest fournisseur) : le `d`
         // propagé sur chaque URL enfant pilote le cache des segments.
         const targetDuration = parseTargetDuration(text);
-        const maxHeightParam = Number(url.searchParams.get("maxh")) || null;
         if (maxHeightParam) text = filterMasterByHeight(text, maxHeightParam);
         const base = new URL(outcome.finalUrl || target);
         const proxyBase = `${url.origin}${url.pathname}`;

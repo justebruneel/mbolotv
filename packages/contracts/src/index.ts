@@ -92,7 +92,7 @@ export const matchQuerySchema = z.object({ state: matchStateSchema.optional(), s
 export type MatchQuery = z.infer<typeof matchQuerySchema>;
 export const matchListResponseSchema = z.object({ items: z.array(matchSchema), total: z.number() });
 export type MatchListResponse = z.infer<typeof matchListResponseSchema>;
-export const playResponseSchema = z.object({ url: z.string().url(), expiresAt: z.string() });
+export const playResponseSchema = z.object({ url: z.string().url(), expiresAt: z.string(), qualityCap: z.number().int().optional() });
 export type PlayResponse = z.infer<typeof playResponseSchema>;
 
 export const ownerLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });

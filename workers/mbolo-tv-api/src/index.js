@@ -43,11 +43,12 @@ class Ctx {
     return corsHeaders(this.request, this.env);
   }
 
-  json(value, status = 200) {
+  json(value, status = 200, extraHeaders = {}) {
     return new Response(JSON.stringify(value), {
       status,
       headers: {
         "content-type": "application/json; charset=utf-8",
+        ...extraHeaders,
         ...corsHeaders(this.request, this.env),
       },
     });
@@ -68,6 +69,45 @@ class Ctx {
 
 const MATCH_STATES = new Set(["SCHEDULED", "LIVE", "FINISHED", "POSTPONED"]);
 
+// ---- Éco adaptatif -------------------------------------------------------
+// Le relais résidentiel porte ~1 flux par chaîne ACTIVE (mutualisation proxy),
+// pas par spectateur : l'affluence se mesure donc en chaînes distinctes
+// récemment heartbeattées, pas en viewers. Au-delà du seuil éco, les NOUVELLES
+// sessions sont plafonnées en 480p (maxh) — les sessions en cours gardent leur
+// URL, sans redémarrage de flux. Au seuil de saturation, la garde refuse
+// proprement (429) plutôt que de dégrader tous les flux en même temps.
+const ECO_AUTO_THRESHOLD_DEFAULT = 3;   // ≈ 2 chaînes HD saturent déjà 10 Mbps d'uplink
+const ECO_AUTO_MAXH_DEFAULT = 480;
+const ECO_SATURATED_THRESHOLD_DEFAULT = 8; // ≈ 8 × 1 Mbps : plafond réaliste de l'uplink
+const ECO_ACTIVE_WINDOW_SECONDS = 120;  // > TTL heartbeat (60 s) : tolère un battement
+
+function intEnv(env, name, fallback) {
+  const parsed = Number.parseInt(String(env?.[name] ?? ""), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function ecoSettings(env) {
+  return {
+    ecoThreshold: intEnv(env, "ECO_AUTO_THRESHOLD", ECO_AUTO_THRESHOLD_DEFAULT),
+    ecoMaxHeight: intEnv(env, "ECO_AUTO_MAXH", ECO_AUTO_MAXH_DEFAULT),
+    saturatedThreshold: intEnv(env, "ECO_SATURATED_THRESHOLD", ECO_SATURATED_THRESHOLD_DEFAULT),
+  };
+}
+
+// Décision de plafond pour une nouvelle session de lecture :
+//   { status: 429 }            → garde de saturation (Retry-After renvoyé)
+//   { maxHeight }              → session autorisée, éventuellement plafonnée
+async function ecoDecision(env, explicitEco) {
+  if (explicitEco) return { maxHeight: 480 };
+  const { ecoThreshold, ecoMaxHeight, saturatedThreshold } = ecoSettings(env);
+  const activeChannels = await activity.activeChannelCount(env, ECO_ACTIVE_WINDOW_SECONDS);
+  if (saturatedThreshold > 0 && activeChannels >= saturatedThreshold)
+    return { status: 429 };
+  if (ecoThreshold > 0 && activeChannels >= ecoThreshold)
+    return { maxHeight: ecoMaxHeight };
+  return { maxHeight: undefined };
+}
+
 function intParam(value, fallback, min, max) {
   const parsed = Number.parseInt(value ?? "", 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -81,8 +121,10 @@ async function readJson(request) {
 }
 
 // Mur d'accès équivalent à StreamSessionGuard : l'URL de lecture n'est délivrée
-// qu'aux appareils munis d'un DeviceGrant actif (x-device-id).
-async function respondWithPlay(ctx, locatorPromise, maxHeight) {
+// qu'aux appareils munis d'un DeviceGrant actif (x-device-id). L'éco adaptatif
+// (affluence) est évalué APRÈS les contrôles 403/404 : seules les demandes
+// légitimes peuvent être plafonnées ou refusées par la garde de saturation.
+async function respondWithPlay(ctx, locatorPromise, explicitEco) {
   const deviceId = ctx.request.headers.get("x-device-id") ?? undefined;
   if (!(await assertGrantActive(ctx.env, deviceId)))
     return ctx.fail(403, "Un code d’accès actif est requis");
@@ -99,7 +141,14 @@ async function respondWithPlay(ctx, locatorPromise, maxHeight) {
   } catch {
     return ctx.fail(404, "Flux indisponible pour cette chaîne");
   }
-  return ctx.json(await playResponse(ctx.env, providerUrl, maxHeight));
+  const decision = await ecoDecision(ctx.env, explicitEco);
+  if (decision.status === 429)
+    return ctx.json(
+      { message: "Trop de spectateurs simultanés, réessayez dans quelques instants.", statusCode: 429 },
+      429,
+      { "retry-after": "30" },
+    );
+  return ctx.json(await playResponse(ctx.env, providerUrl, decision.maxHeight, { qualityCap: decision.maxHeight }));
 }
 
 async function categoriesList(ctx) {
@@ -242,7 +291,6 @@ async function route(ctx, url) {
 
   if (channelMatch && channelMatch[3] === "play" && method === "GET") {
     const channelId = decodeURIComponent(channelMatch[1]);
-    const ecoMaxHeight = url.searchParams.get("eco") === "1" ? 480 : undefined;
     const hiddenIds = await categoriesRepo.loadHiddenIds(env);
     const category = categoriesRepo.categoryFilterSql(hiddenIds, null, 'c', 2);
     const visible = await env.db.query(
@@ -257,7 +305,7 @@ async function route(ctx, url) {
     return respondWithPlay(
       ctx,
       decryptLocatorWithSecret(env.ENCRYPTION_KEY, variant.encryptedLocator),
-      ecoMaxHeight,
+      url.searchParams.get("eco") === "1",
     );
   }
 
@@ -299,7 +347,6 @@ async function route(ctx, url) {
   const matchMatch = path.match(/^\/api\/matches\/([^/]+)(\/play)?$/);
 
   if (matchMatch && matchMatch[2] && method === "POST") {
-    const matchEcoMaxHeight = url.searchParams.get("eco") === "1" ? 480 : undefined;
     const matchId = decodeURIComponent(matchMatch[1]);
     const found = await matches.findMatchVariants(env, matchId);
     if (!found) return ctx.fail(404, "Match not found");
@@ -317,7 +364,7 @@ async function route(ctx, url) {
     return respondWithPlay(
       ctx,
       decryptLocatorWithSecret(env.ENCRYPTION_KEY, variant.encryptedLocator),
-      matchEcoMaxHeight,
+      url.searchParams.get("eco") === "1",
     );
   }
 

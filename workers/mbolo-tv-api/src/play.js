@@ -56,7 +56,7 @@ async function hmacHex(secret, payload) {
   return [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function playResponse(env, providerUrl, maxHeight) {
+export async function playResponse(env, providerUrl, maxHeight, { qualityCap } = {}) {
   const proxyUrl = (env.VIDEO_PROXY_URL ?? "").trim().replace(/\/+$/, "");
   if (!proxyUrl) throw new Error("VIDEO_PROXY_URL non configurée");
   const secret = typeof env.PROXY_URL_SECRET === "string" ? env.PROXY_URL_SECRET.trim() : "";
@@ -65,10 +65,14 @@ export async function playResponse(env, providerUrl, maxHeight) {
   const signature = await hmacHex(secret, `${providerUrl}|${expiry}`);
   let url = `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}&x-exp=${expiry}&x-sig=${signature}`;
   if (maxHeight) url += `&maxh=${maxHeight}`;
-  return {
+  const response = {
     url,
     expiresAt: new Date(expiry).toISOString(),
+    // Informatif : hauteur max imposée à cette session (éco utilisateur ou
+    // adaptatif). Le client actuel l'ignore ; disponible pour un badge futur.
+    ...(qualityCap ? { qualityCap } : {}),
   };
+  return response;
 }
 
 export async function channelIsVisible(env, channelId) {

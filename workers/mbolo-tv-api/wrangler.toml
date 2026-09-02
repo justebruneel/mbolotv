@@ -23,6 +23,15 @@ RELAY_DOMAIN_MAP = '{"evorvixa.cc":"https://relay-dns.mbolotv.dpdns.org","dnsjib
 RELAY_DEFAULT_ORIGIN = "https://relay-dns.mbolotv.dpdns.org"
 RELAY_MAP = '{"obsfullhd.tv:25461":"https://relay-tv.mbolotv.dpdns.org","45.155.226.71:8080":"https://relay-media.mbolotv.dpdns.org","vippyddncr.top:8080":"https://relay-vip.mbolotv.dpdns.org","192.142.36.209:8080":"https://relay-vip-media.mbolotv.dpdns.org","80.82.65.36:8080":"https://relay-m01.mbolotv.dpdns.org","92.63.196.163:8080":"https://relay-m02.mbolotv.dpdns.org","45.89.50.81:8080":"https://relay-m03.mbolotv.dpdns.org","31.43.191.10:8080":"https://relay-m04.mbolotv.dpdns.org","45.89.50.79:8080":"https://relay-m05.mbolotv.dpdns.org","31.43.191.74:8080":"https://relay-m06.mbolotv.dpdns.org","31.43.191.155:8080":"https://relay-m07.mbolotv.dpdns.org","92.63.196.131:8080":"https://relay-m08.mbolotv.dpdns.org","45.89.50.127:8080":"https://relay-m09.mbolotv.dpdns.org","192.142.5.38:8080":"https://relay-m10.mbolotv.dpdns.org","45.89.50.6:8080":"https://relay-m11.mbolotv.dpdns.org","45.89.51.85:8080":"https://relay-m12.mbolotv.dpdns.org","185.89.249.94:8080":"https://relay-m13.mbolotv.dpdns.org","45.159.94.49:8080":"https://relay-vip.mbolotv.dpdns.org","46.249.110.193:80":"https://relay-dns.mbolotv.dpdns.org"}'
 HEALTH_CHECK_BATCH_SIZE = "3"
+# Éco adaptatif : l'affluence se mesure en chaînes DISTINCTES heartbeattées
+# (le relais porte ~1 flux par chaîne grâce à la mutualisation proxy).
+# Au-delà de ECO_AUTO_THRESHOLD chaînes actives, les nouvelles sessions /play
+# partent plafonnées à ECO_AUTO_MAXH (480p) ; à ECO_SATURATED_THRESHOLD, la
+# garde répond 429. Défauts calibrés pour un uplink résidentiel ~10 Mbps
+# (2 chaînes HD ≈ 12–16 Mbps ; 8 chaînes éco ≈ 8 Mbps). "0" désactive.
+ECO_AUTO_THRESHOLD = "3"
+ECO_AUTO_MAXH = "480"
+ECO_SATURATED_THRESHOLD = "8"
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
