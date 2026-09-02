@@ -21,6 +21,34 @@ const MAX_NETWORK_RETRIES = 3;
 // de advance() — la majorité de ces erreurs sont des à-coups réseau passagers.
 const MAX_LEVEL_RETRIES = 3;
 const LEVEL_RETRY_BASE_MS = 500;
+// Fast-start : affichage quasi instantané dès la connexion au flux.
+// 1) On démarre sur le niveau de qualité LE PLUS BAS de la chaîne (équivalent
+//    startLevel: 0, calculé sur les vrais niveaux du manifest) au lieu de
+//    laisser l'ABR choisir dès le premier segment.
+// 2) Après FAST_START_STABLE_MS de lecture SANS rebuffer, l'ABR reprend la
+//    main normalement (currentLevel = -1) et monte en qualité selon la bande
+//    passante réellement mesurée — les fragments basse qualité téléchargés
+//    pendant la fenêtre alimentent l'EWMA, donc pas besoin du warmup cap.
+// 3) Le buffer de démarrage est réduit à UN SEUL SEGMENT téléchargé (voir
+//    startupBufferTarget) au lieu du matelas de 5-6 s du chantier buffer.
+// 4) UN SEUL MODE « Auto » : un choix qualité explicite de l'utilisateur est
+//    respecté dès le départ (pas de fast-start).
+//
+// LIMITATION VARIANTES (dépend du fournisseur, pas de ce lecteur) : le système
+// est un pass-through (hls-rewriter.ts + proxy edge préservent TOUTES les
+// variantes du master ; seul le paramètre maxh du mode Éco filtre). Les
+// fournisseurs typiques exposent 3-5 variantes (240p → 1080p+) et le lecteur
+// les détecte via hls.levels dans MANIFEST_PARSED (menu qualité affiché si
+// levels.length > 1). MAIS : en mode Éco, l'eco-transcoder (tools/
+// eco-transcoder, 480p ~1 Mbps) produit une sortie MONO-VARIANTE, et certains
+// flux fournisseurs sont des media playlists directes sans
+// #EXT-X-STREAM-INF. Dans ces cas, « démarrer au plus bas » = le seul niveau
+// disponible : le fast-start n'a d'effet réel que sur le buffer de démarrage
+// réduit, pas sur la qualité initiale.
+const FAST_START_STABLE_MS = 6_000;
+// Borne haute du buffer de démarrage fast-start : un segment de panel peut
+// durer 10 s — au-delà de 4 s d'avance, on lance l'affichage sans attendre.
+const FAST_START_MAX_BUFFER_SECONDS = 4;
 const DATA_SAVER_MAX_HEIGHT = 480;
 const STARTUP_DEADLINE_MS = 15_000;
 const MIN_VIABLE_BUFFER_SECONDS = 2;
@@ -123,6 +151,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   }, []);
   const retryRef = useRef<(() => void) | null>(null);
   const networkCapRef = useRef(-1);
+  // Fast-start : actif + timer de libération ABR en refs pour que l'effet
+  // qualité (un choix manuel hors Auto) puisse annuler la libération
+  // programmée depuis l'extérieur de la closure du chargement.
+  const fastStartActiveRef = useRef(false);
+  const fastStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startupAtRef = useRef(0);
   const rebufferCountRef = useRef(0);
   // Journal de session (tâche 5) : rebuffer/erreurs/retries horodatés —
@@ -304,6 +337,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let warmupTimer: ReturnType<typeof setTimeout> | null = null;
+    // Fast-start : un rebuffer pendant la fenêtre de stabilité repousse la
+    // libération ABR (la fenêtre de 6 s repart de zéro, voir markReady).
+    let fastStartRebuffered = false;
     // Sonde de démarrage mpegts : attend un vrai matelas de buffer avant le
     // premier play (le direct TS n'a pas d'équivalent FRAG_BUFFERED pour
     // déclencher la lecture au bon moment).
@@ -317,7 +353,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     logSession('session-start', urls[urlIndex] ? `source ${urlIndex + 1}/${urls.length}` : 'aucune source');
     setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
-    const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); if (startupPoll) clearInterval(startupPoll); deadlineTimer = retryTimer = warmupTimer = null; startupPoll = null; };
+    const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); if (startupPoll) clearInterval(startupPoll); if (fastStartTimerRef.current) clearTimeout(fastStartTimerRef.current); deadlineTimer = retryTimer = warmupTimer = null; startupPoll = null; fastStartTimerRef.current = null; };
     const destroy = (): void => {
       const hls = hlsRef.current;
       if (hls) {
@@ -342,7 +378,34 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     };
     const bufferAhead = (): number => el.buffered.length === 0 ? 0 : Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
     const updateStats = (latency: number | null = null): void => setStats((c) => ({ ...c, bufferAhead: bufferAhead(), latency }));
-    const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; levelRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); setStats((c) => ({ ...c, startupMs: c.startupMs ?? performance.now() - startupAtRef.current, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); if (deadlineTimer) clearTimeout(deadlineTimer); };
+    const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; levelRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); setStats((c) => ({ ...c, startupMs: c.startupMs ?? performance.now() - startupAtRef.current, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); if (deadlineTimer) clearTimeout(deadlineTimer); scheduleFastStartRelease(); };
+    // Fast-start : une fois la lecture lancée, on laisse FAST_START_STABLE_MS
+    // de lecture SANS rebuffer avant de rendre la main à l'ABR (currentLevel
+    // = -1). Un rebuffer pendant la fenêtre (fastStartRebuffered, posé dans
+    // onWaiting) relance la fenêtre au lieu de libérer — l'ABR ne reprend que
+    // sur une lecture réellement stable. Les fragments basse qualité
+    // téléchargés pendant la fenêtre alimentent l'EWMA : à la libération,
+    // l'ABR monte en qualité selon la bande passante réellement mesurée (le
+    // warmup cap anti-overshoot, inchangé, borne ses premières montées).
+    const scheduleFastStartRelease = (): void => {
+      if (cancelled || !fastStartActiveRef.current) return;
+      if (fastStartTimerRef.current) clearTimeout(fastStartTimerRef.current);
+      fastStartTimerRef.current = setTimeout(() => {
+        fastStartTimerRef.current = null;
+        if (cancelled || !fastStartActiveRef.current) return;
+        if (fastStartRebuffered) {
+          fastStartRebuffered = false;
+          logSession('fast-start', 'rebuffer pendant la fenêtre — relance de la stabilité');
+          scheduleFastStartRelease();
+          return;
+        }
+        const hls = hlsRef.current;
+        if (!hls) return;
+        fastStartActiveRef.current = false;
+        hls.currentLevel = -1;
+        logSession('fast-start', `ABR libéré après ${FAST_START_STABLE_MS / 1000} s de lecture stable`);
+      }, FAST_START_STABLE_MS);
+    };
     // Épuisement des retries et des URL : on demande une URL fraîche à la page
     // (le jeton fournisseur a pu expirer) avant d'abandonner sur l'erreur.
     const exhausted = (): void => {
@@ -364,6 +427,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (cancelled) return;
       clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
       fragDurationRef.current = 0;
+      // Fast-start repart de zéro à chaque chargement (source suivante, retry…).
+      fastStartActiveRef.current = false;
+      fastStartRebuffered = false;
       // Si le navigateur refuse la lecture audible (politique autoplay), on
       // retente en muet pour ne jamais rester bloqué sur le spinner ; l'UI
       // propose ensuite de réactiver le son.
@@ -385,7 +451,15 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       const isHlsStream = /m3u8/i.test(url);
       // Seuil de démarrage : au moins le plancher du profil, sinon 1,5× la
       // durée d'un segment (bornée) dès que la playlist la révèle.
+      // Fast-start : un SEUL segment téléchargé suffit — la cible devient la
+      // durée d'un segment (borne à 4 s), sans le plancher de 5-6 s du profil.
+      // Distinct du buffer cible de lecture (maxBufferLength 40-60 s) qui ne
+      // s'applique qu'une fois la lecture lancée.
       const startupBufferTarget = (): number => {
+        if (fastStartActiveRef.current) {
+          const seg = fragDurationRef.current;
+          return Math.max(1, Math.min(seg || 2, FAST_START_MAX_BUFFER_SECONDS));
+        }
         if (!fragDurationRef.current) return startBufferRef.current;
         return clamp(fragDurationRef.current * 1.5, startBufferRef.current, START_BUFFER_MAX_SECONDS);
       };
@@ -469,8 +543,10 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       deadlineTimer = setTimeout(() => { if (!cancelled && !started) { if (bufferAhead() >= MIN_VIABLE_BUFFER_SECONDS) attemptPlayback(); else advance(); } }, STARTUP_DEADLINE_MS);
       const profile = networkProfile();
       startBufferRef.current = profile.startBuffer;
-      // startLevel -1 : l'ABR choisit le niveau de départ selon l'estimation
-      // réseau (plus de démarrage forcé en 360p sur bonne connexion).
+      // startLevel -1 dans la config : le niveau de départ est fixé au
+      // MANIFEST_PARSED par le fast-start (niveau le plus bas, voir plus
+      // bas) puis l'ABR est libéré après une lecture stable — l'estimation
+      // réseau (abrEwmaDefaultEstimate) ne sert plus qu'au warm-up cap.
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 90, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDuration: profile.liveSyncSeconds, liveMaxLatencyDuration: profile.liveMaxLatencySeconds, startLevel: -1, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 8 });
       hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
@@ -520,7 +596,20 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         } else {
           hls.autoLevelCapping = baseCap;
         }
-        hls.currentLevel = resolveHeightIndex(discovered, preferredHeight);
+        // Fast-start (mode Auto uniquement — un choix manuel de l'utilisateur
+        // est respecté tel quel) : on fixe currentLevel au niveau le PLUS BAS
+        // disponible plutôt que de laisser l'ABR choisir dès le premier
+        // segment ; markReady programmera la libération ABR après une lecture
+        // stable (voir markReady / FAST_START_STABLE_MS). Mono-variante :
+        // rien de plus bas où démarrer (voir la note FAST START en tête de
+        // fichier) — seul le buffer de démarrage réduit s'applique.
+        if (preferredHeight === -1 && discovered.length > 0) {
+          fastStartActiveRef.current = true;
+          fastStartRebuffered = false;
+          hls.currentLevel = discovered.reduce((lowest, l) => (l.height < lowest.height ? l : lowest), discovered[0]).index;
+        } else {
+          hls.currentLevel = resolveHeightIndex(discovered, preferredHeight);
+        }
         if (bufferAhead() >= startupBufferTarget()) attemptPlayback();
       });
       hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); } });
@@ -543,6 +632,13 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (!started) return;
       rebufferCountRef.current += 1;
       logSession('rebuffer', `#${rebufferCountRef.current} buffer ${bufferAhead().toFixed(1)} s`);
+      // Rebuffer pendant la fenêtre fast-start : la libération ABR est
+      // annulée — elle ne repartra qu'après une nouvelle période de stabilité
+      // (le prochain 'playing' reprogramme la fenêtre via markReady).
+      if (fastStartActiveRef.current) {
+        fastStartRebuffered = true;
+        if (fastStartTimerRef.current) { clearTimeout(fastStartTimerRef.current); fastStartTimerRef.current = null; }
+      }
       setStats((c) => ({ ...c, rebufferCount: rebufferCountRef.current }));
       // Flux TS continu (mpegts) : on NE met pas la vidéo en pause — mpegts
       // continue d'append au buffer et le <video> reprend tout seul dès que
@@ -601,6 +697,16 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       });
   };
   useEffect(() => { const hls = hlsRef.current; if (!hls || levels.length === 0) return; const dataCap = Math.max(0, ...levels.filter((l) => l.height <= DATA_SAVER_MAX_HEIGHT).map((l) => l.index)); hls.autoLevelCapping = dataSaver ? Math.min(networkCapRef.current < 0 ? dataCap : networkCapRef.current, dataCap) : networkCapRef.current; // Un choix manuel explicite prime sur Éco (qui n'est qu'un plafond auto).
+    // Choix manuel hors Auto : on annule le fast-start (la libération ABR
+    // programmée ne doit jamais écraser la qualité choisie). Auto pendant un
+    // fast-start actif : on ne touche PAS à currentLevel — c'est le
+    // fast-start qui le pilote (sans ce garde, cet effet, déclenché par le
+    // setLevels du MANIFEST_PARSED, remettrait -1 juste après le passage au
+    // niveau bas et annulerait le démarrage rapide).
+    if (resolvedIndex !== -1) {
+      if (fastStartTimerRef.current) { clearTimeout(fastStartTimerRef.current); fastStartTimerRef.current = null; }
+      fastStartActiveRef.current = false;
+    } else if (fastStartActiveRef.current) return;
     hls.currentLevel = resolvedIndex; }, [dataSaver, resolvedIndex, levels]);
   useEffect(() => { const video = videoRef.current; if (!video || initialVolume === undefined) return; video.volume = initialVolume; setVolume(initialVolume); const onVol = (): void => { setVolume(video.volume); onVolumeChange?.(video.volume); }; video.addEventListener('volumechange', onVol); return () => video.removeEventListener('volumechange', onVol); }, [initialVolume, onVolumeChange]);
 
