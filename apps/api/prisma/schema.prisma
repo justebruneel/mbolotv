@@ -128,6 +128,12 @@ model Match {
   startsAt DateTime
   endsAt DateTime?
   state String @default("SCHEDULED")
+  // ExternalId de la source d'agenda (ex: TheSportsDB "event-2494027") :
+  // idempotence des imports d'agenda. Null = match découvert via l'EPG.
+  externalId String? @unique
+  // Logo des équipes fourni par l'agenda (ex: badges TheSportsDB).
+  homeTeamLogo String?
+  awayTeamLogo String?
   matchStreams MatchStream[]
   @@index([state, startsAt])
 }
@@ -200,14 +206,17 @@ model DeviceGrant {
   accessCode AccessCode @relation(fields:[accessCodeId], references:[id], onDelete:Cascade)
   @@index([deviceHash, expiresAt])
 }
-model TmdbCache {
-  id String @id @default(cuid())
-  cacheKey String @unique
-  title String
-  year Int?
-  payload Json
+// Cache d'enrichissement EPG (TVmaze + Fanart.tv, ex-TmdbCache).
+// payload = MetadataEnriched ; clé "titre normalisé::année" ; TTL 30 jours.
+model MetadataCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  title     String
+  year      Int?
+  payload   Json
   createdAt DateTime @default(now())
   expiresAt DateTime
+
   @@index([expiresAt])
   @@index([title])
 }

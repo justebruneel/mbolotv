@@ -17,7 +17,7 @@ function formatTime(iso: string): string {
 }
 
 /**
- * Fiche programme : visuel TMDB, métadonnées (type, année, saison/épisode,
+ * Fiche programme : visuel TVmaze, métadonnées (type, année, saison/épisode,
  * genres), accès direct à la chaîne et bouton de rappel. Feuille en bas
  * d'écran sur mobile, modale centrée au-dessus.
  */

@@ -1,4 +1,4 @@
-# EPG & Métadonnées TMDB — Mbolo TV
+# EPG & Métadonnées (TVmaze / Fanart.tv) — Mbolo TV
 
 ## 1. Fournisseur EPG choisi — pourquoi
 
@@ -27,12 +27,14 @@ EPG_IPTV_EPG_FR_URL=https://iptv-epg.org/files/epg-fr.xml.gz
 EPG_AFRICA_URLS=https://raw.githubusercontent.com/globetvapp/epg/main/Nigeria/nigeria1.xml,https://raw.githubusercontent.com/globetvapp/epg/main/Southafrica/southafrica1.xml
 EPG_EXTRA_URLS=https://epg.best/xmltv/your-custom.xml.gz
 EPG_MAX_BYTES=536870912
-TMDB_API_KEY=xxx   # https://www.themoviedb.org/settings/api — v3 API Key
-TMDB_READ_TOKEN=eyJ... # Bearer v4 (optionnel, préféré)
+FANART_API_KEY=xxx     # https://fanart.tv/get-an-api-key/ — secours image (optionnel)
+SPORTSDB_API_KEY=3     # https://www.thesportsdb.com/api.php — agenda football (clé test publique « 3 »)
 ```
 
-- `TMDB_API_KEY` **ou** `TMDB_READ_TOKEN` suffit. Jamais exposé frontend (`NEXT_PUBLIC_` interdit). Si absent, enrichissement désactivé, EPG reste fonctionnel (fallback affiche `imageUrl` d’origine + `Programme temporairement indisponible` si besoin).
-- `EPG_*_URLS` : liste d’URLs séparées par virgule. Laisser vide = désactive le layer.
+- **TVmaze ne requiert AUCUNE clé** : l'enrichissement est toujours actif.
+- `FANART_API_KEY` : optionnel, active le secours image quand TVmaze n'a pas d'affiche. Si absent, fallback silencieux (texte EPG sans image).
+- `SPORTSDB_API_KEY` : alimente la section « À la une · Football ». La clé publique « 3 » (tier test) renvoie peu d'événements ; créer une clé gratuite pour la production.
+- `EPG_*_URLS` : liste d'URLs séparées par virgule. Laisser vide = désactive le layer.
 
 ## 4. Mapping chaînes
 
@@ -62,31 +64,46 @@ export class MonProvider implements EpgProvider {
 ## 6. Cache
 
 - **EPG brut** : table `EpgProgramme` PG, TTL 6h (cron 05h + `EpgOrchestrator` 6h). `EPG_MAX_BYTES` 512M, `SafeFetcher` 15min.
-- **TMDB** : table `TmdbCache` (`cacheKey = lower(title)::year`, `payload JSON`, `expiresAt +30j`), index `expiresAt`. Évite recherches répétées `"Avatar"` 1 seule fois. Si `type` = `sports|news|kids` → skip TMDB (quota).
-- **Images** : URLs CDN `https://image.tmdb.org/t/p/w500|w1280` direct en `<img loading="lazy">`, pas de téléchargement.
+- **Metadata** : table `MetadataCache` (ex-`TmdbCache`, migrée 20260901) — `cacheKey = lower(title)::year`, `payload JSON` (`MetadataEnriched`), `expiresAt +30j`, index `expiresAt`. Évite de re-chercher une même série. Si `type` = `sports|news|kids` → skip.
+- **Images** : URLs CDN `static.tvmaze.com` (posters portrait) et `r2.thesportsdb.com` (badges équipes) en `<img loading="lazy">`, pas de téléchargement.
 - **Frontend** : `useChannelEpg stale 5min`, `useInfiniteChannels placeholderData keepPreviousData`, `ProgrammeProgress` tick 30s.
 
-## 7. Enrichissement TMDB
+## 7. Enrichissement TVmaze + Fanart.tv (remplace TMDB depuis 09/2026)
 
-Flux : `EPG brut → normalizeCategoryToType → enrichBatch (50 prime 19-23h) → TmdbProvider.search(title,year) → poster/backdrop/overview/genres/year/trailer → cache 30j → EpgProgramme.metadata.tmdb`.
+TMDB exige désormais un accord commercial pour notre usage (écran public avec affiches) → remplacé par des sources gratuites.
 
-Attribution obligatoire affichée `watch` + `epg` : *This product uses the TMDB API but is not endorsed or certified by TMDB.* + logo si possible.
+Flux : `EPG brut → normalizeCategoryToType → enrichBatch (50 prime 19-23h) → TvmazeProvider.search(title,year) → poster/summary/genres/year/rating → cache 30j → EpgProgramme.metadata.enriched`.
 
-## 8. Limitations
+- **TVmaze** (source principale, sans clé) : séries TV uniquement — `image.original` (poster portrait), `summary` (HTML → texte), `genres`, `premiered`, `rating.average`. Matching strict du nom normalisé (score > 0.7 sinon rejet) pour éviter les faux positifs.
+- **Fanart.tv** (secours, clé gratuite) : si TVmaze renvoie une fiche sans image et que `externals.thetvdb` existe → `tvposter` (poster) + `showbackground` (notre « backdrop », absente de TVmaze), tri par likes.
+- **Films/téléfilms** : aucune fiche TVmaze → texte EPG brut sans image, **fallback silencieux** (jamais de crash).
+- **Bandes-annonces** : non disponibles sur ces sources → `trailerUrl` toujours `null`, les boutons bande-annonce disparaissent automatiquement côté UI.
+- Compat lecture : `extractEnriched()` lit `metadata.enriched` puis retombe sur `metadata.tmdb` pour les anciens payloads tant que l'import n'a pas tourné.
 
-- TMDB gratuit 40 req/10s, pas de SLA, `search` peut confondre homonymes (on privilégie année si dispo).
+## 8. « À la une » Football (agenda TheSportsDB)
+
+- Cron `0 */6 * * *` (`FootballScheduleService`) : fetch `eventsnextleague.php` pour Champions League (4480), Premier League (4328), La Liga (4335), Ligue 1 (4334), Serie A (4332), Bundesliga (4331) → upsert `Match` (sport=Football, `externalId=thesportsdb:<idEvent>`, logos équipes) + liaison aux chaînes EPG dont le programme cite les équipes au voisinage horaire (±4h/-1h) → `MatchStream`.
+- Le cron discovery existant (`*/15`) reste actif en complément (détection EPG pure) ; dédoublonnage par équipes normalisées.
+- Affichage : `FootballFeatured.tsx` sur `/live` sous le hero — carrousel trié par priorité de compétition puis horaire, max 12, « Sur {chaîne} » → `/watch/{channelId}`. Disparaît si aucune donnée.
+
+## 9. Limitations
+
+- **TVmaze** : 20 req/s (délai 120 ms appliqué), séries uniquement, pas de backdrop (posters portrait), `rating.average` souvent null, pas de bande-annonce.
+- **Fanart.tv** : clé gratuite requise, couverture TVDB-based (séries absentes de TVDB sans image).
+- **TheSportsDB** : tier gratuit ≈ 30 req/min ; clé test « 3 » limitée à ~1 événement/ligue ; noms d'équipes en anglais (matching tolérant aux accents mais pas aux traductions).
 - iptv-epg.org `testing only`, pas de SLA.
 - `globetvapp` 1-4 fichiers/pays à merger manuellement.
 - `.xz` non supporté (on n'utilise que `.gz`).
-- Worker Cloudflare `workers/mbolo-tv-api` n'exécute pas encore `EpgOrchestrator` (seul Nest `apps/api` le fait) — en prod Worker, seul Xtream tourne. Porter `epg-orchestrator` vers `workers/src/epgimport.js` si déploiement 100% Workers.
+- Worker Cloudflare `workers/mbolo-tv-api` n'exécute pas `EpgOrchestrator` ni l'agenda football (seul Nest `apps/api` le fait).
 
-## 9. Choix EPG pour Mbolo TV (recommandé MVP)
+## 10. Choix EPG pour Mbolo TV (recommandé MVP)
 
 - **MVP 0€** : Xtream + XMLTV.fr + iptv-epg.org + globetvapp → FR 95%, Afrique 70%.
 - **Recommandé 24€/an** : MVP + epg.best 250ch → Afrique 85-90%.
 
-## 10. Opérations
+## 11. Opérations
 
 - Import complet : `POST /api/epg/import` ou cron 05:00 `EpgImportService.run()`
-- Vérifier couverture : `GET /api/epg/providers` + logs `unmatchedSample`
-- Purge cache TMDB expiré : cron `DELETE FROM "TmdbCache" WHERE "expiresAt" < now()` (à ajouter si besoin)
+- Vérifier couverture : `GET /api/epg/providers` (renvoie `metadataEnabled`) + logs `unmatchedSample`
+- Sync agenda football manuelle : ` FootballScheduleService.sync()` (via log ou endpoint à ajouter)
+- Purge cache metadata expiré : cron `DELETE FROM "MetadataCache" WHERE "expiresAt" < now()` (à ajouter si besoin)

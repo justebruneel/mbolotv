@@ -17,14 +17,16 @@ type ProgrammeRow = {
 function extractEnriched(metadata: unknown): Partial<Programme> {
   if (!metadata || typeof metadata !== 'object') return {};
   const m = metadata as Record<string, unknown>;
-  const tmdb = (m.tmdb as Record<string, unknown> | null) ?? null;
+  // Nouvelle clé `enriched` (TVmaze/Fanart.tv) ; `tmdb` gardé pour la
+  // compatibilité avec les anciens payloads tant que l'import n'a pas tourné.
+  const src = ((m.enriched ?? m.tmdb) as Record<string, unknown> | null) ?? null;
   return {
     type: (m.type as Programme['type']) ?? null,
-    posterUrl: (tmdb?.posterUrl as string | null) ?? (m.posterUrl as string | null) ?? null,
-    backdropUrl: (tmdb?.backdropUrl as string | null) ?? (m.backdropUrl as string | null) ?? null,
-    trailerUrl: (tmdb?.trailerUrl as string | null) ?? null,
-    genres: (tmdb?.genres as string[] | null) ?? (m.genres as string[] | null) ?? null,
-    year: (tmdb?.year as number | null) ?? null,
+    posterUrl: (src?.posterUrl as string | null) ?? (m.posterUrl as string | null) ?? null,
+    backdropUrl: (src?.backdropUrl as string | null) ?? (m.backdropUrl as string | null) ?? null,
+    trailerUrl: (src?.trailerUrl as string | null) ?? null,
+    genres: (src?.genres as string[] | null) ?? (m.genres as string[] | null) ?? null,
+    year: (src?.year as number | null) ?? null,
     seasonNumber: (m.seasonNumber as number | null) ?? null,
     episodeNumber: (m.episodeNumber as number | null) ?? null,
   };

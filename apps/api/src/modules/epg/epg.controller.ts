@@ -5,6 +5,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { EpgImportService, type EpgImportResult } from './epg-import.service';
 import { EpgOrchestrator } from './epg-orchestrator.service';
 import { EpgService } from './epg.service';
+import { MetadataService } from '../metadata/metadata.service';
 
 @Controller('epg')
 export class EpgController {
@@ -12,6 +13,7 @@ export class EpgController {
     private readonly epgService: EpgService,
     private readonly epgImportService: EpgImportService,
     private readonly orchestrator: EpgOrchestrator,
+    private readonly metadata: MetadataService,
   ) {}
 
   @Get('range')
@@ -27,10 +29,10 @@ export class EpgController {
   }
 
   @Get('providers')
-  providers(): Promise<{ providers: string[]; tmdbEnabled: boolean }> {
+  providers(): Promise<{ providers: string[]; metadataEnabled: boolean }> {
     return Promise.resolve({
       providers: ['xtream', 'xmltvfr', 'iptv-epg.org', 'globetvapp'],
-      tmdbEnabled: this.orchestrator ? true : false,
+      metadataEnabled: this.metadata.isEnabled(),
     });
   }
 

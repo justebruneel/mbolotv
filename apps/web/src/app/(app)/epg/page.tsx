@@ -51,7 +51,7 @@ export default function EpgPage() {
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-widest text-accent">Programmes TV</p>
         <h1 className="mt-1 text-2xl font-black tracking-tight">Grille des programmes</h1>
-        <p className="mt-1 text-sm text-muted">EPG enrichi TMDB — affiches, synopsis et bandes-annonces quand disponibles.</p>
+        <p className="mt-1 text-sm text-muted">EPG enrichi TVmaze — affiches et synopsis quand disponibles.</p>
       </header>
 
       <div className="mb-6">
@@ -101,7 +101,7 @@ export default function EpgPage() {
       <EpgView data={epgQuery.data} isLoading={epgQuery.isLoading} from={from} to={to} category={category} />
 
       <p className="mt-6 text-center text-xs text-faint">
-        This product uses the TMDB API but is not endorsed or certified by TMDB. — Données EPG via fournisseurs configurés (XMLTV.fr, Xtream, etc.)
+        Données séries : TVmaze — Données EPG via fournisseurs configurés (XMLTV.fr, Xtream, etc.)
       </p>
     </main>
   );

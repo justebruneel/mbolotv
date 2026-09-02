@@ -12,11 +12,12 @@ type ChannelProgramme = { id: string; channelId: string; startsAt: Date; endsAt:
 function extractNowPlayingEnriched(metadata: unknown): Partial<NowPlaying> {
   if (!metadata || typeof metadata !== 'object') return {};
   const m = metadata as Record<string, unknown>;
-  const tmdb = (m.tmdb as Record<string, unknown> | null) ?? null;
+  // Nouvelle clé `enriched` (TVmaze/Fanart.tv) ; `tmdb` en compat legacy.
+  const src = ((m.enriched ?? m.tmdb) as Record<string, unknown> | null) ?? null;
   return {
     type: (m.type as NowPlaying['type']) ?? null,
-    posterUrl: (tmdb?.posterUrl as string | null) ?? null,
-    backdropUrl: (tmdb?.backdropUrl as string | null) ?? null,
+    posterUrl: (src?.posterUrl as string | null) ?? null,
+    backdropUrl: (src?.backdropUrl as string | null) ?? null,
   };
 }
 
@@ -68,10 +69,10 @@ export class ChannelsService {
     const to = new Date(Date.now() + 12 * 3_600_000);
     const programmes = await this.prisma.epgProgramme.findMany({ where: { channelId: id, startsAt: { lte: to }, endsAt: { gte: from } }, orderBy: { startsAt: 'asc' } });
     return programmes.map((programme: ChannelProgramme) => {
-      const enriched = extractNowPlayingEnriched((programme as unknown as { metadata: unknown }).metadata);
-      const trailer = (programme as unknown as { metadata: unknown }).metadata
-        ? (((programme as unknown as { metadata: Record<string, unknown> }).metadata.tmdb as Record<string, unknown> | null)?.trailerUrl as string | null) ?? null
-        : null;
+      const metadata = (programme as unknown as { metadata: Record<string, unknown> | null }).metadata ?? null;
+      const enriched = extractNowPlayingEnriched(metadata);
+      // Nouvelle clé `enriched` (TVmaze/Fanart.tv) ; `tmdb` en compat legacy.
+      const src = ((metadata?.enriched ?? metadata?.tmdb) as Record<string, unknown> | null) ?? null;
       return {
         id: programme.id,
         channelId: programme.channelId,
@@ -83,9 +84,9 @@ export class ChannelsService {
         type: enriched.type ?? null,
         posterUrl: enriched.posterUrl ?? null,
         backdropUrl: enriched.backdropUrl ?? null,
-        trailerUrl: trailer,
-        genres: ((programme as unknown as { metadata: Record<string, unknown> }).metadata?.tmdb as Record<string, unknown> | null)?.genres as string[] | null ?? null,
-        year: ((programme as unknown as { metadata: Record<string, unknown> }).metadata?.tmdb as Record<string, unknown> | null)?.year as number | null ?? null,
+        trailerUrl: (src?.trailerUrl as string | null) ?? null,
+        genres: (src?.genres as string[] | null) ?? null,
+        year: (src?.year as number | null) ?? null,
       } as Programme;
     });
   }

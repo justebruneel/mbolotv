@@ -383,7 +383,7 @@ export default function WatchPage() {
               </div>
             )}
 
-            {/* EPG strip : 6 prochains programmes enrichis TMDB */}
+            {/* EPG strip : 6 prochains programmes enrichis (TVmaze) */}
             {strip.length > 0 && (
               <div className="mt-4 flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {strip.map((prog) => {

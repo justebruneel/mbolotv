@@ -54,7 +54,7 @@ export class EpgOrchestrator {
   }
 
   /**
-   * Import multi-fournisseur : fetch parallèle, parse, merge, enrichissement TMDB, persistance
+   * Import multi-fournisseur : fetch parallèle, parse, merge, enrichissement TVmaze/Fanart.tv, persistance
    * Réutilise la logique de mapping existante (tvgMap + nameMap) via le service appelant
    */
   async importExtraEpg(
@@ -121,7 +121,8 @@ export class EpgOrchestrator {
     const deduped = [...dedup.values()];
     this.logger.log(`EPG merge: ${allRaw.length} brut → ${deduped.length} dédupliqués (${unmatched.size} chaînes non mappées)`);
 
-    // Enrichissement TMDB (limité aux programmes prime 20-22h pour économiser quota)
+    // Enrichissement metadata (TVmaze/Fanart.tv, gratuit) — limité aux
+    // programmes prime 19-23h pour limiter le nombre d'appels API.
     const toEnrich = deduped.filter((p) => {
       const h = p.startsAt.getHours();
       return h >= 19 && h <= 23;
@@ -145,12 +146,13 @@ export class EpgOrchestrator {
       const rows = programmes.map((p) => {
         const key = `${p.title.trim().toLowerCase()}::`;
         const enriched = enrichMap.get(key) ?? enrichMap.get(`${p.title.trim().toLowerCase()}::`);
-        const tmdb = enriched
+        const meta = enriched
           ? {
+              source: enriched.source,
+              externalId: enriched.externalId,
               posterUrl: enriched.posterUrl,
               backdropUrl: enriched.backdropUrl,
               trailerUrl: enriched.trailerUrl,
-              tmdbId: enriched.tmdbId,
               genres: enriched.genres,
               year: enriched.year,
               voteAverage: enriched.voteAverage,
@@ -164,12 +166,12 @@ export class EpgOrchestrator {
           endsAt: p.endsAt,
           title: p.title,
           description: p.description,
-          imageUrl: p.imageUrl ?? tmdb?.posterUrl ?? null,
+          imageUrl: p.imageUrl ?? meta?.posterUrl ?? null,
           metadata: {
             categories: p.categories,
             type,
             source: p.metadataSource,
-            tmdb,
+            enriched: meta,
           },
         };
       });
@@ -221,9 +223,13 @@ export class EpgOrchestrator {
     });
     const scored = programmes
       .map((p) => {
-        const meta = p.metadata as unknown as { type?: string; tmdb?: { backdropUrl?: string | null; posterUrl?: string | null; trailerUrl?: string | null; voteAverage?: number; genres?: string[]; year?: number | null } } | null;
-        const score = meta?.tmdb?.voteAverage ?? 0;
-        const hasBackdrop = Boolean(meta?.tmdb?.backdropUrl ?? p.imageUrl);
+        const meta = p.metadata as unknown as { type?: string; enriched?: { backdropUrl?: string | null; posterUrl?: string | null; trailerUrl?: string | null; voteAverage?: number; genres?: string[]; year?: number | null }; tmdb?: { backdropUrl?: string | null; posterUrl?: string | null; voteAverage?: number } | null } | null;
+        const vote = meta?.enriched?.voteAverage ?? 0;
+        // Compat : anciens payloads TMDB encore présents en base tant que
+        // l'import n'a pas tourné avec les nouvelles sources.
+        const legacyVote = meta?.tmdb?.voteAverage ?? 0;
+        const score = vote || legacyVote;
+        const hasBackdrop = Boolean(meta?.enriched?.backdropUrl ?? meta?.tmdb?.backdropUrl ?? p.imageUrl);
         return {
           p,
           meta,
@@ -264,11 +270,11 @@ export class EpgOrchestrator {
           categories: ((meta as unknown as { categories?: string[] })?.categories ?? []) as string[],
           metadataSource: 'featured',
           type: (meta as unknown as { type?: string | null })?.type ?? null,
-          posterUrl: meta?.tmdb?.posterUrl ?? null,
-          backdropUrl: meta?.tmdb?.backdropUrl ?? null,
-          trailerUrl: meta?.tmdb?.trailerUrl ?? null,
-          genres: meta?.tmdb?.genres ?? null,
-          year: meta?.tmdb?.year ?? null,
+          posterUrl: meta?.enriched?.posterUrl ?? meta?.tmdb?.posterUrl ?? null,
+          backdropUrl: meta?.enriched?.backdropUrl ?? meta?.tmdb?.backdropUrl ?? null,
+          trailerUrl: meta?.enriched?.trailerUrl ?? null,
+          genres: meta?.enriched?.genres ?? null,
+          year: meta?.enriched?.year ?? null,
         } as unknown as RawProgramme & { posterUrl?: string | null; backdropUrl?: string | null; trailerUrl?: string | null; type?: string | null },
       };
     });

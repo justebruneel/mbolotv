@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { useCategories, useFavorites, useInfiniteChannels, useMatches } from '../../../shared/api/queries';
 import { FeaturedAuto } from '../../../features/live-tv/components/FeaturedAuto';
+import { FootballFeatured } from '../../../features/live-tv/components/FootballFeatured';
 import { NetflixRow } from '../../../features/live-tv/components/NetflixRow';
 import { ResultsGrid } from '../../../features/live-tv/components/ResultsGrid';
 import { useRecommendations } from '../../../features/live-tv/hooks/useRecommendations';
@@ -95,6 +96,8 @@ function HomeView() {
     <main className="pb-16">
       <div className="space-y-9 pt-6 md:pt-8">
         <FeaturedAuto />
+
+        <FootballFeatured />
 
         {continueChannels.length > 0 && <NetflixRow title="Reprendre" subtitle="Continuer à regarder" channels={continueChannels} highlightId={highlightId} />}
 
