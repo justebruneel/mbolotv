@@ -21,6 +21,14 @@ const MAX_REDIRECTS = 5;
 const MAX_CHAIN_ATTEMPTS = 3;
 const FETCH_TIMEOUT_MS = 15_000;
 
+// Mutualisation single-flight : les waiters sondent le coordinateur toutes les
+// 400 ms pendant 16 s max (> durée d'une chaîne fournisseur typique), puis
+// repartent sur un nouveau cycle de claim. Au pire (DO injoignable) on dégrade
+// en fetch direct : la lecture prime sur l'économie de requêtes.
+const WAITER_POLL_MS = 400;
+const WAITER_MAX_WAIT_MS = 16_000;
+const CLAIM_ROUNDS = 2;
+
 // Durcissement anti-relais ouvert : chaque URL proxifiée doit porter une
 // signature HMAC-SHA256 (params x-exp + x-sig) émise par l'API (réponse /play)
 // ou par ce proxy lui-même lors de la réécriture des playlists. Sans secret
@@ -45,7 +53,85 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-export const _internal = { nextExpiry, hmacHex, timingSafeEqual, isIpLiteral, swapIpAuthority, applyRelay, isPrivateHostname };
+export const _internal = { nextExpiry, hmacHex, timingSafeEqual, isIpLiteral, swapIpAuthority, applyRelay, isPrivateHostname, parseTargetDuration, playlistMaxAge, segmentMaxAge, channelKeyOf };
+
+export { SegmentCoordinator, MetricsCounter } from "./do.js";
+
+// Durée d'un segment lue dans le manifest fournisseur (#EXT-X-TARGETDURATION
+// en secondes, valeur entière). null si absent/illisible : le TTL retombe alors
+// sur les défauts (3 s playlist / 30 s segment).
+function parseTargetDuration(manifestText) {
+  const match = /#EXT-X-TARGETDURATION:\s*(\d+)/i.exec(manifestText);
+  const value = match ? Number(match[1]) : NaN;
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// Fraîcheur critique en live : la playlist est recalculée par le fournisseur à
+// chaque segment ; on ne la retient jamais plus d'une durée de segment.
+function playlistMaxAge(targetDuration) {
+  return Math.max(2, Math.min(targetDuration ?? 3, 10));
+}
+
+// Un segment terminé ne change jamais (immutable), mais personne n'en a
+// besoin au-delà de quelques durées de segment : 3 × target duration,
+// plancher 30 s pour absorber les lecteurs en avance de cycle.
+function segmentMaxAge(targetDuration) {
+  return Math.max(30, Math.min((targetDuration ?? 10) * 3, 90));
+}
+
+// Clé de mutualisation « par chaîne » : l'origine + le répertoire de la
+// ressource identifient la chaîne chez un panel IPTV (ex :
+// http://host:port/live/user/pass/12345.ts → « host:port/live/user/pass »).
+// Deux viewers de la même chaîne partagent l'instance ; deux chaînes
+// différentes (ou deux qualités) ont des instances distinctes.
+function channelKeyOf(targetUrl) {
+  try {
+    const parsed = new URL(targetUrl);
+    const dir = parsed.pathname.slice(0, parsed.pathname.lastIndexOf("/") + 1);
+    return `${parsed.host}${dir}`;
+  } catch {
+    return targetUrl;
+  }
+}
+
+// Client DO minimal : un seul RPC au plus par requête, fire-and-forget pour
+// les compteurs. Toute erreur DO est avalée — le proxy continue sans
+// mutualisation plutôt que de casser la lecture.
+function coordinatorStub(env, channelKey) {
+  const id = env.SEGMENT_COORDINATOR.idFromName(channelKey);
+  return {
+    call: async (action, body) => {
+      try {
+        const stub = env.SEGMENT_COORDINATOR.get(id);
+        const resp = await stub.fetch(`https://do/${action}`, { method: "POST", body: JSON.stringify(body) });
+        return resp.ok ? await resp.json() : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+function metricsStub(env) {
+  const id = env.METRICS.idFromName("global");
+  return {
+    add: (delta) => {
+      try {
+        env.METRICS.get(id)
+          .fetch("https://do/add", { method: "POST", body: JSON.stringify(delta) })
+          .catch(() => undefined);
+      } catch {}
+    },
+    get: async () => {
+      try {
+        const resp = await env.METRICS.get(id).fetch("https://do/get");
+        return resp.ok ? await resp.json() : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
 
 function isIpLiteral(hostname) {
   // IPv4 littérale ou IPv6 (URL.hostname des URLs IPv6 garde les « : », sans crochets).
@@ -132,6 +218,33 @@ export default {
     const secret = typeof env.PROXY_URL_SECRET === "string" ? env.PROXY_URL_SECRET.trim() : "";
     if (!secret) return jsonResponse({ error: "Proxy non configuré" }, 503);
 
+    // Route d'administration (hors proxy) : compteurs de mutualisation.
+    // GET /_stats → totaux ; POST /_stats?reset=1 → remise à zéro.
+    // Auth : en-tête x-admin-token = PROXY_URL_SECRET.
+    if (url.pathname === "/_stats") {
+      const token = request.headers.get("x-admin-token") ?? "";
+      if (!timingSafeEqual(secret, token)) return jsonResponse({ error: "Non autorisé" }, 403);
+      if (!env.METRICS) return jsonResponse({ error: "METRICS non configuré" }, 503);
+      const metrics = metricsStub(env);
+      if (request.method === "POST" && url.searchParams.get("reset") === "1") {
+        const counters = await metrics.get();
+        env.METRICS.get(env.METRICS.idFromName("global"))
+          .fetch("https://do/reset", { method: "POST" })
+          .catch(() => undefined);
+        return jsonResponse({ reset: true, before: counters });
+      }
+      return jsonResponse(await metrics.get());
+    }
+
+    const metrics = { received: 1, cacheHits: 0, upstreamFetches: 0 };
+    const response = await handleProxy(request, env, ctx, url, secret, metrics);
+    // Compteur en fire-and-forget : aucun coût de latence sur la lecture.
+    if (env.METRICS) metricsStub(env).add(metrics);
+    return response;
+  },
+};
+
+async function handleProxy(request, env, ctx, url, secret, metrics) {
     const target = url.searchParams.get("url");
     const expiry = Number(url.searchParams.get("x-exp"));
     const signature = url.searchParams.get("x-sig");
@@ -154,11 +267,16 @@ export default {
     const isPlaylist = /\.m3u8?$/i.test(targetUrl.pathname);
 
     const cache = caches.default;
-    const cacheKey = new Request(url.toString(), request);
+    // Clé de cache STABLE : l'URL du fournisseur seule (sans x-exp/x-sig, qui
+    // tournent chaque heure) — deux viewers d'une même chaîne partagent le
+    // même cache quel que soit l'heure de leur signature.
+    const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}`;
+    const cacheKey = new Request(stableKey, { method: "GET" });
 
-    if (!isPlaylist) {
-      const cached = await cache.match(cacheKey);
-      if (cached) return cached;
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      metrics.cacheHits = 1;
+      return cached;
     }
 
     const headers = {
@@ -170,6 +288,29 @@ export default {
     // le relais par défaut ; si la machine résidentielle est injoignable, on
     // retente une fois en direct avant de renoncer.
     const explicitlyMapped = applyRelay(env, target, { allowDefault: false }).upstreamAuthority !== null;
+
+    // ---- Mutualisation single-flight (Durable Object par chaîne) ----
+    // Premier arrivé sur un cache-miss = fetcher ; les requêtes simultanées
+    // attendent la mise en cache par le fetcher (waitForPeer) au lieu de
+    // déclencher chacune leur propre requête fournisseur.
+    let claimed = false;
+    let coord = null;
+    if (env.SEGMENT_COORDINATOR) {
+      coord = coordinatorStub(env, channelKeyOf(target));
+      for (let round = 0; round < CLAIM_ROUNDS && coord; round += 1) {
+        const claim = await coord.call("claim", { key: stableKey });
+        if (claim === null) break; // DO injoignable : dégradation en fetch direct
+        if (claim.role === "fetcher") { claimed = true; break; }
+        // Waiter : le fetcher courant met la réponse en cache puis release.
+        const served = await waitForPeer(coord, stableKey, cache, cacheKey);
+        if (served) {
+          metrics.cacheHits = 1;
+          return served;
+        }
+        // Peer terminé sans cache exploitable (échec upstream) ou délai écoulé :
+        // nouveau cycle de claim — au bout de CLAIM_ROUNDS on fetch en direct.
+      }
+    }
 
     const runAttempts = async (useDefaultRelay) => {
       let lastFailure = null;
@@ -185,6 +326,8 @@ export default {
           lastFailure = { reason: "relais indisponible", erreur: String(error?.message ?? error).slice(0, 200) };
           continue;
         }
+        // La chaîne a atteint le fournisseur : comptabilise un aller réel.
+        metrics.upstreamFetches += 1;
 
       if (isPlaylist) {
         let text = await outcome.resp.text();
@@ -204,13 +347,17 @@ export default {
           void outcome.resp.body?.cancel().catch(() => undefined);
           continue;
         }
+        // TTL des enfants ET de la playlist alignés sur la durée réelle des
+        // segments (#EXT-X-TARGETDURATION du manifest fournisseur) : le `d`
+        // propagé sur chaque URL enfant pilote le cache des segments.
+        const targetDuration = parseTargetDuration(text);
         const maxHeightParam = Number(url.searchParams.get("maxh")) || null;
         if (maxHeightParam) text = filterMasterByHeight(text, maxHeightParam);
         const base = new URL(outcome.finalUrl || target);
         const proxyBase = `${url.origin}${url.pathname}`;
         const childExpiry = nextExpiry();
         const signChild = async (absolute) =>
-          `${proxyBase}?url=${encodeURIComponent(absolute)}&x-exp=${childExpiry}&x-sig=${await hmacHex(secret, `${absolute}|${childExpiry}`)}`;
+          `${proxyBase}?url=${encodeURIComponent(absolute)}&x-exp=${childExpiry}&x-sig=${await hmacHex(secret, `${absolute}|${childExpiry}`)}&d=${targetDuration ?? ""}`;
         const rewrittenLines = [];
         for (const line of text.split("\n")) {
           if (line.trim() === "") { rewrittenLines.push(line); continue; }
@@ -230,13 +377,18 @@ export default {
         }
         const rewritten = rewrittenLines.join("\n");
 
-        return { response: new Response(rewritten, {
+        const response = new Response(rewritten, {
           headers: {
             "content-type": "application/vnd.apple.mpegurl",
             ...corsHeaders(),
-            "cache-control": "public, max-age=3",
+            "cache-control": `public, max-age=${playlistMaxAge(targetDuration)}`,
           },
-        }) };
+        });
+        // Playlist mise en cache (partagée entre viewers de la chaîne) : mise
+        // en cache SYNCHRONE avant le release du verrou single-flight, pour
+        // que les waiters relisent le cache au lieu de re-fetcher.
+        try { await cache.put(cacheKey, response.clone()); } catch {}
+        return { response };
       }
       // Segment / fichier binaire.
       if (outcome.resp.status >= 500) {
@@ -246,37 +398,67 @@ export default {
       }
       const responseHeaders = new Headers(outcome.resp.headers);
       responseHeaders.set("access-control-allow-origin", "*");
-      responseHeaders.set("cache-control", "public, max-age=3600, immutable");
+      // TTL aligné sur la durée réelle du segment (3 × target duration) :
+      // un segment terminé est immutable, mais un redémarrage de session
+      // fournisseur réutilise les mêmes noms de fichier — un TTL court évite
+      // de servir un segment périmé après un restart.
+      const dParam = Number(url.searchParams.get("d")) || null;
+      responseHeaders.set("cache-control", `public, max-age=${segmentMaxAge(dParam)}, immutable`);
       const response = new Response(outcome.resp.body, {
         status: outcome.resp.status,
         headers: responseHeaders,
       });
       // La Cache API rejette les réponses partielles (206, requêtes Range).
-      if (outcome.resp.status === 200) ctx.waitUntil(cache.put(cacheKey, response.clone()));
+      // Cache SYNCHRONE : même logique de passation que pour les playlists.
+      if (outcome.resp.status === 200) {
+        try { await cache.put(cacheKey, response.clone()); } catch {}
+      }
       return { response };
       }
 
       return { failure: lastFailure };
     };
 
-    let result = await runAttempts(true);
-    if (!result.response && !explicitlyMapped && env.RELAY_DEFAULT_ORIGIN)
-      result = await runAttempts(false);
-    if (result.response) return result.response;
+    try {
+      let result = await runAttempts(true);
+      if (!result.response && !explicitlyMapped && env.RELAY_DEFAULT_ORIGIN)
+        result = await runAttempts(false);
+      if (result.response) return result.response;
 
-    return new Response(
-      JSON.stringify({ error: "Flux indisponible via le relais", ...(result.failure ? { detail: result.failure } : {}) }),
-      {
-        status: 502,
-        headers: {
-          "content-type": "application/json; charset=utf-8",
-          ...corsHeaders(),
-          "cache-control": "no-store",
+      return new Response(
+        JSON.stringify({ error: "Flux indisponible via le relais", ...(result.failure ? { detail: result.failure } : {}) }),
+        {
+          status: 502,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            ...corsHeaders(),
+            "cache-control": "no-store",
+          },
         },
-      },
-    );
-  },
-};
+      );
+    } finally {
+      // Libère le verrou quoi qu'il arrive (succès, échec, exception) : les
+      // waiters repartent sur un nouveau cycle de claim via /check.
+      if (claimed && coord) ctx.waitUntil(coord.call("release", { key: stableKey }).catch(() => undefined));
+    }
+}
+
+// Un « waiter » sonde le coordinateur : tant que le fetcher est actif
+// (« pending »), on attend — sa réponse sera dans le cache à son release.
+// Terminal (« done »/« gone ») : une relecture du cache, puis retour null pour
+// repartir sur un nouveau cycle de claim si elle est vide.
+async function waitForPeer(coord, key, cache, cacheKey) {
+  const deadline = Date.now() + WAITER_MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, WAITER_POLL_MS));
+    const state = await coord.call("check", { key });
+    if (state === null || state.state === "pending") continue;
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
+    return null;
+  }
+  return null;
+}
 
 function isPrivateHostname(hostname) {
   const host = String(hostname).toLowerCase();

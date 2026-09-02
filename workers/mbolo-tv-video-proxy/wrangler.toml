@@ -2,6 +2,25 @@ name = "mbolo-tv-video-proxy"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
+# Mutualisation des requêtes fournisseur :
+#  - SEGMENT_COORDINATOR : une instance par chaîne (host + répertoire) —
+#    verrou single-flight sur les cache-miss (un seul fetch, les autres attendent).
+#  - METRICS : compteur global requêtes reçues / fetches réels / hits cache —
+#    consultable via GET /_stats (en-tête x-admin-token = PROXY_URL_SECRET).
+[[durable_objects.bindings]]
+name = "SEGMENT_COORDINATOR"
+class_name = "SegmentCoordinator"
+
+[[durable_objects.bindings]]
+name = "METRICS"
+class_name = "MetricsCounter"
+
+# Plan gratuit : les DO doivent être déclarés en classes SQLite (new_sqlite_classes),
+# même sans utiliser de stockage — notre état est purement en mémoire.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SegmentCoordinator", "MetricsCounter"]
+
 # Sortie résidentielle (tunnel cloudflared local) pour les fournisseurs qui
 # bloquent les IP datacenter. Clé = host:port du fournisseur, valeur = origine
 # du relais. Retirer une entrée si la machine locale est mise hors service.
