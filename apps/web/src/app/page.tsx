@@ -412,11 +412,6 @@ export default function EntryPage() {
                   Offres 7/14/30j
                 </button>
               </li>
-              <li>
-                <Link href="/docs" className="hover:text-foreground hover:underline">
-                  Documentation
-                </Link>
-              </li>
             </ul>
           </div>
           <div>

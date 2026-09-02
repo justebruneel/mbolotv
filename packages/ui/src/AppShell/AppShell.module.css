@@ -276,8 +276,13 @@
   }
 }
 
-/* Desktop : masque tout élément mobile résiduel */
+/* Desktop : masque tout élément mobile résiduel et active la nav inline.
+   .desktopNav est display:none en base : sans cette règle, les liens
+   (Live TV, Programmes, Favoris) resteraient invisibles sur desktop. */
 @media (min-width: 768px) {
+  .desktopNav {
+    display: flex;
+  }
   .mobileBar,
   .bottomTabs {
     display: none !important;

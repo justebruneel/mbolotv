@@ -190,7 +190,6 @@ export function FeaturedAuto() {
             </a>
           )}
         </div>
-        <p className="mt-4 text-[10px] text-muted md:text-white/40">Données séries : TVmaze — Images de secours : fanart.tv</p>
       </div>
       <style>{`@keyframes heroFill { from { width: 0% } to { width: 100% } } @keyframes featuredFade { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } } .featured-fade { animation: featuredFade 500ms ease-out } @media (prefers-reduced-motion: reduce) { .featured-fade { animation: none !important } }`}</style>
     </section>

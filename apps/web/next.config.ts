@@ -29,6 +29,13 @@ if (process.env.NODE_ENV === 'production') {
 
 const nextConfig: NextConfig = {
   transpilePackages: ['@mbolo/ui'],
+  async redirects() {
+    return [
+      // La page Documentation a été remplacée par « À propos » : les liens
+      // /docs partagés en production continuent de fonctionner (308 permanent).
+      { source: '/docs', destination: '/about', permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       // La console owner passe par le même site que le web : le cookie de session

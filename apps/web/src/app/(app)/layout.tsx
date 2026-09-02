@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { href: '/favorites', label: 'Favoris', icon: <Icon.Heart size={20} /> },
 ];
 // Menu ⋮ / « Plus » : uniquement des pages internes (liens SPA). La navigation
-// principale a déjà ses onglets ; l'aide se limite à Documentation + Contact.
+// principale a déjà ses onglets ; l'aide se limite à À propos + Contact.
 function buildMenuSections(unreadWhatsNew: number) {
   return [
     {
@@ -31,7 +31,7 @@ function buildMenuSections(unreadWhatsNew: number) {
       label: 'Application',
       items: [
         { href: '/preferences', label: 'Préférences', icon: <Icon.Settings2 size={17} /> },
-        { href: '/docs', label: 'Documentation', icon: <Icon.BookOpen size={17} /> },
+        { href: '/about', label: 'À propos', icon: <Icon.Info size={17} /> },
         { href: '/contact', label: 'Contact', icon: <Icon.Mail size={17} /> },
       ],
     },
