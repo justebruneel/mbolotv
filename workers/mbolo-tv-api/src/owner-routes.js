@@ -611,17 +611,34 @@ export async function runImportAndEpg(ctx, sourceId, runId) {
 export async function resumeQueuedImports(env) {
   const queued = await env.db.query(env, `SELECT id, "sourceId" FROM "ImportRun" WHERE state = 'QUEUED' ORDER BY "startedAt" ASC LIMIT 3`);
   for (const row of queued.rows) await runSourceImport(env, row.sourceId, row.id);
-  return queued.rows.length;
+  // Reprise des runs en cours dont l'isolate est mort (heartbeat muet juste
+  // après le franchissement d'une étape) : sans cela, un run figé en
+  // FETCHING/PARSING/NORMALIZING attendrait les 15 min du staleness pour
+  // être marqué FAILED — une relance manuelle de plus pour rien.
+  const stale = await env.db.query(
+    env,
+    `SELECT id, "sourceId", metrics FROM "ImportRun"
+     WHERE state IN ('FETCHING', 'PARSING', 'NORMALIZING')
+       AND "startedAt" < now() - ($1 || ' minutes')::interval`,
+    [String(ORPHAN_STALE_MINUTES)],
+  );
+  let resumed = 0;
+  for (const run of stale.rows) {
+    let metrics = run.metrics;
+    if (typeof metrics === 'string') { try { metrics = JSON.parse(metrics); } catch { metrics = null; } }
+    const heartbeat = metrics?.heartbeatAt ? Date.parse(metrics.heartbeatAt) : 0;
+    if (Number.isFinite(heartbeat) && Date.now() - heartbeat < ORPHAN_STALE_MINUTES * 60 * 1000) continue;
+    // Relance in-place du même ImportRun (les compteurs repartent de zéro,
+    // mais l'ingestion est idempotente : upserts sur clés stables).
+    await runSourceImport(env, run.sourceId, run.id);
+    resumed += 1;
+  }
+  return queued.rows.length + resumed;
 }
 
 // Seuil d'abandon : un run légitime peut rester sans heartbeat pendant un
 // téléchargement long (timeout fetch = 300 s), on garde une large marge.
 const ORPHAN_STALE_MINUTES = 15;
-
-// Les runs FETCHING/PARSING/NORMALIZING dont le heartbeat est muet depuis
-// longtemps sont des exécutions waitUntil tuées (limite post-réponse, reboot
-// d'isolate) : le Cron ne reprend que les QUEUED, ils resteraient sinon
-// bloqués pour toujours et la Source resterait IMPORTING.
 export async function failStaleImports(env) {
   const stale = await env.db.query(
     env,
