@@ -1,13 +1,17 @@
+import { resolveRelay } from './relay.js';
+
 // Proxy YouTube Data v3 (onglet Nollywood) : la clé API reste côté serveur
 // (env.YOUTUBE_API_KEY, wrangler secret — jamais exposée au front).
-// Pas de SSRF possible : la seule origine contactée est googleapis.com,
-// les paramètres sont validés (allowlist de chaînes, regex d'ID vidéo).
+// Pas de SSRF exploitable : la seule origine contactée est googleapis.com
+// (ou le relais configuré), les paramètres sont validés (allowlist de
+// chaînes, regex d'ID vidéo).
 //
-// Stratégie quota : playlistItems.list (1 unité) serait idéal mais répond
-// 404 vide depuis nos egress (constaté Worker + direct) ; on utilise donc
-// search.list scopé chaîne (type=video, order=date) = 100 unités/appel,
-// amorties par le cache edge partagé (1 h) : ~10-20 pages uniques/jour.
-// JAMAIS de search global non scopé. Fiche : videos.list (1 unité).
+// Stratégie quota : search.list scopé chaîne (type=video, order=date) =
+// 100 unités/appel, amorties par le cache edge partagé (1 h) : ~10-20 pages
+// uniques/jour. JAMAIS de search global non scopé. Fiche : videos.list.
+// (playlistItems/channels répondent 404 vide depuis nos egress.)
+// Réseau : repli via le relais résidentiel si le direct échoue (même motif
+// que xtream.js — les egress datacenter sont parfois refusés).
 // Cache edge : 1 h sur les listes, 24 h sur les fiches.
 // Allowlist : seules les chaînes configurées (YOUTUBE_CHANNEL_ALLOWLIST,
 // défaut Aforevo Galerie) sont interrogeables — pas de scraping arbitraire.
@@ -53,40 +57,51 @@ async function ytFetch(env, action, params) {
   for (const [name, value] of Object.entries({ ...params, key })) {
     if (value !== undefined && value !== null) url.searchParams.set(name, String(value));
   }
-  let response;
-  try {
-    const startedAt = Date.now();
-    response = await fetch(url.toString(), {
-      headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' },
-      signal: AbortSignal.timeout(YT_TIMEOUT_MS),
-    });
-    console.log(`[youtube] ${action} -> ${response.status} (${Math.round((Date.now() - startedAt) / 1000)}s, clé ${key.length} car.)`);
-  } catch {
-    throw Object.assign(new Error('YouTube injoignable'), { status: 502 });
-  }
-  if (!response.ok) {
-    let reason = '';
-    let detail = '';
+  // Direct d'abord, relais résidentiel en repli (l'edge Google refuse parfois
+  // les egress datacenter avec un 404 vide — même motif que xtream.js).
+  const relayed = resolveRelay(env, url.toString());
+  const targets = [{ url: url.toString(), headers: {}, viaRelay: false }];
+  if (relayed.url !== url.toString()) targets.push({ url: relayed.url, headers: relayed.headers, viaRelay: true });
+  let lastError = null;
+  for (const target of targets) {
+    let response;
     try {
-      const text = await response.text();
-      detail = text.slice(0, 200);
-      try {
-        const body = JSON.parse(text);
-        reason = body?.error?.errors?.[0]?.reason ?? '';
-        detail = body?.error?.message ?? detail;
-      } catch { /* pas du JSON : texte brut conservé */ }
-    } catch { /* corps illisible : statut brut conservé */ }
-    if (detail) console.log(`[youtube] ${action} erreur: ${detail.slice(0, 160)}`);
-    if (response.status === 403 && (reason === 'quotaExceeded' || reason === 'dailyLimitExceeded')) {
-      throw Object.assign(new Error('Quota YouTube épuisé, réessayez plus tard'), { status: 429 });
+      const startedAt = Date.now();
+      response = await fetch(target.url, {
+        headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json', ...target.headers },
+        signal: AbortSignal.timeout(YT_TIMEOUT_MS),
+      });
+      console.log(`[youtube] ${action} -> ${response.status} (${Math.round((Date.now() - startedAt) / 1000)}s, ${target.viaRelay ? 'relais' : 'direct'})`);
+    } catch {
+      lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
+      continue;
     }
-    throw Object.assign(new Error(`YouTube a répondu ${response.status}`), { status: 502 });
+    if (!response.ok) {
+      let reason = '';
+      let detail = '';
+      try {
+        const text = await response.text();
+        detail = text.slice(0, 200);
+        try {
+          const body = JSON.parse(text);
+          reason = body?.error?.errors?.[0]?.reason ?? '';
+          detail = body?.error?.message ?? detail;
+        } catch { /* pas du JSON : texte brut conservé */ }
+      } catch { /* corps illisible : statut brut conservé */ }
+      if (detail) console.log(`[youtube] ${action} erreur: ${detail.slice(0, 160)}`);
+      if (response.status === 403 && (reason === 'quotaExceeded' || reason === 'dailyLimitExceeded')) {
+        throw Object.assign(new Error('Quota YouTube épuisé, réessayez plus tard'), { status: 429 });
+      }
+      lastError = Object.assign(new Error(`YouTube a répondu ${response.status}`), { status: 502 });
+      continue;
+    }
+    try {
+      return await response.json();
+    } catch {
+      throw Object.assign(new Error('Réponse YouTube invalide'), { status: 502 });
+    }
   }
-  try {
-    return await response.json();
-  } catch {
-    throw Object.assign(new Error('Réponse YouTube invalide'), { status: 502 });
-  }
+  throw lastError ?? Object.assign(new Error('YouTube indisponible'), { status: 502 });
 }
 
 function normalizeSearchItem(item) {
