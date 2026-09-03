@@ -88,7 +88,7 @@ function VodBrowse({ kind, category, q }: { kind: VodKind; category: string | nu
 }
 
 function YoutubeBrowse({ q }: { q: string }) {
-  const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25);
+  const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25, q);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -107,8 +107,8 @@ function YoutubeBrowse({ q }: { q: string }) {
 
   if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
   if (query.isError) return <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
-  // Recherche locale sur les pages chargées (pas de search YouTube : 100 unités
-  // de quota par appel — la recherche serveur reste sur le catalogue Xtream).
+  // Recherche serveur (q transmis à l'API) ; filtre local en surplus pour
+  // les pages déjà chargées quand on tape pendant le défilement.
   const needle = q.trim().toLowerCase();
   const items = (query.data?.pages.flatMap((page) => page.items) ?? [])
     .filter((item) => needle === '' || item.title.toLowerCase().includes(needle));

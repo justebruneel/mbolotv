@@ -302,12 +302,13 @@ export function useVodItem(id: string, enabled = true) {
 // = pageToken renvoyé), miroir du défilement infini VOD.
 export const YOUTUBE_AFOREVO_CHANNEL_ID = 'UCyd79F-lNLCbGPQrf_L7KiA';
 
-export function useInfiniteYoutube(channelId: string, pageSize = 25) {
+export function useInfiniteYoutube(channelId: string, pageSize = 25, q = '') {
   return useInfiniteQuery({
-    queryKey: ['vod-youtube', channelId, pageSize],
+    queryKey: ['vod-youtube', channelId, pageSize, q],
     queryFn: ({ pageParam }) =>
       apiGet<YoutubeListResponse>('/vod/youtube', {
         channel: channelId,
+        ...(q.trim() ? { q: q.trim() } : {}),
         ...(pageParam ? { pageToken: pageParam } : {}),
         limit: pageSize,
       }),

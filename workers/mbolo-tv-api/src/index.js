@@ -502,6 +502,7 @@ async function route(ctx, url) {
       url.searchParams.get("channel") ?? "",
       url.searchParams.get("pageToken") ?? null,
       intParam(url.searchParams.get("limit"), 25, 1, 50),
+      url.searchParams.get("q") ?? null,
     );
 
   if (path === "/api/vod/youtube/video" && method === "GET")
