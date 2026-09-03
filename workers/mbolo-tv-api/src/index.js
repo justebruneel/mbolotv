@@ -9,6 +9,7 @@ import * as access from "./access.js";
 import * as favorites from "./favorites.js";
 import * as logo from "./logo.js";
 import * as vod from "./vod.js";
+import * as youtube from "./youtube.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
@@ -492,6 +493,19 @@ async function route(ctx, url) {
         offset: intParam(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER),
       }),
     );
+
+  // YouTube (onglet Nollywood) : placées avant vodMatch qui capterait
+  // sinon /api/vod/youtube comme un id d'item.
+  if (path === "/api/vod/youtube" && method === "GET")
+    return youtube.serveYoutubeList(
+      env,
+      url.searchParams.get("channel") ?? "",
+      url.searchParams.get("pageToken") ?? null,
+      intParam(url.searchParams.get("limit"), 25, 1, 50),
+    );
+
+  if (path === "/api/vod/youtube/video" && method === "GET")
+    return youtube.serveYoutubeVideo(env, url.searchParams.get("id") ?? "");
 
   const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
 

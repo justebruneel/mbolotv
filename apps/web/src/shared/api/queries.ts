@@ -18,6 +18,8 @@ import type {
   VodKind,
   VodListResponse,
   VodSeasonsResponse,
+  YoutubeListResponse,
+  YoutubeVideo,
 } from '@mbolo/contracts';
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
@@ -293,6 +295,34 @@ export function useVodItem(id: string, enabled = true) {
     queryFn: () => apiGet<VodItem>(`/vod/${id}`),
     enabled: enabled && Boolean(id),
     staleTime: 5 * 60_000,
+  });
+}
+
+// ---- YouTube (onglet Nollywood) : pagination par pageToken (prochain appel
+// = pageToken renvoyé), miroir du défilement infini VOD.
+export const YOUTUBE_AFOREVO_CHANNEL_ID = 'UCyd79F-lNLCbGPQrf_L7KiA';
+
+export function useInfiniteYoutube(channelId: string, pageSize = 25) {
+  return useInfiniteQuery({
+    queryKey: ['vod-youtube', channelId, pageSize],
+    queryFn: ({ pageParam }) =>
+      apiGet<YoutubeListResponse>('/vod/youtube', {
+        channel: channelId,
+        ...(pageParam ? { pageToken: pageParam } : {}),
+        limit: pageSize,
+      }),
+    initialPageParam: '' as string,
+    getNextPageParam: (lastPage) => lastPage.nextPageToken ?? undefined,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useYoutubeVideo(videoId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['vod-youtube-video', videoId],
+    queryFn: () => apiGet<YoutubeVideo>('/vod/youtube/video', { id: videoId }),
+    enabled: enabled && Boolean(videoId),
+    staleTime: 60 * 60_000,
   });
 }
 

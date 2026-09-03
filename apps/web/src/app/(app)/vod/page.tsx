@@ -1,16 +1,18 @@
 'use client';
 
 import { EmptyState, Icon, Spinner } from '@mbolo/ui';
+import type { VodKind } from '@mbolo/contracts';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteVod, useVodCategories } from '../../../shared/api/queries';
+import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteVod, useInfiniteYoutube, useVodCategories } from '../../../shared/api/queries';
 import { VodTile } from '../../../features/vod/components/VodTile';
+import { YoutubeTile } from '../../../features/vod/components/YoutubeTile';
 import { useSettingsStore } from '../../../shared/stores/settings';
 const PAGE_SIZE = 48;
-type Tab = 'MOVIE' | 'SERIES';
+type Tab = 'MOVIE' | 'SERIES' | 'NOLLYWOOD';
 
 function isVodKind(value: string | null): value is Tab {
-  return value === 'MOVIE' || value === 'SERIES';
+  return value === 'MOVIE' || value === 'SERIES' || value === 'NOLLYWOOD';
 }
 
 function formatTime(seconds: number): string {
@@ -33,7 +35,7 @@ function ResumeRow() {
       <h2 className="mb-3 text-lg font-bold">Reprendre</h2>
       <div className="flex gap-3 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {entries.map((entry) => (
-          <a key={entry.id} href={`/vod/${entry.id}`} className="group relative w-[136px] shrink-0">
+          <a key={entry.id} href={entry.id.startsWith('yt:') ? `/vod/yt/${entry.id.slice(3)}` : `/vod/${entry.id}`} className="group relative w-[136px] shrink-0">
             <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg bg-surface">
               {entry.posterUrl ? (
                 <img src={entry.posterUrl} alt="" loading="lazy" className="h-full w-full object-cover transition group-hover:scale-105" />
@@ -51,7 +53,7 @@ function ResumeRow() {
   );
 }
 
-function VodBrowse({ kind, category, q }: { kind: Tab; category: string | null; q: string }) {
+function VodBrowse({ kind, category, q }: { kind: VodKind; category: string | null; q: string }) {
   const query = useInfiniteVod({ kind, category: category ?? undefined, q: q || undefined }, PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -85,6 +87,44 @@ function VodBrowse({ kind, category, q }: { kind: Tab; category: string | null; 
   );
 }
 
+function YoutubeBrowse({ q }: { q: string }) {
+  const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && query.hasNextPage && !query.isFetchingNextPage && !loadingMore) {
+        setLoadingMore(true);
+        void query.fetchNextPage().finally(() => setLoadingMore(false));
+      }
+    }, { rootMargin: '600px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage, loadingMore]);
+
+  if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (query.isError) return <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
+  // Recherche locale sur les pages chargées (pas de search YouTube : 100 unités
+  // de quota par appel — la recherche serveur reste sur le catalogue Xtream).
+  const needle = q.trim().toLowerCase();
+  const items = (query.data?.pages.flatMap((page) => page.items) ?? [])
+    .filter((item) => needle === '' || item.title.toLowerCase().includes(needle));
+  if (items.length === 0) return <EmptyState title="Aucun résultat" hint={q ? `Aucun titre ne correspond à « ${q} ».` : 'Ce catalogue est vide pour le moment.'} />;
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        {items.map((item) => <YoutubeTile key={item.id} item={item} />)}
+      </div>
+      <div ref={sentinelRef} className="h-10" />
+      {query.isFetchingNextPage && <div className="flex justify-center py-4"><Spinner /></div>}
+    </>
+  );
+}
+
 function VodPageContent() {
   const searchParams = useSearchParams();
   const q = searchParams.get('q') ?? '';
@@ -92,7 +132,7 @@ function VodPageContent() {
   // directs et le retour navigateur — pas d'état persisté superflu.
   const [tab, setTab] = useState<Tab>(() => {
     const value = searchParams.get('kind');
-    return value === 'MOVIE' || value === 'SERIES' ? value : 'MOVIE';
+    return isVodKind(value) ? value : 'MOVIE';
   });
   const [category, setCategory] = useState<string | null>(null);
 
@@ -100,7 +140,7 @@ function VodPageContent() {
   useEffect(() => { if (isVodKind(kindParam)) setTab(kindParam); }, [kindParam]);
   useEffect(() => { setCategory(null); }, [tab]);
 
-  const categories = useVodCategories(tab);
+  const categories = useVodCategories(tab === 'NOLLYWOOD' ? undefined : tab);
 
   const switchTab = (next: Tab): void => {
     setTab(next);
@@ -113,16 +153,16 @@ function VodPageContent() {
     <div className="mx-auto w-full max-w-6xl px-4 py-6">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-2" role="tablist" aria-label="Type de contenu">
-          {(['MOVIE', 'SERIES'] as const).map((value) => (
+          {(['MOVIE', 'SERIES', 'NOLLYWOOD'] as const).map((value) => (
             <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => switchTab(value)}
               className={`rounded-full px-4 py-2 text-sm font-semibold transition ${tab === value ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text'}`}>
-              {value === 'MOVIE' ? 'Films' : 'Séries'}
+              {value === 'MOVIE' ? 'Films' : value === 'SERIES' ? 'Séries' : 'Nollywood'}
             </button>
           ))}
         </div>
       </div>
       {!q && <ResumeRow />}
-      {categories.data && categories.data.length > 1 && (
+      {tab !== 'NOLLYWOOD' && categories.data && categories.data.length > 1 && (
         <div className="mb-5 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <button type="button" onClick={() => setCategory(null)}
             className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${category === null ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:text-text'}`}>
@@ -137,7 +177,7 @@ function VodPageContent() {
         </div>
       )}
       <Suspense fallback={<div className="flex justify-center py-16"><Spinner /></div>}>
-        <VodBrowse kind={tab} category={category} q={q} />
+        {tab === 'NOLLYWOOD' ? <YoutubeBrowse q={q} /> : <VodBrowse kind={tab} category={category} q={q} />}
       </Suspense>
     </div>
   );

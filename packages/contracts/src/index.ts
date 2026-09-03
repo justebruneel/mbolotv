@@ -109,6 +109,11 @@ export const vodSeasonSchema = z.object({ number: z.number(), episodes: z.array(
 export type VodSeason = z.infer<typeof vodSeasonSchema>;
 export const vodSeasonsResponseSchema = z.object({ seasons: z.array(vodSeasonSchema) });
 export type VodSeasonsResponse = z.infer<typeof vodSeasonsResponseSchema>;
+// ---- YouTube (onglet Nollywood : parcourir + lire via embed) ----
+export const youtubeVideoSchema = z.object({ id: z.string(), title: z.string(), description: z.string().nullable(), posterUrl: z.string().nullable(), publishedAt: z.string().nullable(), duration: z.number().nullable() });
+export type YoutubeVideo = z.infer<typeof youtubeVideoSchema>;
+export const youtubeListResponseSchema = z.object({ items: z.array(youtubeVideoSchema), nextPageToken: z.string().nullable() });
+export type YoutubeListResponse = z.infer<typeof youtubeListResponseSchema>;
 
 export const ownerLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;
