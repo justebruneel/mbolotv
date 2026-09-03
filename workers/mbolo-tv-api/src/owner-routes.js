@@ -387,11 +387,14 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     const status = ['READY', 'DEGRADED', 'FAILED', 'DISABLED'].includes(body.status) ? body.status : source.status;
     const vodEnabled = typeof body.vodEnabled === 'boolean' ? body.vodEnabled : Boolean(source.vodEnabled);
     await env.db.query(env, `UPDATE "Source" SET name = $2, priority = $3, status = $4, "vodEnabled" = $5 WHERE id = $1`, [source.id, name, priority, status, vodEnabled]);
-    // Activer le VOD déclenche un import immédiat pour remplir VodItem.
+    // Activer le VOD déclenche un import immédiat pour remplir VodItem —
+    // avec le périmètre choisi ('vod' = sans les chaînes, sinon 'all').
     if (vodEnabled && !source.vodEnabled) {
-      const runId = await startImportRun(ctx, source.id);
-      await audit(ctx, owner.userId, 'source.vod_enabled', 'source', source.id, { importRunId: runId });
-      ctx.waitUntil(runImportAndEpg(ctx, source.id, runId));
+      const requestedVodScope = body?.scope;
+      const vodScope = requestedVodScope === 'vod' && (source.kind === 'M3U' || source.kind === 'XTREAM') ? 'vod' : requestedVodScope === 'live' ? 'live' : 'all';
+      const runId = await startImportRun(ctx, source.id, vodScope);
+      await audit(ctx, owner.userId, 'source.vod_enabled', 'source', source.id, { importRunId: runId, scope: vodScope });
+      ctx.waitUntil(runImportAndEpg(ctx, source.id, runId, vodScope));
     }
     const updated = await env.db.query(env, `SELECT * FROM "Source" WHERE id = $1`, [source.id]);
     return ctx.json(serializeSource(updated.rows[0]));
