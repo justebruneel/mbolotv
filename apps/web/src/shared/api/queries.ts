@@ -16,7 +16,9 @@ import type {
   VodCategory,
   VodItem,
   VodKind,
+  VodHeroResponse,
   VodListResponse,
+  VodRowsResponse,
   VodSeasonsResponse,
 } from '@mbolo/contracts';
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -283,6 +285,23 @@ export function useVodCategories(kind?: VodKind) {
   return useQuery({
     queryKey: ['vod-categories', kind ?? 'all'],
     queryFn: () => apiGet<VodCategory[]>('/vod/categories', { kind }),
+    staleTime: 5 * 60_000,
+  });
+}
+
+// Accueil Netflix : rangées par catégorie en un aller-retour.
+export function useVodRows(kind?: VodKind) {
+  return useQuery({
+    queryKey: ['vod-rows', kind ?? 'all'],
+    queryFn: () => apiGet<VodRowsResponse>('/vod/rows', { kind }),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useVodHero(kind?: VodKind) {
+  return useQuery({
+    queryKey: ['vod-hero', kind ?? 'all'],
+    queryFn: () => apiGet<VodHeroResponse>('/vod/hero', { kind }),
     staleTime: 5 * 60_000,
   });
 }

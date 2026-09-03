@@ -4,8 +4,10 @@ import { EmptyState, Icon, Spinner } from '@mbolo/ui';
 import type { VodKind } from '@mbolo/contracts';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteVod, useInfiniteYoutube, useVodCategories } from '../../../shared/api/queries';
+import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteVod, useInfiniteYoutube, useVodCategories, useVodHero, useVodRows } from '../../../shared/api/queries';
 import { VodTile } from '../../../features/vod/components/VodTile';
+import { VodHero } from '../../../features/vod/components/VodHero';
+import { VodRow } from '../../../features/vod/components/VodRow';
 import { YoutubeTile } from '../../../features/vod/components/YoutubeTile';
 import { useSettingsStore } from '../../../shared/stores/settings';
 const PAGE_SIZE = 48;
@@ -50,6 +52,35 @@ function ResumeRow() {
         ))}
       </div>
     </section>
+  );
+}
+
+// Accueil façon Netflix : héros plein écran (derniers ajouts) puis rangées
+// horizontales par catégorie. La grille paginée reste disponible en mode
+// filtré (recherche, catégorie, « Parcourir tout »).
+function VodHome({ kind, onBrowseAll }: { kind: 'MOVIE' | 'SERIES'; onBrowseAll: () => void }) {
+  const heroQuery = useVodHero(kind);
+  const rowsQuery = useVodRows(kind);
+
+  if (heroQuery.isLoading || rowsQuery.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (rowsQuery.isError || heroQuery.isError) return <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
+
+  const hero = heroQuery.data?.items ?? [];
+  const rows = rowsQuery.data?.rows ?? [];
+  if (rows.length === 0 && hero.length === 0) return <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
+
+  return (
+    <>
+      {hero.length > 0 && <VodHero items={hero} />}
+      {rows.map((row) => (
+        <VodRow key={row.name} title={row.name} count={row.count} items={row.items} seeAllKind={kind} seeAllCategory={row.name === 'Nouveautés' ? '' : row.name} />
+      ))}
+      <div className="mt-2 flex justify-center">
+        <button type="button" onClick={onBrowseAll} className="btn">
+          Parcourir tout le catalogue <Icon.ChevronRight size={14} />
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -135,10 +166,11 @@ function VodPageContent() {
     return isVodKind(value) ? value : 'MOVIE';
   });
   const [category, setCategory] = useState<string | null>(null);
+  const [browseAll, setBrowseAll] = useState(false);
 
   const kindParam = searchParams.get('kind');
   useEffect(() => { if (isVodKind(kindParam)) setTab(kindParam); }, [kindParam]);
-  useEffect(() => { setCategory(null); }, [tab]);
+  useEffect(() => { setCategory(null); setBrowseAll(false); }, [tab]);
 
   const categories = useVodCategories(tab === 'NOLLYWOOD' ? undefined : tab);
 
@@ -160,6 +192,11 @@ function VodPageContent() {
             </button>
           ))}
         </div>
+        {tab !== 'NOLLYWOOD' && (category || browseAll) && (
+          <button type="button" onClick={() => { setCategory(null); setBrowseAll(false); }} className="btn">
+            <Icon.ChevronLeft size={14} /> Accueil {tab === 'MOVIE' ? 'films' : 'séries'}
+          </button>
+        )}
       </div>
       {!q && <ResumeRow />}
       {tab !== 'NOLLYWOOD' && categories.data && categories.data.length > 1 && (
@@ -169,7 +206,7 @@ function VodPageContent() {
             Tout
           </button>
           {categories.data.map((entry) => (
-            <button key={entry.name} type="button" onClick={() => setCategory(category === entry.name ? null : entry.name)}
+            <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); }}
               className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${category === entry.name ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:text-text'}`}>
               {entry.name} <span className="opacity-60">{entry.count}</span>
             </button>
@@ -177,7 +214,11 @@ function VodPageContent() {
         </div>
       )}
       <Suspense fallback={<div className="flex justify-center py-16"><Spinner /></div>}>
-        {tab === 'NOLLYWOOD' ? <YoutubeBrowse q={q} /> : <VodBrowse kind={tab} category={category} q={q} />}
+        {tab === 'NOLLYWOOD'
+          ? <YoutubeBrowse q={q} />
+          : !q && !category && !browseAll
+            ? <VodHome kind={tab} onBrowseAll={() => setBrowseAll(true)} />
+            : <VodBrowse kind={tab} category={category} q={q} />}
       </Suspense>
     </div>
   );

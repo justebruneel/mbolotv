@@ -475,6 +475,21 @@ async function route(ctx, url) {
   if (path === "/api/vod/categories" && method === "GET")
     return ctx.json(await vod.vodCategories(env, url.searchParams.get("kind") ?? undefined));
 
+  // Accueil façon Netflix : rangées horizontales par catégorie + héros.
+  // Placées avant vodMatch qui capterait /api/vod/rows comme un id.
+  if (path === "/api/vod/rows" && method === "GET")
+    return ctx.json({
+      rows: await vod.vodRows(env, {
+        kind: url.searchParams.get("kind") ?? undefined,
+        q: url.searchParams.get("q") ?? undefined,
+        rowsCount: intParam(url.searchParams.get("rows"), 8, 1, 20),
+        perRow: intParam(url.searchParams.get("perRow"), 20, 1, 50),
+      }),
+    });
+
+  if (path === "/api/vod/hero" && method === "GET")
+    return ctx.json({ items: await vod.vodHero(env, { kind: url.searchParams.get("kind") ?? undefined }) });
+
   if (path === "/api/vod/favorites" && method === "GET") {
     const deviceId = ctx.request.headers.get("x-device-id");
     if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");

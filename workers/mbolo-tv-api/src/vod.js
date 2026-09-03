@@ -61,6 +61,75 @@ export async function listVodItems(env, { kind, category, q, limit = 48, offset 
   };
 }
 
+// Rangées « façon Netflix » : les N premières catégories d'un kind, chacune
+// avec ses 20 titres les plus récents. Une seule requête SQL par rangée, en
+// parallèle — la page d'accueil VOD charge tout en un aller-retour client.
+export async function vodRows(env, { kind, rowsCount = 8, perRow = 20, q = null } = {}) {
+  const rowsParam = Math.min(Math.max(1, Number(rowsCount) || 8), 20);
+  const perParam = Math.min(Math.max(1, Number(perRow) || 20), 50);
+  const params = [];
+  const conditions = [VISIBLE_VOD_ITEMS];
+  if (kind === 'MOVIE' || kind === 'SERIES') {
+    params.push(kind);
+    conditions.push(`kind = $${params.length}`);
+  }
+  if (q) {
+    params.push(`%${q}%`);
+    conditions.push(`title ILIKE $${params.length}`);
+  }
+  const where = `WHERE ${conditions.join(' AND ')}`;
+  // Top catégories par volume (catalogues Vivid/XTREAM : une catégorie = un
+  // univers cohérent « SRS | FR - DRAME »), puis N titres récents chacune.
+  const top = await env.db.query(
+    env,
+    `SELECT "categoryTitle" AS name, COUNT(*)::int AS count FROM "VodItem" ${where} AND "categoryTitle" IS NOT NULL
+     GROUP BY "categoryTitle" ORDER BY count DESC, name ASC LIMIT ${rowsParam}`,
+    params,
+  );
+  const categories = top.rows.filter((row) => row.name);
+  const queries = categories.map((category) => {
+    const rowParams = [...params, category.name];
+    return env.db.query(
+      env,
+      `SELECT id, kind, title, "posterUrl", rating, "categoryTitle", "addedAt" FROM "VodItem"
+       WHERE ${conditions.join(' AND ')} AND "categoryTitle" = $${rowParams.length}
+       ORDER BY "addedAt" DESC NULLS LAST, title ASC LIMIT ${perParam}`,
+      rowParams,
+    );
+  });
+  // En avant-première : les tout derniers ajouts toutes catégories.
+  const recent = env.db.query(
+    env,
+    `SELECT id, kind, title, "posterUrl", rating, "categoryTitle", "addedAt" FROM "VodItem" ${where}
+     ORDER BY "addedAt" DESC NULLS LAST, title ASC LIMIT ${perParam}`,
+    params,
+  );
+  const settled = await Promise.all([recent, ...queries]);
+  const rows = [{ name: 'Nouveautés', count: null, items: settled[0].rows.map(serializeVodItem) }];
+  categories.forEach((category, index) => {
+    rows.push({ name: category.name, count: category.count, items: settled[index + 1].rows.map(serializeVodItem) });
+  });
+  return rows.filter((row) => row.items.length > 0);
+}
+
+// Héros plein écran : les derniers ajouts avec affiche (backdrop = poster
+// agrandi, le fournisseur ne fournit que l'affiche 2:3).
+export async function vodHero(env, { kind, limit = 5 } = {}) {
+  const params = [];
+  const conditions = [VISIBLE_VOD_ITEMS, '"posterUrl" IS NOT NULL'];
+  if (kind === 'MOVIE' || kind === 'SERIES') {
+    params.push(kind);
+    conditions.push(`kind = $${params.length}`);
+  }
+  const rows = await env.db.query(
+    env,
+    `SELECT id, kind, title, "posterUrl", rating, "categoryTitle", "addedAt" FROM "VodItem"
+     WHERE ${conditions.join(' AND ')} ORDER BY "addedAt" DESC NULLS LAST LIMIT ${Math.min(Math.max(1, Number(limit) || 5), 10)}`,
+    params,
+  );
+  return rows.rows.map(serializeVodItem);
+}
+
 export async function vodCategories(env, kind) {
   const params = [];
   let kindFilter = '';

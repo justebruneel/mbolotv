@@ -114,6 +114,13 @@ export const vodListResponseSchema = z.object({ items: z.array(vodItemSchema), t
 export type VodListResponse = z.infer<typeof vodListResponseSchema>;
 export const vodCategorySchema = z.object({ name: z.string(), count: z.number() });
 export type VodCategory = z.infer<typeof vodCategorySchema>;
+// Accueil façon Netflix : rangées horizontales par catégorie + héros.
+export const vodRowSchema = z.object({ name: z.string(), count: z.number().nullable(), items: z.array(vodItemSchema) });
+export type VodRow = z.infer<typeof vodRowSchema>;
+export const vodRowsResponseSchema = z.object({ rows: z.array(vodRowSchema) });
+export type VodRowsResponse = z.infer<typeof vodRowsResponseSchema>;
+export const vodHeroResponseSchema = z.object({ items: z.array(vodItemSchema) });
+export type VodHeroResponse = z.infer<typeof vodHeroResponseSchema>;
 export const vodEpisodeSchema = z.object({ id: z.string(), num: z.number(), title: z.string().nullable(), containerExt: z.string().optional() });
 export type VodEpisode = z.infer<typeof vodEpisodeSchema>;
 export const vodSeasonSchema = z.object({ number: z.number(), episodes: z.array(vodEpisodeSchema) });
