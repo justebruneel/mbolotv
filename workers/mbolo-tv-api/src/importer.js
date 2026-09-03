@@ -35,13 +35,23 @@ class ImportError extends Error {
 }
 
 async function fetchWithLimits(url, { maxBytes = 512 * 1024 * 1024, timeoutMs = 300_000 } = {}) {
-  const response = await fetch(url, {
-    headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok && response.status >= 400) throw new Error(`Échec de téléchargement (HTTP ${response.status})`);
-  return response;
+  let host = 'hôte inconnu';
+  try { host = new URL(url).host; } catch { /* URL déjà validée par l'appelant */ }
+  console.log(`[import] M3U: téléchargement ${host} (timeout ${Math.round(timeoutMs / 1000)}s)`);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(url, {
+      headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    console.log(`[import] M3U: réponse ${response.status} en ${Math.round((Date.now() - startedAt) / 1000)}s`);
+    if (!response.ok && response.status >= 400) throw new Error(`Échec de téléchargement (HTTP ${response.status})`);
+    return response;
+  } catch (error) {
+    console.log(`[import] M3U: échec après ${Math.round((Date.now() - startedAt) / 1000)}s :: ${String(error?.message ?? error).slice(0, 120)}`);
+    throw error;
+  }
 }
 
 // Pipeline d'import fidèle à ImportProcessor. Les logos ne sont PAS
@@ -101,11 +111,13 @@ export async function runSourceImport(env, sourceId, importRunId) {
       const m3uMovies = [];
       // Films M3U : URLs avec extension VOD (mp4/mkv/…) → VodItem au lieu du
       // catalogue live ; group-title devient la catégorie VOD.
+      console.log(`[import] M3U: parsing du flux…`);
       await parseM3uStream(response.body, (entry) => entries.push(entry), maxBytes, (movie) => {
         let containerExt = 'mp4';
         try { containerExt = new URL(movie.url).pathname.toLowerCase().split('.').pop() || 'mp4'; } catch { /* locator déjà validé par isVodUrl */ }
         m3uMovies.push({ kind: 'MOVIE', externalId: movie.url, title: movie.title, posterUrl: movie.posterUrl, rating: null, categoryTitle: movie.categoryTitle, containerExt, addedAt: null, locator: movie.url });
       });
+      console.log(`[import] M3U: ${entries.length} chaînes + ${m3uMovies.length} films parsés`);
       metrics.read = entries.length + m3uMovies.length;
       await persistMetrics();
       await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);

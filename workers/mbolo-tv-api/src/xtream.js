@@ -28,6 +28,7 @@ async function fetchJson(url, env, touch) {
     const viaRelay = attempt >= 2 && env;
     const target = viaRelay ? resolveRelay(env, url) : { url, headers: {} };
     try {
+      const startedAt = Date.now();
       const response = await fetch(target.url, { signal: AbortSignal.timeout(CONNECTOR_TIMEOUT_MS), headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json, text/plain, */*', ...target.headers } });
       const text = await response.text();
       if (text.length > MAX_API_BYTES) throw new Error('Réponse Xtream trop volumineuse');
@@ -35,8 +36,10 @@ async function fetchJson(url, env, touch) {
       let payload;
       try { payload = JSON.parse(text); } catch { throw new Error(`Réponse non-JSON du panel${text.trim() ? ` : « ${summarizeBody(text)} »` : ' (corps vide)'}`); }
       if (isAuthRejected(payload)) throw new Error('Identifiants Xtream invalides (authentification refusée)');
+      console.log(`[xtream] ${/action=([a-z_]+)/.exec(url)?.[1] ?? 'api'} OK (${Math.round((Date.now() - startedAt) / 1000)}s, ${Math.round(text.length / 1024)} Ko, ${viaRelay ? 'relais' : 'direct'})`);
       return payload;
     } catch (error) {
+      console.log(`[xtream] ${/action=([a-z_]+)/.exec(url)?.[1] ?? 'api'} tentative ${attempt + 1}/${FETCH_RETRIES + 1} (${viaRelay ? 'relais' : 'direct'}) échec: ${String(error?.message ?? error).slice(0, 120)}`);
       lastError = error;
       // HTTP 403 : le plus souvent un blocage d'IP datacenter (pare-feu
       // fournisseur / Cloudflare « error code: 1003 »), pas un refus
