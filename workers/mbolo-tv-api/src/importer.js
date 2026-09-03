@@ -147,7 +147,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
       }
       await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
       const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
-      await ingestVodEntries(q, key, source, vodEntries, metrics, persistMetrics, baseHash);
+      await ingestVodEntries(q, key, source, vodEntries, metrics, persistMetrics, baseHash, seenVodKeys);
     }
 
     // Prune : variantes actives de la source absentes du dernier flux.
@@ -379,13 +379,13 @@ async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, 
 // 100 000 items — tout bufferiser en tableaux d'ingestion ferait exploser
 // l'isolate. Chaque phase (films, puis séries) est entièrement consommée
 // avant la suivante ; les tableaux intermédiaires sont libérés entre deux.
-async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metrics, persistMetrics, baseHash) {
-  await ingestVodPhase(q, cryptoKey, source, movies, 'MOVIE', metrics, persistMetrics, baseHash);
-  await ingestVodPhase(q, cryptoKey, source, series, 'SERIES', metrics, persistMetrics, baseHash);
+async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metrics, persistMetrics, baseHash, seenVodKeys) {
+  await ingestVodPhase(q, cryptoKey, source, movies, 'MOVIE', metrics, persistMetrics, baseHash, seenVodKeys);
+  await ingestVodPhase(q, cryptoKey, source, series, 'SERIES', metrics, persistMetrics, baseHash, seenVodKeys);
   await persistMetrics();
 }
 
-async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, persistMetrics, baseHash) {
+async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, persistMetrics, baseHash, seenVodKeys) {
   if (!entries || entries.length === 0) return;
   const metas = [];
 
