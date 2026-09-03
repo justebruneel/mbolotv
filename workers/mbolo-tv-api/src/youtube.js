@@ -88,6 +88,7 @@ async function ytFetch(env, action, params) {
           detail = body?.error?.message ?? detail;
         } catch { /* pas du JSON : texte brut conservé */ }
       } catch { /* corps illisible : statut brut conservé */ }
+      console.log(`[youtube] ${action} debug: server=${response.headers.get('server') ?? '?'} ct=${response.headers.get('content-type') ?? '?'} cf-ray=${response.headers.get('cf-ray') ?? '-'}`);
       if (detail) console.log(`[youtube] ${action} erreur: ${detail.slice(0, 160)}`);
       if (response.status === 403 && (reason === 'quotaExceeded' || reason === 'dailyLimitExceeded')) {
         throw Object.assign(new Error('Quota YouTube épuisé, réessayez plus tard'), { status: 429 });
