@@ -1,227 +1,115 @@
-import { sha256Hex } from "./crypto.js";
-import { loadHiddenIds, categoryFilterSql } from "./categories.js";
-import { resolveRelay } from "./relay.js";
+import { sha256Hex } from './crypto.js';
+import { loadHiddenIds, categoryFilterSql } from './categories.js';
+import { resolveRelay } from './relay.js';
 
-// Sélection identique à StreamingService.createPlay / MatchesService.play :
-// variantes actives de sources non DISABLED, tri healthScore desc puis priority asc,
-// première variante non DOWN préférée.
 export async function selectVariant(env, channelId, filterChannelId) {
   const params = [channelId];
-  let channelFilter = 'v."channelId" = $1';
-  if (filterChannelId) {
-    params.push(filterChannelId);
-    channelFilter += ` AND c.id = $${params.length}`;
-  }
-  const result = await env.db.query(
-    env,
-    `SELECT v.id, v."encryptedLocator", v."healthScore", v."healthStatus", s.status AS source_status, s.priority AS source_priority, s.priority
-     FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" JOIN "Channel" c ON c.id = v."channelId"
-     WHERE ${channelFilter} AND v."isActive" AND s.status <> 'DISABLED'
-     ORDER BY v."healthScore" DESC, s.priority ASC`,
-    params,
-  );
-  if (result.rows.length === 0) return null;
-  return (
-    result.rows.find((row) => row.healthStatus !== "DOWN") ?? result.rows[0]
-  );
+  let filter = 'v."channelId" = $1';
+  if (filterChannelId) { params.push(filterChannelId); filter += ` AND c.id = $${params.length}`; }
+  const result = await env.db.query(env, `SELECT v.id, v."encryptedLocator", v."healthScore", v."healthStatus", s.status AS source_status, s.priority AS source_priority, s.priority FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" JOIN "Channel" c ON c.id = v."channelId" WHERE ${filter} AND v."isActive" AND s.status <> 'DISABLED' ORDER BY v."healthScore" DESC, s.priority ASC`, params);
+  return result.rows.find((row) => row.healthStatus !== 'DOWN') ?? result.rows[0] ?? null;
 }
-
 export async function assertGrantActive(env, deviceId) {
   if (!deviceId) return false;
-  const deviceHash = await sha256Hex(deviceId);
-  const result = await env.db.query(
-    env,
-    `SELECT g.id FROM "DeviceGrant" g JOIN "AccessCode" a ON a.id = g."accessCodeId"
-     WHERE g."deviceHash" = $1 AND g."expiresAt" > now() AND a.active AND a."revokedAt" IS NULL LIMIT 1`,
-    [deviceHash],
-  );
+  const result = await env.db.query(env, `SELECT g.id FROM "DeviceGrant" g JOIN "AccessCode" a ON a.id = g."accessCodeId" WHERE g."deviceHash" = $1 AND g."expiresAt" > now() AND a.active AND a."revokedAt" IS NULL LIMIT 1`, [await sha256Hex(deviceId)]);
   return result.rows.length > 0;
 }
-
-// Signature des URL de proxy : HMAC-SHA256 sur « url|expiry », même schéma que
-// le proxy vidéo (PROXY_URL_SECRET partagé). L'expiry est calée sur un créneau
-// horaire commun pour garder des URL stables entre utilisateurs (cache segments
-// du proxy mutualisé) ; les playlists réécrites par le proxy re-signent leurs
-// enfants avec le même secret.
 const SIGN_TTL_MS = 24 * 3_600_000;
 const SIGN_BUCKET_MS = 3_600_000;
-
-function nextExpiry(now = Date.now()) {
-  return Math.floor(now / SIGN_BUCKET_MS) * SIGN_BUCKET_MS + SIGN_TTL_MS;
-}
-
-async function hmacHex(secret, payload) {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
-  return [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
+const nextExpiry = (now = Date.now()) => Math.floor(now / SIGN_BUCKET_MS) * SIGN_BUCKET_MS + SIGN_TTL_MS;
+async function hmacHex(secret, payload) { const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']); const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)); return [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, '0')).join(''); }
 export async function playResponse(env, providerUrl, maxHeight, { qualityCap, direct } = {}) {
-  const proxyUrl = (env.VIDEO_PROXY_URL ?? "").trim().replace(/\/+$/, "");
-  if (!proxyUrl) throw new Error("VIDEO_PROXY_URL non configurée");
-  const secret = typeof env.PROXY_URL_SECRET === "string" ? env.PROXY_URL_SECRET.trim() : "";
-  if (!secret) throw new Error("PROXY_URL_SECRET non configurée");
+  const proxyUrl = String(env.VIDEO_PROXY_URL ?? '').trim().replace(/\/+$/, '');
+  const secret = String(env.PROXY_URL_SECRET ?? '').trim();
+  if (!proxyUrl || !secret) throw new Error('Proxy vidéo non configuré');
   const expiry = nextExpiry();
   const signature = await hmacHex(secret, `${providerUrl}|${expiry}`);
   let url = `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}&x-exp=${expiry}&x-sig=${signature}`;
-  // direct=1 : sortie Cloudflare sans relais résidentiel (VOD). Param non
-  // signé, même statut que maxh (la signature ne couvre que url|expiry).
-  if (direct) url += "&direct=1";
+  if (direct) url += '&direct=1';
   if (maxHeight) url += `&maxh=${maxHeight}`;
-  const response = {
-    url,
-    expiresAt: new Date(expiry).toISOString(),
-    // Informatif : hauteur max imposée à cette session (éco utilisateur ou
-    // adaptatif). Le client actuel l'ignore ; disponible pour un badge futur.
-    ...(qualityCap ? { qualityCap } : {}),
-  };
-  return response;
+  return { url, expiresAt: new Date(expiry).toISOString(), ...(qualityCap ? { qualityCap } : {}) };
 }
-
 export async function channelIsVisible(env, channelId) {
-  const hiddenIds = await loadHiddenIds(env);
-  const category = categoryFilterSql(hiddenIds, null, 'c', 2);
-  const result = await env.db.query(
-    env,
-    `SELECT 1 FROM "Channel" c WHERE c.id = $1 AND c."isVisible" = true AND EXISTS (
-       SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId"
-       WHERE v."channelId" = c.id AND v."isActive" AND s.status <> 'DISABLED'
-     )${category.sql} LIMIT 1`,
-    [channelId, ...category.params],
-  );
+  const category = categoryFilterSql(await loadHiddenIds(env), null, 'c', 2);
+  const result = await env.db.query(env, `SELECT 1 FROM "Channel" c WHERE c.id = $1 AND c."isVisible" = true AND EXISTS (SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" WHERE v."channelId" = c.id AND v."isActive" AND s.status <> 'DISABLED')${category.sql} LIMIT 1`, [channelId, ...category.params]);
   return result.rows.length > 0;
 }
 
-// Handshake Stalker partagé (résolution de lecture ET sonde santé) :
-// teste les candidats d'endpoint et renvoie { token, endpoint }, ou null.
-export async function stalkerHandshake(env, base, mac) {
-  let url;
+function scriptCandidates(value) {
+  const input = new URL(value);
+  input.search = ''; input.hash = '';
+  const origin = input.origin;
+  const path = input.pathname.replace(/\/+$/, '');
+  const roots = new Set();
+  if (/\/(portal|load)\.php$/i.test(path)) roots.add(path.replace(/\/(portal|load)\.php$/i, ''));
+  else if (/\/c$/i.test(path)) roots.add(path.replace(/\/c$/i, ''));
+  else roots.add(path);
+  roots.add(''); roots.add('/server'); roots.add('/stalker_portal'); roots.add('/stalker_portal/server');
+  const candidates = [];
+  if (/\/(portal|load)\.php$/i.test(path)) candidates.push(`${origin}${path}`);
+  for (const root of roots) for (const file of ['portal.php', 'server/load.php', 'load.php']) {
+    const clean = String(root).replace(/\/+$/, '');
+    const joined = file === 'server/load.php' && /\/server$/i.test(clean) ? `${clean}/load.php` : `${clean}/${file}`;
+    candidates.push(`${origin}${joined.replace(/\/+/g, '/')}`);
+  }
+  return [...new Set(candidates)];
+}
+function apiUrl(script, params) { const url = new URL(script); for (const [key, value] of Object.entries(params)) if (value !== undefined) url.searchParams.set(key, String(value)); return url.toString(); }
+function stalkerHeaders(mac, token) { return { MAC: mac, Cookie: `mac=${mac}; stb_lang=en; timezone=UTC`, Accept: 'application/json, text/javascript, */*; q=0.01', 'User-Agent': 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 MAG254', 'X-User-Agent': 'Model: MAG254; Link: Ethernet', ...(token ? { Authorization: `Bearer ${token}` } : {}) }; }
+async function fetchPortal(env, url, headers, timeout = 20_000) {
+  const relayed = resolveRelay(env, url);
+  const response = await fetch(relayed.url, { headers: { ...headers, ...relayed.headers }, redirect: 'manual', signal: AbortSignal.timeout(timeout) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return JSON.parse(await response.text());
+}
+export async function stalkerHandshake(env, baseOrScript, mac) {
   try {
-    url = new URL(base);
-  } catch {
-    return null;
-  }
-  const origin = url.origin;
-  const endpoints = [...new Set([base.replace(/\/$/, ""), `${origin}/stalker_portal/server`, `${origin}/stalker_portal`, origin].map((v) => v.replace(/\/$/, "")))];
-
-  const headers = {
-    "MAC": mac,
-    "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`,
-    "Accept": "application/json",
-    // Certains panels réinitialisent la connexion sur un UA inconnu :
-    // présenter l'UA de la box, comme le ferait un vrai MAG.
-    "User-Agent": "Model: MAG254; Link: Ethernet",
-    "X-User-Agent": "Model: MAG254; Link: Ethernet",
-  };
-
-  for (const candidate of endpoints) {
-    try {
-      const relayed = resolveRelay(env, `${candidate}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-json`);
-      const response = await fetch(relayed.url, {
-        headers: { ...headers, ...relayed.headers },
-        signal: AbortSignal.timeout(10_000),
-      });
-      const body = await response.text();
-      const payload = JSON.parse(body);
-      if (payload.js?.token) return { token: String(payload.js.token), endpoint: candidate };
-    } catch { continue; }
-  }
+    for (const script of scriptCandidates(baseOrScript)) {
+      try {
+        const payload = await fetchPortal(env, apiUrl(script, { type: 'stb', action: 'handshake', token: '', JsHttpRequest: '1-json' }), stalkerHeaders(mac));
+        const token = payload?.js?.token ?? payload?.token;
+        if (token) {
+          const headers = stalkerHeaders(mac, String(token));
+          try { await fetchPortal(env, apiUrl(script, { type: 'stb', action: 'get_profile', hd: 1, JsHttpRequest: '1-json' }), headers); } catch {}
+          return { token: String(token), endpoint: script };
+        }
+      } catch { continue; }
+    }
+  } catch {}
   return null;
 }
-
-// Extraction de l'URL de lecture depuis un cmd Stalker (« ffmpeg http://… »),
-// en échappant les « \/ » que certains panels renvoient. Une URL avec un
-// `stream=` vide (panel n'ayant pas résolu le lien) est refusée.
 function cmdToUrl(cmd) {
   if (!cmd) return null;
-  const match = /ffmpeg\s+(\S+)/.exec(cmd.trim());
-  const url = match ? match[1].replace(/\\\//g, "/") : cmd.trim();
-  if (!/^https?:\/\//i.test(url)) return null;
-  return /(\?|&)stream=&/.test(url) ? null : url;
+  const match = /ffmpeg\s+(\S+)/.exec(String(cmd).trim());
+  const url = (match ? match[1] : String(cmd).trim()).replace(/\\\//g, '/');
+  if (!/^https?:\/\//i.test(url) || /(\?|&)stream=&/.test(url)) return null;
+  return url;
 }
-
-// create_link : le cmd fourni DOIT être celui du panel (stocké dans le
-// locator à l'import) — la réécriture du cmd est propre à chaque portail.
-async function stalkerCreateLink(env, endpoint, cmd, token, mac) {
-  const authHeaders = {
-    "MAC": mac,
-    "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`,
-    "Accept": "application/json",
-    "User-Agent": "Model: MAG254; Link: Ethernet",
-    "X-User-Agent": "Model: MAG254; Link: Ethernet",
-    "Authorization": `Bearer ${token}`,
-  };
+async function stalkerCreateLink(env, script, cmd, token, mac) {
   try {
-    const relayed = resolveRelay(env, `${endpoint}/portal.php?type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&JsHttpRequest=1-json`);
-    const linkResponse = await fetch(
-      relayed.url,
-      { headers: { ...authHeaders, ...relayed.headers }, signal: AbortSignal.timeout(15_000) },
-    );
-    const linkBody = await linkResponse.text();
-    const linkPayload = JSON.parse(linkBody);
-    return cmdToUrl(linkPayload.js?.cmd ?? "");
-  } catch {
-    return null;
-  }
+    const payload = await fetchPortal(env, apiUrl(script, { type: 'itv', action: 'create_link', cmd, JsHttpRequest: '1-json' }), stalkerHeaders(mac, token));
+    return cmdToUrl(payload?.js?.cmd ?? payload?.cmd ?? '');
+  } catch { return null; }
 }
-
-// Récupère le cmd le plus frais de la chaîne (get_all_channels) — son
-// play_token est tout juste émis, plus valide que celui stocké à l'import.
-async function fetchFreshCmd(env, endpoint, token, mac, channelId) {
-  const listUrl = `${endpoint}/portal.php?type=itv&action=get_all_channels&token=${encodeURIComponent(token)}&JsHttpRequest=1-json`;
+function channelArray(payload) { const value = payload?.js ?? payload; return Array.isArray(value) ? value : value?.data ?? value?.results ?? value?.items ?? []; }
+async function fetchFreshCmd(env, script, token, mac, channelId) {
   try {
-    const relayed = resolveRelay(env, listUrl);
-    const response = await fetch(relayed.url, {
-      headers: { "MAC": mac, "Cookie": `mac=${mac};stb_lang=en;timezone=UTC`, "Accept": "application/json", "User-Agent": "Model: MAG254; Link: Ethernet", "X-User-Agent": "Model: MAG254; Link: Ethernet", "Authorization": `Bearer ${token}`, ...relayed.headers },
-      signal: AbortSignal.timeout(20_000),
-    });
-    const payload = JSON.parse(await response.text());
-    const list = Array.isArray(payload.js) ? payload.js : payload.js?.data ?? [];
-    const channel = list.find((item) => String(item.id) === String(channelId));
-    return typeof channel?.cmd === "string" ? channel.cmd.trim() : "";
-  } catch {
-    return "";
-  }
+    const payload = await fetchPortal(env, apiUrl(script, { type: 'itv', action: 'get_all_channels', token, JsHttpRequest: '1-json' }), stalkerHeaders(mac, token), 30_000);
+    const channel = channelArray(payload).find((item) => String(item.id) === String(channelId));
+    return typeof channel?.cmd === 'string' ? channel.cmd.trim() : '';
+  } catch { return ''; }
 }
-
-// Résolution dynamique des locataires Stalker MAC :
-//   « {base}|{mac}|{id}|{cmd} » (import courant) → handshake + create_link(cmd).
-//   « {base}|{mac}|{id} » (anciens imports) → handshake + get_all_channels
-//   pour retrouver le cmd, puis create_link — lourd, en repli uniquement.
-// Quand create_link échoue (stream vide — certains panels, ex. strongsat,
-// refusent la réécriture), on tente la lecture DIRECTE du cmd frais : le
-// proxy vidéo ira chercher cette URL telle quelle. Cela permet de lire les
-// panels qui servent l'URL du cmd sans passer par create_link.
 export async function resolveStalkerLocator(env, locator) {
-  const parts = locator.split("|");
+  const parts = locator.split('|');
   if (parts.length < 3) return null;
-  const [base, mac, channelId, storedCmd] = parts;
-
-  const handshake = await stalkerHandshake(env, base, mac);
+  const [baseOrScript, mac, channelId, ...cmdParts] = parts;
+  const storedCmd = cmdParts.join('|');
+  const handshake = await stalkerHandshake(env, baseOrScript, mac);
   if (!handshake) return null;
-  const { token, endpoint } = handshake;
-
-  // 1) create_link sur le cmd stocké à l'import (play_token potentiellement
-  //    périmé, mais c'est le plus rapide — certains panels le réécrivent).
-  if (storedCmd) {
-    const direct = await stalkerCreateLink(env, endpoint, storedCmd, token, mac);
-    if (direct) return direct;
-  }
-
-  // 2) Cmd FRAIS (play_token neuf, émis il y a un instant) : create_link
-  //    d'abord, puis lecture directe de l'URL en dernier recours.
-  const freshCmd = await fetchFreshCmd(env, endpoint, token, mac, channelId);
-  if (freshCmd) {
-    const link = await stalkerCreateLink(env, endpoint, freshCmd, token, mac);
-    if (link) return link;
-    const directUrl = cmdToUrl(freshCmd);
-    if (directUrl) return directUrl;
-  }
-
-  // 3) Dernier recours : lecture directe du cmd stocké à l'import.
-  if (storedCmd) {
-    const directUrl = cmdToUrl(storedCmd);
-    if (directUrl) return directUrl;
-  }
-  return null;
+  if (storedCmd) { const linked = await stalkerCreateLink(env, handshake.endpoint, storedCmd, handshake.token, mac); if (linked) return linked; }
+  const freshCmd = await fetchFreshCmd(env, handshake.endpoint, handshake.token, mac, channelId);
+  if (freshCmd) { const linked = await stalkerCreateLink(env, handshake.endpoint, freshCmd, handshake.token, mac); if (linked) return linked; const direct = cmdToUrl(freshCmd); if (direct) return direct; }
+  return storedCmd ? cmdToUrl(storedCmd) : null;
 }
+
+export const _internal = { scriptCandidates, apiUrl, cmdToUrl, nextExpiry };
