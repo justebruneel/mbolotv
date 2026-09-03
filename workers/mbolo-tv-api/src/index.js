@@ -489,6 +489,12 @@ async function route(ctx, url) {
 
   const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
 
+  if (vodMatch && !vodMatch[3] && method === "GET") {
+    const item = await vod.findVodItemById(env, decodeURIComponent(vodMatch[1]));
+    if (!item) return ctx.fail(404, "Item VOD introuvable");
+    return ctx.json(vod.serializeVodItem(item));
+  }
+
   if (vodMatch && vodMatch[3] === "favorite" && (method === "PUT" || method === "DELETE")) {
     const deviceId = ctx.request.headers.get("x-device-id");
     if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");

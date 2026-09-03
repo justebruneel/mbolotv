@@ -445,6 +445,7 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
       }
       if (result.response) return result.response;
 
+      console.log(`[proxy] 502 ${new URL(target).host} :: ${JSON.stringify(result.failure ?? {})}`);
       return new Response(
         JSON.stringify({ error: "Flux indisponible via le relais", ...(result.failure ? { detail: result.failure } : {}) }),
         {
