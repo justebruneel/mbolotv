@@ -53,6 +53,9 @@ model ImportRun {
   id String @id @default(cuid())
   sourceId String
   state String @default("QUEUED")
+  // Périmètre de l'import : "live" (chaînes), "vod" (films/séries sans les
+  // chaînes), "all" (les deux). Les chaînes gardent leur import individuel.
+  scope String @default("all")
   metrics Json?
   errorCode String?
   errorMessage String?

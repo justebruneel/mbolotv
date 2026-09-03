@@ -38,6 +38,7 @@ function serializeRun(row) {
     sourceId: row.sourceId,
     sourceName: row.source_name ?? 'source supprimée',
     state: row.state,
+    scope: row.scope === 'live' || row.scope === 'vod' ? row.scope : 'all',
     metrics: row.metrics ?? null,
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
@@ -347,9 +348,14 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     const source = await findOwnedSource(ctx, owner, sourceDetail[1]);
     if (!source) return ctx.fail(404, 'Source introuvable');
     if (source.status === 'DISABLED') return ctx.fail(409, 'Source désactivée');
+    // Périmètre individuel : 'live' (chaînes), 'vod' (films/séries sans les
+    // chaînes) ou 'all'. Accepté en corps JSON ou en ?scope=.
+    const importBody = await ctx.readJson().catch(() => null);
+    const requestedScope = importBody?.scope ?? url.searchParams.get('scope');
+    const scope = requestedScope === 'live' || requestedScope === 'vod' ? requestedScope : 'all';
     const runId = await startImportRun(ctx, source.id);
-    await audit(ctx, owner.userId, 'source.import_request', 'source', source.id, { importRunId: runId });
-    ctx.waitUntil(runImportAndEpg(ctx, source.id, runId));
+    await audit(ctx, owner.userId, 'source.import_request', 'source', source.id, { importRunId: runId, scope });
+    ctx.waitUntil(runImportAndEpg(ctx, source.id, runId, scope));
     const run = await env.db.query(env, `SELECT r.*, s.name AS source_name FROM "ImportRun" r JOIN "Source" s ON s.id = r."sourceId" WHERE r.id = $1`, [runId]);
     return ctx.json(serializeRun(run.rows[0]));
   }
@@ -593,31 +599,33 @@ async function findOwnedSource(ctx, owner, id) {
   return rows.rows[0] ?? null;
 }
 
-export async function startImportRun(ctx, sourceId) {
+export async function startImportRun(ctx, sourceId, scope = 'all') {
+  const normalizedScope = scope === 'live' || scope === 'vod' ? scope : 'all';
   const active = await ctx.env.db.query(ctx.env, `SELECT id FROM "ImportRun" WHERE "sourceId" = $1 AND state IN ('QUEUED','FETCHING','PARSING','NORMALIZING') LIMIT 1`, [sourceId]);
   if (active.rows.length > 0) throw Object.assign(new Error('Un import est déjà en cours pour cette source'), { status: 409 });
   const runId = crypto.randomUUID();
-  await ctx.env.db.query(ctx.env, `INSERT INTO "ImportRun" (id, "sourceId", state, "startedAt") VALUES ($1,$2,'QUEUED', now())`, [runId, sourceId]);
+  await ctx.env.db.query(ctx.env, `INSERT INTO "ImportRun" (id, "sourceId", state, scope, "startedAt") VALUES ($1,$2,'QUEUED',$3, now())`, [runId, sourceId, normalizedScope]);
   return runId;
 }
 
 // Exécution asynchrone sans file d'attente : waitUntil prolonge la requête
 // et le Cron Trigger reprend tout ImportRun QUEUED resté en attente.
-export async function runImportAndEpg(ctx, sourceId, runId) {
-  const result = await runSourceImport(ctx.env, sourceId, runId);
-  if (result?.ok) await runEpgImportForSource(ctx.env, sourceId).catch(() => undefined);
+export async function runImportAndEpg(ctx, sourceId, runId, scope = 'all') {
+  const result = await runSourceImport(ctx.env, sourceId, runId, scope);
+  // Pas d'EPG sur un run VOD seule : l'EPG ne concerne que les chaînes.
+  if (result?.ok && scope !== 'vod') await runEpgImportForSource(ctx.env, sourceId).catch(() => undefined);
 }
 
 export async function resumeQueuedImports(env) {
-  const queued = await env.db.query(env, `SELECT id, "sourceId" FROM "ImportRun" WHERE state = 'QUEUED' ORDER BY "startedAt" ASC LIMIT 3`);
-  for (const row of queued.rows) await runSourceImport(env, row.sourceId, row.id);
+  const queued = await env.db.query(env, `SELECT id, "sourceId", scope FROM "ImportRun" WHERE state = 'QUEUED' ORDER BY "startedAt" ASC LIMIT 3`);
+  for (const row of queued.rows) await runSourceImport(env, row.sourceId, row.id, row.scope ?? 'all');
   // Reprise des runs en cours dont l'isolate est mort (heartbeat muet juste
   // après le franchissement d'une étape) : sans cela, un run figé en
   // FETCHING/PARSING/NORMALIZING attendrait les 15 min du staleness pour
   // être marqué FAILED — une relance manuelle de plus pour rien.
   const stale = await env.db.query(
     env,
-    `SELECT id, "sourceId", metrics FROM "ImportRun"
+    `SELECT id, "sourceId", scope, metrics FROM "ImportRun"
      WHERE state IN ('FETCHING', 'PARSING', 'NORMALIZING')
        AND "startedAt" < now() - ($1 || ' minutes')::interval`,
     [String(ORPHAN_STALE_MINUTES)],
@@ -630,7 +638,7 @@ export async function resumeQueuedImports(env) {
     if (Number.isFinite(heartbeat) && Date.now() - heartbeat < ORPHAN_STALE_MINUTES * 60 * 1000) continue;
     // Relance in-place du même ImportRun (les compteurs repartent de zéro,
     // mais l'ingestion est idempotente : upserts sur clés stables).
-    await runSourceImport(env, run.sourceId, run.id);
+    await runSourceImport(env, run.sourceId, run.id, run.scope ?? 'all');
     resumed += 1;
   }
   return queued.rows.length + resumed;

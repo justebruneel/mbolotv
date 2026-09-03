@@ -9,6 +9,7 @@ import type {
   ConnectTestResponse,
   ImportRun,
   ImportRunListResponse,
+  ImportScope,
   Overview,
   OwnerCatalog,
   OwnerChannel,
@@ -98,7 +99,7 @@ export const ownerApi = {
     update: (id: string, input: SourceUpdateInput): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<SourceResponse>),
     remove: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/sources/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
     test: (id: string): Promise<ConnectTestResponse> => fetch(`${BASE_URL}/owner/sources/${id}/test`, { credentials: 'include' }).then(parseResponse<ConnectTestResponse>),
-    import: (id: string): Promise<ImportRun> => fetch(`${BASE_URL}/owner/sources/${id}/import`, { method: 'POST', credentials: 'include' }).then(parseResponse<ImportRun>),
+    import: (id: string, scope?: ImportScope): Promise<ImportRun> => fetch(`${BASE_URL}/owner/sources/${id}/import`, { method: 'POST', credentials: 'include', ...(scope ? { headers: JSON_HEADERS, body: JSON.stringify({ scope }) } : {}) }).then(parseResponse<ImportRun>),
     uploadPlaylist: (id: string, file: File): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources/${id}/playlist`, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/octet-stream' }, body: file }).then(parseResponse<SourceResponse>),
   },
   imports: {

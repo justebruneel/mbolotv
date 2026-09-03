@@ -12,6 +12,7 @@ import {
 import { PageHeader } from '../../../../features/owner/components/ui/page-header';
 import { ImportStateBadge } from '../../../../features/owner/components/ui/status-badge';
 import { AutoRefresh } from '../../../../features/owner/components/auto-refresh';
+import { IMPORT_SCOPE_LABEL } from '../../../../features/owner/components/ui/status-badge';
 
 export default async function ImportsPage() {
   const imports = await serverOwnerFetch<ImportRunListResponse>('/api/owner/imports').catch(
@@ -62,6 +63,7 @@ export default async function ImportsPage() {
                         </span>
                         <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
                           <span className="font-mono">#{run.id.slice(0, 8)}</span>
+                          <span>{IMPORT_SCOPE_LABEL[run.scope ?? 'all'] ?? 'Complet'}</span>
                           {isDone && (
                             <>
                               <span>{metrics['created'] ?? 0} créées</span>

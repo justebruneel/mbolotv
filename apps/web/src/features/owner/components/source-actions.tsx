@@ -11,11 +11,12 @@ import {
   IconX,
 } from './ui/icons';
 
-type Action = 'test' | 'import' | 'delete';
+type Action = 'test' | 'import' | 'import-vod' | 'delete';
 
 const CONFIRM_BY_ACTION: Record<Action, string | null> = {
   test: null,
   import: null,
+  'import-vod': null,
   delete: 'Cette action est définitive : les chaînes de la source seront supprimées.',
 };
 
@@ -40,6 +41,10 @@ export function SourceActions({ sourceId }: { sourceId: string }) {
         const run = await ownerApi.sources.import(sourceId);
         setFeedback({ ok: true, message: `Import #${run.id} programmé.` });
         router.refresh();
+      } else if (action === 'import-vod') {
+        const run = await ownerApi.sources.import(sourceId, 'vod');
+        setFeedback({ ok: true, message: `Import films & séries #${run.id} programmé (chaînes non touchées).` });
+        router.refresh();
       } else {
         await ownerApi.sources.remove(sourceId);
         router.push('/control/sources');
@@ -62,6 +67,10 @@ export function SourceActions({ sourceId }: { sourceId: string }) {
         <button onClick={() => run('import')} disabled={busy !== null} className="btn btn-primary">
           <IconImports className="h-4 w-4" />
           {busy === 'import' ? 'Planification…' : 'Lancer un import'}
+        </button>
+        <button onClick={() => run('import-vod')} disabled={busy !== null} className="btn" title="Importe uniquement les films & séries, sans toucher aux chaînes">
+          <IconImports className="h-4 w-4" />
+          {busy === 'import-vod' ? 'Planification…' : 'Films & séries uniquement'}
         </button>
         <button onClick={() => run('delete')} disabled={busy !== null} className="btn btn-danger">
           <IconTrash className="h-4 w-4" />

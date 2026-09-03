@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { isFolderMarker, parseM3u, parseM3uStream } from './m3u.parser';
+import { isFolderMarker, isVodUrl, parseM3u, parseM3uStream } from './m3u.parser';
 
 describe('m3u.parser', () => {
   describe('isFolderMarker', () => {
@@ -93,6 +93,16 @@ describe('m3u.parser', () => {
       ].join('\n');
 
       expect(parseM3u(playlist)).toHaveLength(0);
+    });
+  });
+
+  describe('isVodUrl', () => {
+    it('détecte les fichiers films (jamais des flux live)', () => {
+      expect(isVodUrl('http://server.com/film.mp4')).toBe(true);
+      expect(isVodUrl('http://server.com/film.mkv')).toBe(true);
+      expect(isVodUrl('http://server.com/film.avi?token=abc')).toBe(true);
+      expect(isVodUrl('http://server.com/live.m3u8')).toBe(false);
+      expect(isVodUrl('http://server.com/live.ts')).toBe(false);
     });
   });
 

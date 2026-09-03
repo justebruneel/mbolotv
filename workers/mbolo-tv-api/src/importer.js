@@ -66,7 +66,13 @@ async function fetchWithLimits(url, { maxBytes = 512 * 1024 * 1024, timeoutMs = 
 // Performance : UNE seule connexion Postgres pour tout l'import (le pool par
 // requête paierait un handshake Hyperdrive par requête), mises à jour en masse
 // (UPDATE…FROM VALUES) et déchiffrements parallélisés par lots.
-export async function runSourceImport(env, sourceId, importRunId) {
+export async function runSourceImport(env, sourceId, importRunId, scope = 'all') {
+  const normalizedScope = scope === 'live' || scope === 'vod' ? scope : 'all';
+  // Périmètre d'import : 'live' = chaînes uniquement, 'vod' = films/séries
+  // uniquement (les chaînes ne sont ni lues ni élaguées), 'all' = les deux.
+  // Les chaînes gardent ainsi leur import individuel, découplé de la VOD.
+  const liveActive = normalizedScope !== 'vod';
+  const vodActive = normalizedScope !== 'live';
   const key = await importKey(env.ENCRYPTION_KEY);
   const client = new pg.Client(env.HYPERDRIVE.connectionString);
   await client.connect();
@@ -179,11 +185,15 @@ export async function runSourceImport(env, sourceId, importRunId) {
       };
       console.log(`[import] M3U: parsing du flux…`);
       await parseM3uStream(response.body, (entry) => {
+        // scope 'vod' : les chaînes ne sont ni lues ni ingérées.
+        if (!liveActive) return;
         if (skipLive > 0) { skipLive -= 1; return; }
         metrics.read += 1;
         liveBatch.push(entry);
         if (liveBatch.length >= LIVE_BATCH) return flushLive();
       }, maxBytes, (movie) => {
+        // scope 'live' : les films ne sont ni lus ni ingérés.
+        if (!vodActive) return;
         if (skipVod > 0) { skipVod -= 1; return; }
         let containerExt = 'mp4';
         try { containerExt = new URL(movie.url).pathname.toLowerCase().split('.').pop() || 'mp4'; } catch { /* locator déjà validé par isVodUrl */ }
@@ -193,15 +203,18 @@ export async function runSourceImport(env, sourceId, importRunId) {
       }, () => touchThrottled());
       await flushLive();
       await flushVod();
-      livePassed = true;
-      vodMoviesPassed = true;
-      metrics.liveDone = 1;
-      metrics.vodMoviesDone = 1;
+      // Seules les phases réellement rejouées autorisent leur purge et sont
+      // marquées terminées (un scope restreint ne doit ni élaguer ni valider
+      // l'autre périmètre).
+      if (liveActive) { livePassed = true; metrics.liveDone = 1; }
+      if (vodActive) { vodMoviesPassed = true; metrics.vodMoviesDone = 1; }
       await persistMetrics();
       console.log(`[import] M3U: ${metrics.read} entrées parsées et ingérées`);
     } else if (source.kind === 'XTREAM') {
       if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants');
-      if (metrics.liveDone === 1) {
+      if (!liveActive) {
+        console.log(`[import ${sourceId}] live: ignoré (scope vod — chaînes non touchées)`);
+      } else if (metrics.liveDone === 1) {
         console.log(`[import ${sourceId}] live: déjà ingéré (reprise) — phase sautée`);
       } else {
         await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
@@ -236,6 +249,9 @@ export async function runSourceImport(env, sourceId, importRunId) {
       const url = connection.url ?? connection.portal;
       const macAddress = connection.macAddress ?? connection.mac ?? connection.mac_address;
       if (!url || !macAddress) throw new ImportError('MISSING_CREDENTIALS', 'URL ou adresse MAC manquante');
+      if (!liveActive) {
+        console.log(`[import ${sourceId}] MAC: ignoré (scope vod — le portail Stalker n'expose que du live)`);
+      } else {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
       let entries;
       try {
@@ -256,6 +272,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
       metrics.vodSeriesDone = 1;
       metrics.vodMoviesDone = 1;
       await persistMetrics();
+      }
     } else {
       throw new ImportError('UNSUPPORTED_KIND', 'Type de source non pris en charge dans le Worker');
     }
@@ -265,7 +282,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
     // fournisseur est ingéré dès réception, le catalogue complet ne passe
     // jamais en mémoire (l'échec VOD n'invalide pas l'import du live, déjà
     // ingéré : l'erreur est enregistrée sur le run sans le marquer FAILED).
-    if (source.kind === 'XTREAM' && source.vodEnabled) {
+    if (source.kind === 'XTREAM' && source.vodEnabled && vodActive) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
       // Sous-phases déjà terminées : sautées (reprise) au lieu d'être
       // retéléchargées — seuls les flux restants sont consommés.

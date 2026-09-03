@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { ownerApi } from '../api/owner-api';
 import { Card, CardBody } from './ui/card';
 import { IconClapperboard, IconLayers, IconRefresh, IconServer, IconTv, IconX } from './ui/icons';
-import { ImportStateBadge } from './ui/status-badge';
+import { IMPORT_SCOPE_LABEL, ImportStateBadge } from './ui/status-badge';
 
 const METRICS: { key: string; label: string; icon: typeof IconTv; tone: string }[] = [
   { key: 'read', label: 'Chaînes lues', icon: IconLayers, tone: 'text-muted' },
@@ -49,7 +49,7 @@ export function ImportLiveStatus({ initialRun }: { initialRun: ImportRun }) {
           <CardBody>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2"><ImportStateBadge state={run.state} /><span className="text-sm text-muted">{processed}{total ? ` / ${total}` : ''} élément(s) traité(s){pct ? ` · ${pct}%` : ''}</span></div>
+                <div className="flex items-center gap-2"><ImportStateBadge state={run.state} /><span className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted">{IMPORT_SCOPE_LABEL[run.scope ?? 'all'] ?? 'Complet'}</span><span className="text-sm text-muted">{processed}{total ? ` / ${total}` : ''} élément(s) traité(s){pct ? ` · ${pct}%` : ''}</span></div>
                 <p className="mt-2 text-xs text-muted">La progression se met à jour automatiquement.</p>
               </div>
               <button type="button" className="btn btn-secondary" onClick={cancel} disabled={canceling}>

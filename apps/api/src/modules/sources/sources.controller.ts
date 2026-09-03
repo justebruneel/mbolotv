@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
-import { sourceCreateSchema, sourceUpdateSchema, type ConnectTestResponse, type ImportRun, type SourceCreateInput, type SourceCredentials, type SourceDetail, type SourceResponse, type SourceUpdateInput } from '@mbolo/contracts';
+import { sourceCreateSchema, sourceImportSchema, sourceUpdateSchema, type ConnectTestResponse, type ImportRun, type SourceCreateInput, type SourceCredentials, type SourceDetail, type SourceImportInput, type SourceResponse, type SourceUpdateInput } from '@mbolo/contracts';
 import { getOwnerContext, OwnerContext } from '../../common/auth/owner-context';
 import { OwnerAuthGuard } from '../../common/auth/owner-auth.guard';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
@@ -17,7 +17,7 @@ export class SourcesController {
   @UseGuards(OwnerAuthGuard) @Post() create(@Req() request: FastifyRequest, @Body(new ZodValidationPipe(sourceCreateSchema)) input: SourceCreateInput): Promise<SourceResponse> { return this.sourcesService.create(this.ownerOf(request).userId, input); }
   @UseGuards(OwnerAuthGuard) @Patch(':id') update(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(sourceUpdateSchema)) input: SourceUpdateInput): Promise<SourceResponse> { return this.sourcesService.update(this.ownerOf(request).userId, id, input); }
   @UseGuards(OwnerAuthGuard) @Delete(':id') @HttpCode(HttpStatus.NO_CONTENT) remove(@Req() request: FastifyRequest, @Param('id') id: string): Promise<void> { return this.sourcesService.remove(this.ownerOf(request).userId, id); }
-  @UseGuards(OwnerAuthGuard) @Post(':id/import') importNow(@Req() request: FastifyRequest, @Param('id') id: string): Promise<ImportRun> { return this.sourcesService.importNow(this.ownerOf(request).userId, id); }
+  @UseGuards(OwnerAuthGuard) @Post(':id/import') importNow(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(sourceImportSchema.optional())) input?: SourceImportInput): Promise<ImportRun> { return this.sourcesService.importNow(this.ownerOf(request).userId, id, input?.scope ?? 'all'); }
   @UseGuards(OwnerAuthGuard) @Post(':id/playlist') uploadPlaylist(@Req() request: FastifyRequest, @Param('id') id: string): Promise<SourceResponse> {
     const raw = request.body;
     const body = raw instanceof Readable ? raw : Buffer.isBuffer(raw) ? Readable.from(raw) : null;

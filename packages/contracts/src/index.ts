@@ -12,6 +12,14 @@ export type SourceStatus = z.infer<typeof sourceStatusSchema>;
 export const importStateSchema = z.enum(['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING', 'COMPLETED', 'FAILED', 'CANCELED']);
 export type ImportState = z.infer<typeof importStateSchema>;
 
+// Périmètre d'un import de source : 'live' = chaînes uniquement, 'vod' =
+// films/séries uniquement (sans toucher aux chaînes), 'all' = les deux.
+// Permet d'importer chaînes et VOD de manière individuelle par source.
+export const importScopeSchema = z.enum(['live', 'vod', 'all']);
+export type ImportScope = z.infer<typeof importScopeSchema>;
+export const sourceImportSchema = z.object({ scope: importScopeSchema.optional() });
+export type SourceImportInput = z.infer<typeof sourceImportSchema>;
+
 export const matchStateSchema = z.enum(['SCHEDULED', 'LIVE', 'FINISHED', 'POSTPONED']);
 export type MatchState = z.infer<typeof matchStateSchema>;
 
@@ -136,7 +144,7 @@ export const sourceUpdateSchema = z.object({ name: z.string().min(2).max(80).opt
 export type SourceUpdateInput = z.infer<typeof sourceUpdateSchema>;
 export const connectTestResponseSchema = z.object({ ok: z.boolean(), latencyMs: z.number().nullable(), error: z.string().nullable() });
 export type ConnectTestResponse = z.infer<typeof connectTestResponseSchema>;
-export const importRunSchema = z.object({ id: z.string(), sourceId: z.string(), sourceName: z.string(), state: importStateSchema, metrics: z.record(z.number()).nullable(), errorCode: z.string().nullable(), errorMessage: z.string().nullable(), startedAt: z.string(), completedAt: z.string().nullable() });
+export const importRunSchema = z.object({ id: z.string(), sourceId: z.string(), sourceName: z.string(), state: importStateSchema, scope: importScopeSchema, metrics: z.record(z.number()).nullable(), errorCode: z.string().nullable(), errorMessage: z.string().nullable(), startedAt: z.string(), completedAt: z.string().nullable() });
 export type ImportRun = z.infer<typeof importRunSchema>;
 export const importRunListResponseSchema = z.object({ items: z.array(importRunSchema), total: z.number() });
 export type ImportRunListResponse = z.infer<typeof importRunListResponseSchema>;

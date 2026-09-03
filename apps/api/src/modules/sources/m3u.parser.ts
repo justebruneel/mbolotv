@@ -4,6 +4,11 @@ import { Readable, Transform } from 'node:stream';
 export interface ParsedChannel { title: string; tvgId?: string; tvgLogo?: string; groupTitle?: string; url: string; }
 const EXTINF_ATTRIBUTE_PATTERN = /([a-zA-Z_-]+)="([^"]*)"/g;
 const VIDEO_EXTENSIONS = new Set(['m3u8', 'ts', 'mp4', 'mpd', 'mpeg', 'mkv', 'avi', 'mov', 'm4v', 'webm', 'mp3', 'aac']);
+// Extensions réservées aux fichiers VOD (jamais des flux live) : un fichier
+// .mp4/.mkv/.avi pointé par une playlist est un film, pas une chaîne.
+// Même liste que le Worker (workers/mbolo-tv-api/src/m3u.js).
+export const VOD_EXTENSIONS = new Set(['mp4', 'mkv', 'avi', 'mov', 'm4v', 'webm']);
+export function isVodUrl(url: string): boolean { try { return VOD_EXTENSIONS.has(new URL(url).pathname.toLowerCase().split('.').pop() ?? ''); } catch { return false; } }
 
 export function isFolderMarker(title: string): boolean { return /^#{2,}.+#{2,}$/.test(title.trim()); }
 function isContainerUrl(url: string): boolean { try { return new URL(url).pathname.toLowerCase().endsWith('.m3u'); } catch { return false; } }
