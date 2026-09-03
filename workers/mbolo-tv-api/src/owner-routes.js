@@ -287,15 +287,20 @@ export async function handleOwnerRoute(ctx, url, path, method) {
       [sourceId, owner.userId, name, kind, await encryptLocator(key, JSON.stringify(body.connection)), vodEnabled],
     );
     await audit(ctx, owner.userId, 'source.create', 'source', sourceId, { kind, name, vodEnabled });
+    // Périmètre de l'import initial choisi à la création ('live', 'vod' ou
+    // 'all'). Un scope 'vod' n'a de sens que si la source peut fournir de la
+    // VOD (M3U toujours, Xtream avec vodEnabled) — sinon repli sur 'all'.
+    const requestedCreateScope = body?.scope;
+    const createScope = requestedCreateScope === 'vod' && (kind === 'M3U' || (kind === 'XTREAM' && vodEnabled)) ? 'vod' : requestedCreateScope === 'live' ? 'live' : 'all';
     if (kind === 'M3U' && (body.connection.url || body.connection.playlistUrl)) {
-      const runId = await startImportRun(ctx, sourceId);
-      ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId));
+      const runId = await startImportRun(ctx, sourceId, createScope);
+      ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId, createScope));
     }
     // XTREAM avec VOD activée : import immédiat aussi (le live seul ne se
     // déclenchait pas à la création — l'owner lanceait POST /import).
     if (kind === 'XTREAM' && vodEnabled && body.connection.url && body.connection.username && body.connection.password) {
-      const runId = await startImportRun(ctx, sourceId);
-      ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId));
+      const runId = await startImportRun(ctx, sourceId, createScope);
+      ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId, createScope));
     }
     const created = await env.db.query(env, `SELECT * FROM "Source" WHERE id = $1`, [sourceId]);
     return ctx.json(serializeSource(created.rows[0]));

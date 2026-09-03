@@ -23,7 +23,7 @@ export type SourceImportInput = z.infer<typeof sourceImportSchema>;
 export const matchStateSchema = z.enum(['SCHEDULED', 'LIVE', 'FINISHED', 'POSTPONED']);
 export type MatchState = z.infer<typeof matchStateSchema>;
 
-export const sourceCreateSchema = z.object({ name: z.string().min(2).max(80), kind: sourceKindSchema, connection: z.record(z.string()), vodEnabled: z.boolean().optional() });
+export const sourceCreateSchema = z.object({ name: z.string().min(2).max(80), kind: sourceKindSchema, connection: z.record(z.string()), vodEnabled: z.boolean().optional(), scope: importScopeSchema.optional() });
 export type SourceCreateInput = z.infer<typeof sourceCreateSchema>;
 export type StreamAccess = { playbackUrl: string; expiresAt: string; selectedServer?: string };
 

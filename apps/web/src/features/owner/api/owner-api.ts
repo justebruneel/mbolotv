@@ -100,7 +100,7 @@ export const ownerApi = {
     remove: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/sources/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
     test: (id: string): Promise<ConnectTestResponse> => fetch(`${BASE_URL}/owner/sources/${id}/test`, { credentials: 'include' }).then(parseResponse<ConnectTestResponse>),
     import: (id: string, scope?: ImportScope): Promise<ImportRun> => fetch(`${BASE_URL}/owner/sources/${id}/import`, { method: 'POST', credentials: 'include', ...(scope ? { headers: JSON_HEADERS, body: JSON.stringify({ scope }) } : {}) }).then(parseResponse<ImportRun>),
-    uploadPlaylist: (id: string, file: File): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources/${id}/playlist`, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/octet-stream' }, body: file }).then(parseResponse<SourceResponse>),
+    uploadPlaylist: (id: string, file: File, scope?: ImportScope): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources/${id}/playlist${scope && scope !== 'all' ? `?scope=${scope}` : ''}`, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/octet-stream' }, body: file }).then(parseResponse<SourceResponse>),
   },
   imports: {
     list: (): Promise<ImportRunListResponse> => fetch(`${BASE_URL}/owner/imports`, { credentials: 'include' }).then(parseResponse<ImportRunListResponse>),
