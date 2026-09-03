@@ -15,7 +15,7 @@ import { resolveRelay } from './relay.js';
 // Cache edge : 1 h sur les listes, 24 h sur les fiches.
 // Allowlist : seules les chaînes configurées (YOUTUBE_CHANNEL_ALLOWLIST,
 // défaut Aforevo Galerie) sont interrogeables — pas de scraping arbitraire.
-const YT_API = 'https://youtube.googleapis.com/youtube/v3';
+const YT_API = 'https://www.googleapis.com/youtube/v3';
 const AFOREVO_CHANNEL_ID = 'UCyd79F-lNLCbGPQrf_L7KiA';
 const LIST_CACHE_TTL_S = 3600;
 const VIDEO_CACHE_TTL_S = 24 * 3600;
@@ -62,20 +62,25 @@ async function ytFetch(env, action, params) {
   const relayed = resolveRelay(env, url.toString());
   const targets = [{ url: url.toString(), headers: {}, viaRelay: false }];
   if (relayed.url !== url.toString()) targets.push({ url: relayed.url, headers: relayed.headers, viaRelay: true });
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let lastError = null;
   for (const target of targets) {
-    let response;
-    try {
-      const startedAt = Date.now();
-      response = await fetch(target.url, {
-        headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json', ...target.headers },
-        signal: AbortSignal.timeout(YT_TIMEOUT_MS),
-      });
-      console.log(`[youtube] ${action} -> ${response.status} (${Math.round((Date.now() - startedAt) / 1000)}s, ${target.viaRelay ? 'relais' : 'direct'})`);
-    } catch {
-      lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
-      continue;
-    }
+    // L'egress vers Google est instable (200 puis 404 vide puis timeout) :
+    // 2 essais espacés par cible avant de passer à la suivante.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0) await sleep(1500 * attempt);
+      let response;
+      try {
+        const startedAt = Date.now();
+        response = await fetch(target.url, {
+          headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json', ...target.headers },
+          signal: AbortSignal.timeout(YT_TIMEOUT_MS),
+        });
+        console.log(`[youtube] ${action} -> ${response.status} (${Math.round((Date.now() - startedAt) / 1000)}s, ${target.viaRelay ? 'relais' : 'direct'}, essai ${attempt + 1})`);
+      } catch {
+        lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
+        continue;
+      }
     if (!response.ok) {
       let reason = '';
       let detail = '';
