@@ -20,6 +20,7 @@ import { OwnerAuthModule } from './modules/owner-auth/owner-auth.module';
 import { OwnerConsoleModule } from './modules/owner-console/owner-console.module';
 import { SourcesModule } from './modules/sources/sources.module';
 import { StreamingModule } from './modules/streaming/streaming.module';
+import { VodModule } from './modules/vod/vod.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { StreamingModule } from './modules/streaming/streaming.module';
     OwnerConsoleModule,
     SourcesModule,
     StreamingModule,
+    VodModule,
   ],
 })
 export class AppModule {}
