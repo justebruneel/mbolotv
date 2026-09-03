@@ -105,7 +105,7 @@ function HomeView() {
 
         {favChannels.length > 0 && <NetflixRow title="Mes favoris" channels={favChannels} seeAllHref="/favorites" highlightId={highlightId} />}
 
-        {recommendations.countryRow.length >= 4 && (
+        {recommendations.countryRow.length >= (recommendations.countrySource === 'geo' ? 1 : 4) && (
           <NetflixRow
             title={
               recommendations.countrySource === 'geo'
