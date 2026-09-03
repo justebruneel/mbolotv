@@ -18,8 +18,6 @@ import type {
   VodKind,
   VodListResponse,
   VodSeasonsResponse,
-  YoutubeListResponse,
-  YoutubeVideo,
 } from '@mbolo/contracts';
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
@@ -306,12 +304,15 @@ export function useInfiniteYoutube(channelId: string, pageSize = 25, q = '') {
   return useInfiniteQuery({
     queryKey: ['vod-youtube', channelId, pageSize, q],
     queryFn: ({ pageParam }) =>
-      apiGet<YoutubeListResponse>('/vod/youtube', {
-        channel: channelId,
-        ...(q.trim() ? { q: q.trim() } : {}),
-        ...(pageParam ? { pageToken: pageParam } : {}),
-        limit: pageSize,
-      }),
+      // Direct navigateur d'abord (egress serveurs filtrés côté Google),
+      // proxy serveur en repli — voir features/vod/youtubeClient.ts.
+      import('../../features/vod/youtubeClient').then(({ fetchYoutubeList }) =>
+        fetchYoutubeList(channelId, {
+          ...(q.trim() ? { q: q.trim() } : {}),
+          ...(pageParam ? { pageToken: pageParam } : {}),
+          maxResults: pageSize,
+        }),
+      ),
     initialPageParam: '' as string,
     getNextPageParam: (lastPage) => lastPage.nextPageToken ?? undefined,
     placeholderData: keepPreviousData,
@@ -321,7 +322,8 @@ export function useInfiniteYoutube(channelId: string, pageSize = 25, q = '') {
 export function useYoutubeVideo(videoId: string, enabled = true) {
   return useQuery({
     queryKey: ['vod-youtube-video', videoId],
-    queryFn: () => apiGet<YoutubeVideo>('/vod/youtube/video', { id: videoId }),
+    queryFn: () =>
+      import('../../features/vod/youtubeClient').then(({ fetchYoutubeVideo }) => fetchYoutubeVideo(videoId)),
     enabled: enabled && Boolean(videoId),
     staleTime: 60 * 60_000,
   });
