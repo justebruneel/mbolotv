@@ -210,9 +210,9 @@ export default function EntryPage() {
 
         <div className="mt-8 grid gap-4 md:grid-cols-3">
           {[
-            { days: 7, price: '3 500', perDay: '500', popular: false, desc: 'Découverte' },
-            { days: 14, price: '6 000', perDay: '429', popular: true, desc: 'Le plus choisi' },
-            { days: 30, price: '12 000', perDay: '400', popular: false, desc: 'Économique' },
+            { days: 7, price: '2 000', perDay: '286', popular: false, desc: 'Découverte' },
+            { days: 14, price: '3 500', perDay: '250', popular: true, desc: 'Le plus choisi' },
+            { days: 30, price: '5 000', perDay: '167', popular: false, desc: 'Économique' },
           ].map((tier) => (
             <div
               key={tier.days}
