@@ -17,7 +17,9 @@ export function createM3uLineParser(push, pushVod) {
   let inGroup = '';
   let emitted = 0;
   return {
-    handleLine(rawLine) {
+    // Async : le consommateur peut ingérer chaque lot au fil du parse
+    // (await sur une valeur non-promise ne coûte qu'une microtâche).
+    async handleLine(rawLine) {
       const line = rawLine.replace(/^\uFEFF/, '').trim();
       if (!line || line.startsWith('#EXTM3U')) return;
       if (line.startsWith('#EXTGRP:')) { inGroup = line.slice(8).trim(); return; }
@@ -29,9 +31,9 @@ export function createM3uLineParser(push, pushVod) {
           // Fichier VOD (extension réservée) : routé vers VodItem au lieu de
           // polluer le catalogue live. group-title devient la catégorie.
           if (pushVod && isVodUrl(line)) {
-            pushVod({ kind: 'MOVIE', externalId: line, title, posterUrl: normalizeLogoUrl(pending.attributes['tvg-logo']) ?? null, categoryTitle: pending.attributes['group-title'] || inGroup || null, url: line });
+            await pushVod({ kind: 'MOVIE', externalId: line, title, posterUrl: normalizeLogoUrl(pending.attributes['tvg-logo']) ?? null, categoryTitle: pending.attributes['group-title'] || inGroup || null, url: line });
           } else {
-            push({ title, tvgId: pending.attributes['tvg-id'] || undefined, tvgLogo: normalizeLogoUrl(pending.attributes['tvg-logo']), groupTitle: pending.attributes['group-title'] || inGroup || undefined, url: line });
+            await push({ title, tvgId: pending.attributes['tvg-id'] || undefined, tvgLogo: normalizeLogoUrl(pending.attributes['tvg-logo']), groupTitle: pending.attributes['group-title'] || inGroup || undefined, url: line });
           }
           emitted += 1;
         }
@@ -42,12 +44,15 @@ export function createM3uLineParser(push, pushVod) {
   };
 }
 
-export async function parseM3uStream(input, push, maxBytes = 512 * 1024 * 1024, pushVod) {
+// onProgress(lignesTraitees) optionnel : l'importeur y branche son heartbeat
+// (persistMetrics throttlé) pour signaler un long téléchargement/parse au cron.
+export async function parseM3uStream(input, push, maxBytes = 512 * 1024 * 1024, pushVod, onProgress) {
   if (!input) throw new Error('Playlist M3U sans contenu');
   const decoder = new TextDecoder('utf-8', { fatal: false });
   const parser = createM3uLineParser(push, pushVod);
   let received = 0;
   let carry = '';
+  let handled = 0;
   const reader = input.getReader();
   for (;;) {
     const { done, value } = await reader.read();
@@ -55,12 +60,14 @@ export async function parseM3uStream(input, push, maxBytes = 512 * 1024 * 1024, 
     received += value.byteLength;
     if (received > maxBytes) { await reader.cancel().catch(() => undefined); throw new Error(`Playlist trop volumineuse (${received} octets, limite ${maxBytes})`); }
     const text = carry + decoder.decode(value, { stream: true });
-    const lines = text.split(/\r?\n/);
-    carry = lines.pop() ?? '';
-    for (const line of lines) parser.handleLine(line);
+    const split = text.split(/\r?\n/);
+    carry = split.pop() ?? '';
+    for (const line of split) { await parser.handleLine(line); handled += 1; }
+    if (onProgress) await onProgress(handled);
   }
   carry += decoder.decode();
-  if (carry) parser.handleLine(carry);
+  if (carry) { await parser.handleLine(carry); handled += 1; }
+  if (onProgress) await onProgress(handled);
   if (parser.count() === 0) throw new Error('La playlist M3U ne contient aucune chaîne exploitable, catalogue existant conservé');
   return parser.count();
 }

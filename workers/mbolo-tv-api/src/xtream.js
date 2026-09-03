@@ -1,11 +1,13 @@
 import { resolveRelay } from './relay.js';
 
 const MAX_API_BYTES = 50 * 1024 * 1024;
-// Catalogues VOD volumineux : en flux, on ne bufferise que par lots — la
-// limite porte sur le volume cumulé téléchargé, pas sur la mémoire.
+// Catalogues volumineux en flux : la limite porte sur le volume cumulé
+// téléchargé, pas sur la mémoire (lots de 500-1000 consommés au fil de l'eau).
 const VOD_MAX_BYTES_DEFAULT = 1024 * 1024 * 1024;
+const LIVE_MAX_BYTES_DEFAULT = 256 * 1024 * 1024;
 const VOD_STREAM_IDLE_TIMEOUT_MS = 60_000;
-const VOD_BATCH_SIZE = 2000;
+const VOD_BATCH_SIZE = 1000;
+const LIVE_STREAM_BATCH_SIZE = 1000;
 const CONNECTOR_TIMEOUT_MS = 180_000;
 const FETCH_RETRIES = 3;
 const FETCH_RETRY_DELAYS_MS = [800, 2500, 6000];
@@ -52,6 +54,15 @@ async function fetchJson(url, env, touch) {
   throw lastError instanceof Error ? lastError : new Error('Échec Xtream inconnu');
 }
 
+function mapLiveEntry(stream, categoryNames, base, user, pass, connection) {
+  if (stream == null || typeof stream !== 'object') return null;
+  if (stream.stream_id == null || (stream.stream_type !== 'live' && stream.stream_type !== undefined)) return null;
+  const title = String(stream.name ?? `Chaîne ${stream.num ?? stream.stream_id}`).trim();
+  if (!title || isFolderMarker(title)) return null;
+  const groupTitle = (stream.category_id != null && categoryNames.get(String(stream.category_id))) || (stream.category_name ? String(stream.category_name).trim() : undefined);
+  return { title, tvgId: stream.epg_channel_id ? String(stream.epg_channel_id) : undefined, tvgLogo: normalizeIcon(stream.stream_icon), groupTitle, url: `${base}/live/${user}/${pass}/${stream.stream_id}.${streamExtension(stream, connection)}` };
+}
+
 export async function fetchXtreamEntries(env, connection, touch) {
   const base = connection.url.replace(/\/+$/, '');
   const user = encodeURIComponent(connection.username);
@@ -71,14 +82,56 @@ export async function fetchXtreamEntries(env, connection, touch) {
   if (streams.length === 0) throw new Error('Le panel Xtream a renvoyé une liste de chaînes vide, import conservé sans suppression');
   const entries = [];
   for (const stream of streams) {
-    if (stream.stream_id == null || (stream.stream_type !== 'live' && stream.stream_type !== undefined)) continue;
-    const title = String(stream.name ?? `Chaîne ${stream.num ?? stream.stream_id}`).trim();
-    if (!title || isFolderMarker(title)) continue;
-    const groupTitle = (stream.category_id != null && categoryNames.get(String(stream.category_id))) || (stream.category_name ? String(stream.category_name).trim() : undefined);
-    entries.push({ title, tvgId: stream.epg_channel_id ? String(stream.epg_channel_id) : undefined, tvgLogo: normalizeIcon(stream.stream_icon), groupTitle, url: `${base}/live/${user}/${pass}/${stream.stream_id}.${streamExtension(stream, connection)}` });
+    const entry = mapLiveEntry(stream, categoryNames, base, user, pass, connection);
+    if (entry) entries.push(entry);
   }
   if (entries.length === 0) throw new Error('Aucune chaîne live exploitable dans la réponse Xtream, import conservé sans suppression');
   return { entries };
+}
+
+// get_live_streams en flux : chaque lot (≤1000) est consommé par l'importeur
+// dès réception — un catalogue de dizaines de milliers de chaînes ne transite
+// jamais en mémoire (ni texte+JSON+tableau complets comme fetchXtreamEntries).
+// Mêmes erreurs et même mapping que fetchXtreamEntries.
+export async function fetchXtreamLiveBatches(env, connection, touch, onBatch) {
+  const base = connection.url.replace(/\/+$/, '');
+  const user = encodeURIComponent(connection.username);
+  const pass = encodeURIComponent(connection.password);
+  const categoryNames = new Map();
+  try {
+    const categories = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_live_categories`, env, touch);
+    for (const category of Array.isArray(categories) ? categories : []) if (category.category_id != null && category.category_name) categoryNames.set(String(category.category_id), String(category.category_name).trim());
+  } catch (error) {
+    if (/identifiants|HTTP 401/i.test(String(error?.message ?? error))) throw error;
+  }
+  await sleep(INTER_CALL_DELAY_MS);
+  const maxBytes = Number(env.IMPORT_LIVE_MAX_BYTES ?? LIVE_MAX_BYTES_DEFAULT);
+  let emitted = 0;
+  let mapped = 0;
+  let pending = [];
+  const flush = async () => {
+    if (pending.length === 0) return;
+    const out = pending;
+    pending = [];
+    mapped += out.length;
+    await onBatch(out);
+  };
+  try {
+    await streamXtreamAction(`${base}/player_api.php?username=${user}&password=${pass}&action=get_live_streams`, env, touch, async (batch) => {
+      emitted += batch.length;
+      for (const stream of batch) {
+        const entry = mapLiveEntry(stream, categoryNames, base, user, pass, connection);
+        if (entry) pending.push(entry);
+      }
+      if (pending.length >= LIVE_STREAM_BATCH_SIZE) await flush();
+    }, maxBytes);
+  } catch (error) {
+    throw new Error(`Échec de récupération du flux Xtream : ${error.message}`);
+  }
+  await flush();
+  if (emitted === 0) throw new Error('Le panel Xtream a renvoyé une liste de chaînes vide, import conservé sans suppression');
+  if (mapped === 0) throw new Error('Aucune chaîne live exploitable dans la réponse Xtream, import conservé sans suppression');
+  return mapped;
 }
 
 async function fetchCategoryMap(env, base, user, pass, action, touch) {
@@ -118,10 +171,21 @@ export async function streamJsonArrayBatches(body, onBatch, { maxBytes = MAX_API
   let done = false;
 
   const compact = (cut) => { buffer = cut >= buffer.length ? '' : buffer.slice(cut); scanPos -= cut; if (scanPos < 0) scanPos = 0; objectStart = objectStart >= 0 ? objectStart - cut : -1; };
-  // Scanner synchrone : les caractères hors chaînes ne nous intéressent que
+  // Flush strict : dès que le seuil est atteint, le lot part immédiatement —
+  // aucun lot ne dépasse batchSize (pas de dépassement lié à la taille des
+  // chunks réseau), ce qui borne la mémoire quelle que soit la source.
+  const flushBatch = async () => {
+    if (pending.length >= batchSize) {
+      const batch = pending;
+      pending = [];
+      await onBatch(batch);
+      emitted += batch.length;
+    }
+  };
+  // Scanner : les caractères hors chaînes ne nous intéressent que
   // comme délimiteurs ; les chaînes sont sautées jusqu'à leur guillemet fermant
   // non échappé (les \" comptent, les \\\" non).
-  const scan = () => {
+  const scan = async () => {
     for (;;) {
       if (inString) {
         let pos = scanPos;
@@ -155,11 +219,11 @@ export async function streamJsonArrayBatches(body, onBatch, { maxBytes = MAX_API
       }
       if (c === '{') { if (depth === 0) objectStart = next; depth += 1; }
       else if (c === '[') { if (depth === 0) objectStart = next; depth += 1; }
-      else if (c === '}') { depth -= 1; if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); } }
+      else if (c === '}') { depth -= 1; if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); await flushBatch(); } }
       else if (c === ']') {
         if (depth === 0) { phase = 'done'; return; }
         depth -= 1;
-        if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); }
+        if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); await flushBatch(); }
       }
     }
   };
@@ -185,16 +249,11 @@ export async function streamJsonArrayBatches(body, onBatch, { maxBytes = MAX_API
       received += value.byteLength;
       if (received > maxBytes) throw new Error(`Réponse Xtream VOD trop volumineuse (${received} octets, limite ${maxBytes})`);
       buffer += decoder.decode(value, { stream: true });
-      scan();
+      await scan();
       if (done) break;
-      if (pending.length >= batchSize) {
-        const batch = pending;
-        pending = [];
-        await onBatch(batch);
-        emitted += batch.length;
-      }
+      await flushBatch();
     }
-    scan();
+    await scan();
     if (pending.length > 0) { const batch = pending; pending = []; await onBatch(batch); emitted += batch.length; }
   } catch (error) {
     await reader.cancel().catch(() => undefined);

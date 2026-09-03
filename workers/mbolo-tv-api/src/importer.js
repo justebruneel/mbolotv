@@ -2,13 +2,18 @@ import pg from 'pg';
 import { importKey, encryptLocator, decryptLocator, sha256Hex } from './crypto.js';
 import { slugify, detectCountry } from './normalize.js';
 import { parseM3uStream } from './m3u.js';
-import { fetchXtreamEntries, fetchXtreamVodBatches } from './xtream.js';
+import { fetchXtreamLiveBatches, fetchXtreamVodBatches } from './xtream.js';
 import { fetchMacPortalEntries } from './macportal.js';
 
-const BATCH = 5000;
-const QUERY_BATCH = 2000;
+// Lots mémoire-bornés (dizaines de milliers d'entrées) : ingestion au fil du
+// flux, jamais plus d'un lot en mémoire. Paramètres SQL : 1000×11 = 11000,
+// large marge sous la limite Postgres (65535).
+const BATCH = 1000;
+const QUERY_BATCH = 1000;
 const CRYPTO_PARALLEL = 200;
-const VOD_BATCH = 2000;
+const VOD_BATCH = 1000;
+const LIVE_BATCH = 1000;
+const PRUNE_SCAN = 5000;
 export const ACTIVE_IMPORT_STATES = ['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING'];
 
 function chunks(values, size) {
@@ -100,6 +105,16 @@ export async function runSourceImport(env, sourceId, importRunId) {
     const metricsPayload = () => JSON.stringify({ ...metrics, heartbeatAt: new Date().toISOString() });
     const persistMetrics = () =>
       q(`UPDATE "ImportRun" SET metrics = $2 WHERE id = $1`, [importRunId, metricsPayload()]).catch(() => undefined);
+    // Heartbeat throttlé pour les longues phases sans ingestion (téléchargement
+    // M3U, parse) : sans lui, le cron déclarerait le run orphelin au bout de
+    // 15 min et le relancerait en double.
+    let lastTouchAt = 0;
+    const touchThrottled = async (intervalMs = 30_000) => {
+      const now = Date.now();
+      if (now - lastTouchAt < intervalMs) return;
+      lastTouchAt = now;
+      await persistMetrics();
+    };
 
     if (source.kind === 'M3U') {
       const url = connection.url ?? connection.playlistUrl;
@@ -107,42 +122,63 @@ export async function runSourceImport(env, sourceId, importRunId) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
       const maxBytes = Number(env.IMPORT_MAX_BYTES ?? 512 * 1024 * 1024);
       const response = await fetchWithLimits(url, { maxBytes, timeoutMs: Number(env.IMPORT_FETCH_TIMEOUT_MS ?? 300_000) });
-      const entries = [];
-      const m3uMovies = [];
+      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
+      // Ingestion au fil du parse : jamais plus d'un lot (1000) en mémoire,
+      // heartbeat pendant le téléchargement/parse, sortOrder global continu.
       // Films M3U : URLs avec extension VOD (mp4/mkv/…) → VodItem au lieu du
       // catalogue live ; group-title devient la catégorie VOD.
+      const baseHash = (await sha256Hex(url)).slice(0, 8);
+      let liveBatch = [];
+      let vodBatch = [];
+      let liveCursor = 0;
+      const flushLive = async () => {
+        if (liveBatch.length === 0) return;
+        const batch = liveBatch;
+        liveBatch = [];
+        await ingestEntries(q, key, source, batch, metrics, seenInput, seenChannelIds, persistMetrics, liveCursor);
+        liveCursor += batch.length;
+        await persistMetrics();
+      };
+      const flushVod = async () => {
+        if (vodBatch.length === 0) return;
+        const batch = vodBatch;
+        vodBatch = [];
+        await ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys);
+        await persistMetrics();
+      };
       console.log(`[import] M3U: parsing du flux…`);
-      await parseM3uStream(response.body, (entry) => entries.push(entry), maxBytes, (movie) => {
+      await parseM3uStream(response.body, (entry) => {
+        metrics.read += 1;
+        liveBatch.push(entry);
+        if (liveBatch.length >= LIVE_BATCH) return flushLive();
+      }, maxBytes, (movie) => {
         let containerExt = 'mp4';
         try { containerExt = new URL(movie.url).pathname.toLowerCase().split('.').pop() || 'mp4'; } catch { /* locator déjà validé par isVodUrl */ }
-        m3uMovies.push({ kind: 'MOVIE', externalId: movie.url, title: movie.title, posterUrl: movie.posterUrl, rating: null, categoryTitle: movie.categoryTitle, containerExt, addedAt: null, locator: movie.url });
-      });
-      console.log(`[import] M3U: ${entries.length} chaînes + ${m3uMovies.length} films parsés`);
-      metrics.read = entries.length + m3uMovies.length;
-      await persistMetrics();
-      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
-      await ingestEntries(q, key, source, entries, metrics, seenInput, seenChannelIds, persistMetrics);
-      if (m3uMovies.length > 0) {
-        const baseHash = (await sha256Hex(url)).slice(0, 8);
-        for (const part of chunks(m3uMovies, VOD_BATCH)) {
-          await ingestVodPhase(q, key, source, part, metrics, persistMetrics, baseHash, seenVodKeys);
-        }
-      }
+        metrics.read += 1;
+        vodBatch.push({ kind: 'MOVIE', externalId: movie.url, title: movie.title, posterUrl: movie.posterUrl, rating: null, categoryTitle: movie.categoryTitle, containerExt, addedAt: null, locator: movie.url });
+        if (vodBatch.length >= VOD_BATCH) return flushVod();
+      }, () => touchThrottled());
+      await flushLive();
+      await flushVod();
+      console.log(`[import] M3U: ${metrics.read} entrées parsées et ingérées`);
     } else if (source.kind === 'XTREAM') {
       if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants');
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
       console.log(`[import ${sourceId}] live: catégories + get_live_streams`);
-      let entries;
+      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
+      // Ingestion au fil du flux JSON : jamais plus d'un lot (1000) en mémoire.
+      let liveCursor = 0;
       try {
-        ({ entries } = await fetchXtreamEntries(env, connection, persistMetrics));
+        await fetchXtreamLiveBatches(env, connection, persistMetrics, async (batch) => {
+          metrics.read += batch.length;
+          await ingestEntries(q, key, source, batch, metrics, seenInput, seenChannelIds, persistMetrics, liveCursor);
+          liveCursor += batch.length;
+          await persistMetrics();
+        });
       } catch (error) {
         throw new ImportError('CONNECTOR_ERROR', error.message);
       }
-      console.log(`[import ${sourceId}] live: ${entries.length} chaînes reçues`);
-      metrics.read = entries.length;
-      await persistMetrics();
-      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
-      await ingestEntries(q, key, source, entries, metrics, seenInput, seenChannelIds, persistMetrics);
+      console.log(`[import ${sourceId}] live: ${metrics.read} chaînes reçues et ingérées`);
       console.log(`[import ${sourceId}] live ingéré: ${JSON.stringify({ created: metrics.created, updated: metrics.updated, duplicates: metrics.duplicates, errors: metrics.errors })}`);
     } else if (source.kind === 'MAC_PORTAL') {
       const url = connection.url ?? connection.portal;
@@ -189,18 +225,33 @@ export async function runSourceImport(env, sourceId, importRunId) {
     }
 
     // Prune : variantes actives de la source absentes du dernier flux.
-    const active = await q(`SELECT id, "channelId" FROM "StreamVariant" WHERE "sourceId" = $1 AND "isActive"`, [sourceId]);
-    const toPrune = active.rows.filter((variant) => !seenChannelIds.has(variant.channelId));
-    for (const part of chunks(toPrune, 500)) {
-      const result = await q(`UPDATE "StreamVariant" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((variant) => variant.id)]);
-      metrics.pruned += result.rowCount;
+    // Pagination par clé (id > dernier vu) : jamais tout l'historique actif
+    // en RAM, et robuste aux désactivations (contrairement à OFFSET qui
+    // sauterait des lignes quand le jeu se réduit entre deux pages).
+    let pruneCursor = '';
+    for (;;) {
+      const page = await q(`SELECT id, "channelId" FROM "StreamVariant" WHERE "sourceId" = $1 AND "isActive" AND id > $2 ORDER BY id LIMIT $3`, [sourceId, pruneCursor, PRUNE_SCAN]);
+      if (page.rows.length === 0) break;
+      pruneCursor = page.rows[page.rows.length - 1].id;
+      const toPrune = page.rows.filter((variant) => !seenChannelIds.has(variant.channelId));
+      for (const part of chunks(toPrune, 500)) {
+        const result = await q(`UPDATE "StreamVariant" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((variant) => variant.id)]);
+        metrics.pruned += result.rowCount;
+      }
+      if (page.rows.length < PRUNE_SCAN) break;
     }
     // Prune VOD : items actifs de la source absents du dernier flux.
-    const activeVod = await q(`SELECT id, "normalizedKey" FROM "VodItem" WHERE "sourceId" = $1 AND "isActive"`, [sourceId]);
-    const toPruneVod = activeVod.rows.filter((item) => !seenVodKeys.has(item.normalizedKey));
-    for (const part of chunks(toPruneVod, 500)) {
-      const result = await q(`UPDATE "VodItem" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((item) => item.id)]);
-      metrics.pruned += result.rowCount;
+    let pruneVodCursor = '';
+    for (;;) {
+      const page = await q(`SELECT id, "normalizedKey" FROM "VodItem" WHERE "sourceId" = $1 AND "isActive" AND id > $2 ORDER BY id LIMIT $3`, [sourceId, pruneVodCursor, PRUNE_SCAN]);
+      if (page.rows.length === 0) break;
+      pruneVodCursor = page.rows[page.rows.length - 1].id;
+      const toPruneVod = page.rows.filter((item) => !seenVodKeys.has(item.normalizedKey));
+      for (const part of chunks(toPruneVod, 500)) {
+        const result = await q(`UPDATE "VodItem" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((item) => item.id)]);
+        metrics.pruned += result.rowCount;
+      }
+      if (page.rows.length < PRUNE_SCAN) break;
     }
     metrics.processed = metrics.read;
     metrics.ignored = Math.max(0, metrics.read - (metrics.created + metrics.vodCreated) - (metrics.updated + metrics.vodUpdated) - metrics.duplicates - metrics.vodDuplicates - metrics.errors - metrics.vodErrors);
@@ -224,7 +275,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
   }
 }
 
-async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, seenChannelIds, persistMetrics) {
+export async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, seenChannelIds, persistMetrics, sortOffset = 0) {
   const categorySlugs = new Set();
   const categoryNameBySlug = new Map();
   const metas = [];
@@ -241,7 +292,7 @@ async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, 
         categorySlugs.add(categorySlug);
         if (!categoryNameBySlug.has(categorySlug)) categoryNameBySlug.set(categorySlug, entry.groupTitle);
       }
-      metas.push({ ...entry, key: normalizedKey, legacyKey: slugify(entry.title), country, categorySlug, sortOrder: index + 1 });
+      metas.push({ ...entry, key: normalizedKey, legacyKey: slugify(entry.title), country, categorySlug, sortOrder: sortOffset + index + 1 });
     } catch {
       metrics.errors += 1;
     }
@@ -417,7 +468,7 @@ async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, 
 // un gros catalogue Xtream VOD dépasse 100 000 items, tout bufferiser ferait
 // exploser l'isolate. Les lots films/séries sont consommés au fil de l'eau ;
 // la purge VOD balaie seenVodKeys rempli au fil des lots.
-async function ingestVodPhase(q, cryptoKey, source, entries, metrics, persistMetrics, baseHash, seenVodKeys) {
+export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, persistMetrics, baseHash, seenVodKeys) {
   if (!entries || entries.length === 0) return;
   const metas = [];
 
