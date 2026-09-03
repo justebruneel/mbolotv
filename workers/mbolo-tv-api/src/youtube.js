@@ -21,10 +21,10 @@ const LIST_CACHE_TTL_S = 3600;
 const VIDEO_CACHE_TTL_S = 24 * 3600;
 const YT_TIMEOUT_MS = 15_000;
 
-function jsonError(message, status) {
+function jsonError(message, status, cors = {}) {
   return new Response(JSON.stringify({ message }), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...cors },
   });
 }
 
@@ -124,9 +124,9 @@ function normalizeSearchItem(item) {
   };
 }
 
-export async function serveYoutubeList(env, channelId, pageToken, limit, q) {
-  if (!channelAllowlist(env).includes(channelId)) return jsonError('Chaîne non autorisée', 403);
-  if (!String(env.YOUTUBE_API_KEY ?? '').trim()) return jsonError('Clé YouTube non configurée', 503);
+export async function serveYoutubeList(env, channelId, pageToken, limit, q, cors = {}) {
+  if (!channelAllowlist(env).includes(channelId)) return jsonError('Chaîne non autorisée', 403, cors);
+  if (!String(env.YOUTUBE_API_KEY ?? '').trim()) return jsonError('Clé YouTube non configurée', 503, cors);
   const maxResults = Math.min(Math.max(Number(limit) || 25, 1), 50);
   const query = typeof q === 'string' ? q.trim().slice(0, 80) : '';
   const cache = globalThis.caches?.default;
@@ -147,20 +147,20 @@ export async function serveYoutubeList(env, channelId, pageToken, limit, q) {
       ...(pageToken ? { pageToken } : {}),
     });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : 'YouTube indisponible', error instanceof Error && typeof error.status === 'number' ? error.status : 502);
+    return jsonError(error instanceof Error ? error.message : 'YouTube indisponible', error instanceof Error && typeof error.status === 'number' ? error.status : 502, cors);
   }
   const items = (Array.isArray(payload?.items) ? payload.items : []).map(normalizeSearchItem).filter(Boolean);
   const response = new Response(JSON.stringify({ items, nextPageToken: typeof payload?.nextPageToken === 'string' ? payload.nextPageToken : null }), {
     status: 200,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${LIST_CACHE_TTL_S}` },
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${LIST_CACHE_TTL_S}`, ...cors },
   });
   if (cache) await cache.put(new Request(cacheKey), response.clone()).catch(() => undefined);
   return response;
 }
 
-export async function serveYoutubeVideo(env, videoId) {
-  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return jsonError('Identifiant vidéo invalide', 400);
-  if (!String(env.YOUTUBE_API_KEY ?? '').trim()) return jsonError('Clé YouTube non configurée', 503);
+export async function serveYoutubeVideo(env, videoId, cors = {}) {
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return jsonError('Identifiant vidéo invalide', 400, cors);
+  if (!String(env.YOUTUBE_API_KEY ?? '').trim()) return jsonError('Clé YouTube non configurée', 503, cors);
   const cache = globalThis.caches?.default;
   const cacheKey = `https://yt.internal/video?id=${encodeURIComponent(videoId)}`;
   if (cache) {
@@ -171,10 +171,10 @@ export async function serveYoutubeVideo(env, videoId) {
   try {
     payload = await ytFetch(env, 'videos.list', { part: 'snippet,contentDetails', id: videoId });
   } catch (error) {
-    return jsonError(error instanceof Error ? error.message : 'YouTube indisponible', error instanceof Error && typeof error.status === 'number' ? error.status : 502);
+    return jsonError(error instanceof Error ? error.message : 'YouTube indisponible', error instanceof Error && typeof error.status === 'number' ? error.status : 502, cors);
   }
   const item = Array.isArray(payload?.items) ? payload.items[0] : null;
-  if (!item) return jsonError('Vidéo introuvable', 404);
+  if (!item) return jsonError('Vidéo introuvable', 404, cors);
   const normalized = {
     id: videoId,
     title: typeof item.snippet?.title === 'string' ? item.snippet.title : 'Sans titre',
@@ -185,7 +185,7 @@ export async function serveYoutubeVideo(env, videoId) {
   };
   const response = new Response(JSON.stringify(normalized), {
     status: 200,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${VIDEO_CACHE_TTL_S}` },
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${VIDEO_CACHE_TTL_S}`, ...cors },
   });
   if (cache) await cache.put(new Request(cacheKey), response.clone()).catch(() => undefined);
   return response;

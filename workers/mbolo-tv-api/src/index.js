@@ -293,7 +293,7 @@ async function route(ctx, url) {
   // Proxy d'images (logos) : URLs signées par l'existence en base, servies
   // depuis notre domaine avec cache edge (hôtes fournisseur souvent morts).
   if (path === "/api/logo" && method === "GET")
-    return logo.serveLogo(env, url.searchParams.get("url") ?? "");
+    return logo.serveLogo(env, url.searchParams.get("url") ?? "", ctx.corsHeaders());
 
   const channelMatch = path.match(/^\/api\/channels\/([^/]+)(\/(epg|play))?$/);
 
@@ -503,11 +503,12 @@ async function route(ctx, url) {
       url.searchParams.get("pageToken") ?? null,
       intParam(url.searchParams.get("limit"), 25, 1, 50),
       url.searchParams.get("q") ?? null,
+      ctx.corsHeaders(),
     );
   }
 
   if (path === "/api/vod/youtube/video" && method === "GET")
-    return youtube.serveYoutubeVideo(env, url.searchParams.get("id") ?? "");
+    return youtube.serveYoutubeVideo(env, url.searchParams.get("id") ?? "", ctx.corsHeaders());
 
   const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
 
