@@ -15,7 +15,7 @@ import { resolveRelay } from './relay.js';
 // Cache edge : 1 h sur les listes, 24 h sur les fiches.
 // Allowlist : seules les chaînes configurées (YOUTUBE_CHANNEL_ALLOWLIST,
 // défaut Aforevo Galerie) sont interrogeables — pas de scraping arbitraire.
-const YT_API = 'https://www.googleapis.com/youtube/v3';
+const YT_API = 'https://youtube.googleapis.com/youtube/v3';
 const AFOREVO_CHANNEL_ID = 'UCyd79F-lNLCbGPQrf_L7KiA';
 const LIST_CACHE_TTL_S = 3600;
 const VIDEO_CACHE_TTL_S = 24 * 3600;
