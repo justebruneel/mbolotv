@@ -322,7 +322,10 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
               await persistMetrics();
             },
           }, { skipSeries, skipMovies });
-          if (!skipSeries) { vodSeriesPassed = true; metrics.vodSeriesDone = 1; }
+          // Sous-phase marquée faite DÈS sa fin : une reprise saute les
+          // séries (déjà ingérées) au lieu de rejouer les deux flux, un
+          // isolate tué en plein téléchargement films converge sinon jamais.
+          if (!skipSeries) { vodSeriesPassed = true; metrics.vodSeriesDone = 1; await persistMetrics(); }
           if (!skipMovies) { vodMoviesPassed = true; metrics.vodMoviesDone = 1; }
           await persistMetrics();
           console.log(`[import ${sourceId}] VOD terminé: ${JSON.stringify({ vodRead: metrics.vodRead, vodCreated: metrics.vodCreated, vodUpdated: metrics.vodUpdated, vodDuplicates: metrics.vodDuplicates, vodErrors: metrics.vodErrors })}`);

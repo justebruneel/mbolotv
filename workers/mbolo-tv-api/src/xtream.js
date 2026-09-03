@@ -171,6 +171,11 @@ export async function streamJsonArrayBatches(body, onBatch, { maxBytes = MAX_API
   let done = false;
 
   const compact = (cut) => { buffer = cut >= buffer.length ? '' : buffer.slice(cut); scanPos -= cut; if (scanPos < 0) scanPos = 0; objectStart = objectStart >= 0 ? objectStart - cut : -1; };
+  // Compactage au seuil : un buffer.slice() après CHAQUE objet coûte O(n²)
+  // sur un catalogue de 100k+ items (l'isolate meurt en plein flux films,
+  // CPU épuisé). On n'compacte que hors objet et tous les 2 Mo — la mémoire
+  // reste bornée au dernier objet + seuil, le CPU devient linéaire.
+  const maybeCompact = () => { if (objectStart < 0 && scanPos > 2_000_000) compact(scanPos); };
   // Flush strict : dès que le seuil est atteint, le lot part immédiatement —
   // aucun lot ne dépasse batchSize (pas de dépassement lié à la taille des
   // chunks réseau), ce qui borne la mémoire quelle que soit la source.
@@ -219,11 +224,11 @@ export async function streamJsonArrayBatches(body, onBatch, { maxBytes = MAX_API
       }
       if (c === '{') { if (depth === 0) objectStart = next; depth += 1; }
       else if (c === '[') { if (depth === 0) objectStart = next; depth += 1; }
-      else if (c === '}') { depth -= 1; if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); await flushBatch(); } }
+      else if (c === '}') { depth -= 1; if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); await flushBatch(); maybeCompact(); } }
       else if (c === ']') {
         if (depth === 0) { phase = 'done'; return; }
         depth -= 1;
-        if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); await flushBatch(); }
+        if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); await flushBatch(); maybeCompact(); }
       }
     }
   };
