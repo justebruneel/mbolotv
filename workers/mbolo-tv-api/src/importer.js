@@ -96,7 +96,30 @@ export async function runSourceImport(env, sourceId, importRunId) {
       throw new ImportError('DECRYPT_ERROR', 'Connexion source illisible (clé de chiffrement différente)');
     }
 
-    const metrics = { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0, vodRead: 0, vodCreated: 0, vodUpdated: 0, vodDuplicates: 0, vodErrors: 0 };
+    const metrics = { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0, vodRead: 0, vodCreated: 0, vodUpdated: 0, vodDuplicates: 0, vodErrors: 0, liveCursor: 0, liveDone: 0, vodSeriesCursor: 0, vodSeriesDone: 0, vodMoviesCursor: 0, vodMoviesDone: 0 };
+    // Reprise par curseur : un run relancé (même id, après waitUntil tué)
+    // restaure ses compteurs et saute les entrées/phases déjà ingérées au
+    // lieu de tout recommencer — chaque tentative ne coûte que le travail
+    // restant, donc convergence garantie même avec un plafond CPU bas.
+    // Champs numériques (contrat metrics = record<number> respecté).
+    const num = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+    let saved = run.metrics ?? null;
+    if (typeof saved === 'string') { try { saved = JSON.parse(saved); } catch { saved = null; } }
+    metrics.liveCursor = num(saved?.liveCursor);
+    metrics.liveDone = num(saved?.liveDone);
+    metrics.vodSeriesCursor = num(saved?.vodSeriesCursor);
+    metrics.vodSeriesDone = num(saved?.vodSeriesDone);
+    metrics.vodMoviesCursor = num(saved?.vodMoviesCursor);
+    metrics.vodMoviesDone = num(saved?.vodMoviesDone);
+    if (metrics.liveCursor > 0 || metrics.vodSeriesCursor > 0 || metrics.vodMoviesCursor > 0) {
+      console.log(`[import ${sourceId}] reprise du run (live ${metrics.liveCursor}, séries ${metrics.vodSeriesCursor}, films ${metrics.vodMoviesCursor} déjà ingérés)`);
+    }
+    // Phases passées PENDANT CE run : seule une phase entièrement rejouée ici
+    // autorise sa purge (les sets seen* sont reconstruits à vide à chaque
+    // exécution — purger sur une phase sautée désactiverait tout le catalogue).
+    let livePassed = false;
+    let vodSeriesPassed = false;
+    let vodMoviesPassed = false;
     const seenInput = new Set();
     const seenChannelIds = new Set();
     const seenVodKeys = new Set();
@@ -130,13 +153,18 @@ export async function runSourceImport(env, sourceId, importRunId) {
       const baseHash = (await sha256Hex(url)).slice(0, 8);
       let liveBatch = [];
       let vodBatch = [];
-      let liveCursor = 0;
+      let liveCursor = metrics.liveCursor;
+      let vodCursor = metrics.vodMoviesCursor;
+      let skipLive = metrics.liveCursor;
+      let skipVod = metrics.vodMoviesCursor;
       const flushLive = async () => {
         if (liveBatch.length === 0) return;
         const batch = liveBatch;
         liveBatch = [];
         await ingestEntries(q, key, source, batch, metrics, seenInput, seenChannelIds, persistMetrics, liveCursor);
         liveCursor += batch.length;
+        metrics.liveCursor = liveCursor;
+        console.log(`[import] M3U: lot live ${batch.length} (curseur ${liveCursor})`);
         await persistMetrics();
       };
       const flushVod = async () => {
@@ -144,14 +172,19 @@ export async function runSourceImport(env, sourceId, importRunId) {
         const batch = vodBatch;
         vodBatch = [];
         await ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys);
+        vodCursor += batch.length;
+        metrics.vodMoviesCursor = vodCursor;
+        console.log(`[import] M3U: lot films ${batch.length} (curseur ${vodCursor})`);
         await persistMetrics();
       };
       console.log(`[import] M3U: parsing du flux…`);
       await parseM3uStream(response.body, (entry) => {
+        if (skipLive > 0) { skipLive -= 1; return; }
         metrics.read += 1;
         liveBatch.push(entry);
         if (liveBatch.length >= LIVE_BATCH) return flushLive();
       }, maxBytes, (movie) => {
+        if (skipVod > 0) { skipVod -= 1; return; }
         let containerExt = 'mp4';
         try { containerExt = new URL(movie.url).pathname.toLowerCase().split('.').pop() || 'mp4'; } catch { /* locator déjà validé par isVodUrl */ }
         metrics.read += 1;
@@ -160,26 +193,45 @@ export async function runSourceImport(env, sourceId, importRunId) {
       }, () => touchThrottled());
       await flushLive();
       await flushVod();
+      livePassed = true;
+      vodMoviesPassed = true;
+      metrics.liveDone = 1;
+      metrics.vodMoviesDone = 1;
+      await persistMetrics();
       console.log(`[import] M3U: ${metrics.read} entrées parsées et ingérées`);
     } else if (source.kind === 'XTREAM') {
       if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants');
-      await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
-      console.log(`[import ${sourceId}] live: catégories + get_live_streams`);
-      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
-      // Ingestion au fil du flux JSON : jamais plus d'un lot (1000) en mémoire.
-      let liveCursor = 0;
-      try {
-        await fetchXtreamLiveBatches(env, connection, persistMetrics, async (batch) => {
-          metrics.read += batch.length;
-          await ingestEntries(q, key, source, batch, metrics, seenInput, seenChannelIds, persistMetrics, liveCursor);
-          liveCursor += batch.length;
-          await persistMetrics();
-        });
-      } catch (error) {
-        throw new ImportError('CONNECTOR_ERROR', error.message);
+      if (metrics.liveDone === 1) {
+        console.log(`[import ${sourceId}] live: déjà ingéré (reprise) — phase sautée`);
+      } else {
+        await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
+        console.log(`[import ${sourceId}] live: catégories + get_live_streams`);
+        await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
+        // Ingestion au fil du flux JSON : jamais plus d'un lot (1000) en mémoire.
+        let liveCursor = metrics.liveCursor;
+        let skip = metrics.liveCursor;
+        if (skip > 0) console.log(`[import ${sourceId}] live: reprise (${skip} déjà ingérées)`);
+        try {
+          await fetchXtreamLiveBatches(env, connection, persistMetrics, async (batch) => {
+            let usable = batch;
+            if (skip > 0) { const drop = Math.min(skip, batch.length); usable = batch.slice(drop); skip -= drop; }
+            if (usable.length === 0) return;
+            metrics.read += usable.length;
+            await ingestEntries(q, key, source, usable, metrics, seenInput, seenChannelIds, persistMetrics, liveCursor);
+            liveCursor += usable.length;
+            metrics.liveCursor = liveCursor;
+            console.log(`[import ${sourceId}] live: lot ${usable.length} (curseur ${liveCursor})`);
+            await persistMetrics();
+          });
+        } catch (error) {
+          throw new ImportError('CONNECTOR_ERROR', error.message);
+        }
+        livePassed = true;
+        metrics.liveDone = 1;
+        await persistMetrics();
+        console.log(`[import ${sourceId}] live: ${metrics.read} chaînes reçues et ingérées`);
+        console.log(`[import ${sourceId}] live ingéré: ${JSON.stringify({ created: metrics.created, updated: metrics.updated, duplicates: metrics.duplicates, errors: metrics.errors })}`);
       }
-      console.log(`[import ${sourceId}] live: ${metrics.read} chaînes reçues et ingérées`);
-      console.log(`[import ${sourceId}] live ingéré: ${JSON.stringify({ created: metrics.created, updated: metrics.updated, duplicates: metrics.duplicates, errors: metrics.errors })}`);
     } else if (source.kind === 'MAC_PORTAL') {
       const url = connection.url ?? connection.portal;
       const macAddress = connection.macAddress ?? connection.mac ?? connection.mac_address;
@@ -195,6 +247,15 @@ export async function runSourceImport(env, sourceId, importRunId) {
       await persistMetrics();
       await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
       await ingestEntries(q, key, source, entries, metrics, seenInput, seenChannelIds, persistMetrics);
+      // MAC : ingestion monobloc (pas de streaming) → phases considérées
+      // passées, purge autorisée.
+      livePassed = true;
+      vodSeriesPassed = true;
+      vodMoviesPassed = true;
+      metrics.liveDone = 1;
+      metrics.vodSeriesDone = 1;
+      metrics.vodMoviesDone = 1;
+      await persistMetrics();
     } else {
       throw new ImportError('UNSUPPORTED_KIND', 'Type de source non pris en charge dans le Worker');
     }
@@ -206,52 +267,104 @@ export async function runSourceImport(env, sourceId, importRunId) {
     // ingéré : l'erreur est enregistrée sur le run sans le marquer FAILED).
     if (source.kind === 'XTREAM' && source.vodEnabled) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
-      try {
-        console.log(`[import ${sourceId}] VOD: démarrage (flux via relais si 403)`);
-        const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
-        await fetchXtreamVodBatches(env, connection, persistMetrics, {
-          onMovies: (batch) => { console.log(`[import ${sourceId}] VOD: lot films ${batch.length}`); return ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys); },
-          onSeries: (batch) => { console.log(`[import ${sourceId}] VOD: lot séries ${batch.length}`); return ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys); },
-        });
-        console.log(`[import ${sourceId}] VOD terminé: ${JSON.stringify({ vodRead: metrics.vodRead, vodCreated: metrics.vodCreated, vodUpdated: metrics.vodUpdated, vodDuplicates: metrics.vodDuplicates, vodErrors: metrics.vodErrors })}`);
-      } catch (error) {
-        const message = String(error instanceof Error ? error.message : error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300);
-        console.log(`[import ${sourceId}] VOD erreur (non fatale): ${message}`);
-        metrics.vodErrors += 1;
-        await q(`UPDATE "ImportRun" SET "errorCode" = 'VOD_CONNECTOR_ERROR', "errorMessage" = $2 WHERE id = $1`, [importRunId, message]).catch(() => undefined);
+      // Sous-phases déjà terminées : sautées (reprise) au lieu d'être
+      // retéléchargées — seuls les flux restants sont consommés.
+      const skipSeries = metrics.vodSeriesDone === 1;
+      const skipMovies = metrics.vodMoviesDone === 1;
+      if (skipSeries && skipMovies) {
+        console.log(`[import ${sourceId}] VOD: déjà ingérée (reprise) — phase sautée`);
+        vodSeriesPassed = true;
+        vodMoviesPassed = true;
+      } else {
+        try {
+          console.log(`[import ${sourceId}] VOD: démarrage (flux via relais si 403)`);
+          const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
+          let moviesCursor = metrics.vodMoviesCursor;
+          let seriesCursor = metrics.vodSeriesCursor;
+          let skipM = metrics.vodMoviesCursor;
+          let skipS = metrics.vodSeriesCursor;
+          await fetchXtreamVodBatches(env, connection, persistMetrics, {
+            onMovies: async (batch) => {
+              let usable = batch;
+              if (skipM > 0) { const drop = Math.min(skipM, batch.length); usable = batch.slice(drop); skipM -= drop; }
+              if (usable.length === 0) return;
+              await ingestVodPhase(q, key, source, usable, metrics, persistMetrics, baseHash, seenVodKeys);
+              moviesCursor += usable.length;
+              metrics.vodMoviesCursor = moviesCursor;
+              console.log(`[import ${sourceId}] VOD: lot films ${usable.length} (curseur ${moviesCursor})`);
+              await persistMetrics();
+            },
+            onSeries: async (batch) => {
+              let usable = batch;
+              if (skipS > 0) { const drop = Math.min(skipS, batch.length); usable = batch.slice(drop); skipS -= drop; }
+              if (usable.length === 0) return;
+              await ingestVodPhase(q, key, source, usable, metrics, persistMetrics, baseHash, seenVodKeys);
+              seriesCursor += usable.length;
+              metrics.vodSeriesCursor = seriesCursor;
+              console.log(`[import ${sourceId}] VOD: lot séries ${usable.length} (curseur ${seriesCursor})`);
+              await persistMetrics();
+            },
+          }, { skipSeries, skipMovies });
+          if (!skipSeries) { vodSeriesPassed = true; metrics.vodSeriesDone = 1; }
+          if (!skipMovies) { vodMoviesPassed = true; metrics.vodMoviesDone = 1; }
+          await persistMetrics();
+          console.log(`[import ${sourceId}] VOD terminé: ${JSON.stringify({ vodRead: metrics.vodRead, vodCreated: metrics.vodCreated, vodUpdated: metrics.vodUpdated, vodDuplicates: metrics.vodDuplicates, vodErrors: metrics.vodErrors })}`);
+        } catch (error) {
+          const message = String(error instanceof Error ? error.message : error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300);
+          console.log(`[import ${sourceId}] VOD erreur (non fatale): ${message}`);
+          metrics.vodErrors += 1;
+          await q(`UPDATE "ImportRun" SET "errorCode" = 'VOD_CONNECTOR_ERROR', "errorMessage" = $2 WHERE id = $1`, [importRunId, message]).catch(() => undefined);
+        }
       }
     } else if (source.kind === 'XTREAM') {
       console.log(`[import ${sourceId}] VOD désactivé (vodEnabled=false) — films/séries ignorés`);
+      // Rien à ingérer → phases considérées passées (la purge VOD reste
+      // autorisée : elle désactivera les items d'une activation précédente).
+      vodSeriesPassed = true;
+      vodMoviesPassed = true;
+      metrics.vodSeriesDone = 1;
+      metrics.vodMoviesDone = 1;
     }
 
-    // Prune : variantes actives de la source absentes du dernier flux.
-    // Pagination par clé (id > dernier vu) : jamais tout l'historique actif
-    // en RAM, et robuste aux désactivations (contrairement à OFFSET qui
-    // sauterait des lignes quand le jeu se réduit entre deux pages).
-    let pruneCursor = '';
-    for (;;) {
-      const page = await q(`SELECT id, "channelId" FROM "StreamVariant" WHERE "sourceId" = $1 AND "isActive" AND id > $2 ORDER BY id LIMIT $3`, [sourceId, pruneCursor, PRUNE_SCAN]);
-      if (page.rows.length === 0) break;
-      pruneCursor = page.rows[page.rows.length - 1].id;
-      const toPrune = page.rows.filter((variant) => !seenChannelIds.has(variant.channelId));
-      for (const part of chunks(toPrune, 500)) {
-        const result = await q(`UPDATE "StreamVariant" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((variant) => variant.id)]);
-        metrics.pruned += result.rowCount;
+    // Prune : uniquement si la phase live a été entièrement rejouée PENDANT
+    // CE run. Sur une reprise partielle, seenChannelIds est incomplet :
+    // purger désactiverait à tort tout le catalogue déjà ingéré.
+    if (!livePassed) {
+      console.log(`[import ${sourceId}] prune live ignorée (phase incomplète — reprise ultérieure)`);
+    } else {
+      // Pagination par clé (id > dernier vu) : jamais tout l'historique actif
+      // en RAM, et robuste aux désactivations (contrairement à OFFSET qui
+      // sauterait des lignes quand le jeu se réduit entre deux pages).
+      let pruneCursor = '';
+      for (;;) {
+        const page = await q(`SELECT id, "channelId" FROM "StreamVariant" WHERE "sourceId" = $1 AND "isActive" AND id > $2 ORDER BY id LIMIT $3`, [sourceId, pruneCursor, PRUNE_SCAN]);
+        if (page.rows.length === 0) break;
+        pruneCursor = page.rows[page.rows.length - 1].id;
+        const toPrune = page.rows.filter((variant) => !seenChannelIds.has(variant.channelId));
+        for (const part of chunks(toPrune, 500)) {
+          const result = await q(`UPDATE "StreamVariant" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((variant) => variant.id)]);
+          metrics.pruned += result.rowCount;
+        }
+        if (page.rows.length < PRUNE_SCAN) break;
       }
-      if (page.rows.length < PRUNE_SCAN) break;
     }
-    // Prune VOD : items actifs de la source absents du dernier flux.
-    let pruneVodCursor = '';
-    for (;;) {
-      const page = await q(`SELECT id, "normalizedKey" FROM "VodItem" WHERE "sourceId" = $1 AND "isActive" AND id > $2 ORDER BY id LIMIT $3`, [sourceId, pruneVodCursor, PRUNE_SCAN]);
-      if (page.rows.length === 0) break;
-      pruneVodCursor = page.rows[page.rows.length - 1].id;
-      const toPruneVod = page.rows.filter((item) => !seenVodKeys.has(item.normalizedKey));
-      for (const part of chunks(toPruneVod, 500)) {
-        const result = await q(`UPDATE "VodItem" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((item) => item.id)]);
-        metrics.pruned += result.rowCount;
+    // Prune VOD : même règle (les deux sous-phases séries + films doivent
+    // avoir été rejouées pendant ce run).
+    if (!(vodSeriesPassed && vodMoviesPassed)) {
+      console.log(`[import ${sourceId}] prune VOD ignorée (phase incomplète — reprise ultérieure)`);
+    } else {
+      let pruneVodCursor = '';
+      for (;;) {
+        const page = await q(`SELECT id, "normalizedKey" FROM "VodItem" WHERE "sourceId" = $1 AND "isActive" AND id > $2 ORDER BY id LIMIT $3`, [sourceId, pruneVodCursor, PRUNE_SCAN]);
+        if (page.rows.length === 0) break;
+        pruneVodCursor = page.rows[page.rows.length - 1].id;
+        const toPruneVod = page.rows.filter((item) => !seenVodKeys.has(item.normalizedKey));
+        for (const part of chunks(toPruneVod, 500)) {
+          const result = await q(`UPDATE "VodItem" SET "isActive" = false WHERE id = ANY($1::text[])`, [part.map((item) => item.id)]);
+          metrics.pruned += result.rowCount;
+        }
+        if (page.rows.length < PRUNE_SCAN) break;
       }
-      if (page.rows.length < PRUNE_SCAN) break;
     }
     metrics.processed = metrics.read;
     metrics.ignored = Math.max(0, metrics.read - (metrics.created + metrics.vodCreated) - (metrics.updated + metrics.vodUpdated) - metrics.duplicates - metrics.vodDuplicates - metrics.errors - metrics.vodErrors);
