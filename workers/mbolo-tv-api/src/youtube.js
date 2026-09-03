@@ -106,6 +106,7 @@ async function ytFetch(env, action, params) {
     } catch {
       throw Object.assign(new Error('Réponse YouTube invalide'), { status: 502 });
     }
+    }
   }
   throw lastError ?? Object.assign(new Error('YouTube indisponible'), { status: 502 });
 }
