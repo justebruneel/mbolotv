@@ -38,7 +38,11 @@ async function fetchJson(url, env, touch) {
       return payload;
     } catch (error) {
       lastError = error;
-      if (/identifiants|HTTP 401|HTTP 403/i.test(String(error?.message ?? error))) throw error;
+      // HTTP 403 : le plus souvent un blocage d'IP datacenter (pare-feu
+      // fournisseur / Cloudflare « error code: 1003 »), pas un refus
+      // d'identifiants → laisser le retry partir par le relais résidentiel.
+      // Seuls 401 et l'auth=0 du panel (« identifiants ») court-circuitent.
+      if (/identifiants|HTTP 401/i.test(String(error?.message ?? error))) throw error;
       if (attempt < FETCH_RETRIES) await sleep(FETCH_RETRY_DELAYS_MS[attempt]);
     }
   }
@@ -54,7 +58,7 @@ export async function fetchXtreamEntries(env, connection, touch) {
     const categories = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_live_categories`, env, touch);
     for (const category of Array.isArray(categories) ? categories : []) if (category.category_id != null && category.category_name) categoryNames.set(String(category.category_id), String(category.category_name).trim());
   } catch (error) {
-    if (/identifiants|HTTP 401|HTTP 403/i.test(String(error?.message ?? error))) throw error;
+    if (/identifiants|HTTP 401/i.test(String(error?.message ?? error))) throw error;
   }
   await sleep(INTER_CALL_DELAY_MS);
   let payload;
@@ -81,7 +85,7 @@ async function fetchCategoryMap(env, base, user, pass, action, touch) {
     for (const category of Array.isArray(payload) ? payload : []) if (category.category_id != null && category.category_name) map.set(String(category.category_id), String(category.category_name).trim());
     return map;
   } catch (error) {
-    if (/identifiants|HTTP 401|HTTP 403/i.test(String(error?.message ?? error))) throw error;
+    if (/identifiants|HTTP 401/i.test(String(error?.message ?? error))) throw error;
     return new Map();
   }
 }
@@ -198,18 +202,23 @@ export async function streamJsonArrayBatches(body, onBatch, { maxBytes = MAX_API
 }
 
 // Téléchargement en flux d'une action Xtream renvoyant une liste, avec une
-// relance unique si l'échec survient avant le premier élément (réseau capricieux).
+// relance par le relais résidentiel si l'échec survient avant le premier
+// élément (blocage datacenter 403/1003, réseau capricieux). Tentative 0 :
+// direct ; tentative 1 : relais.
 async function streamXtreamAction(url, env, touch, onBatch, maxBytes) {
   let lastError;
   for (let attempt = 0; attempt <= 1; attempt += 1) {
     if (touch) await touch().catch(() => undefined);
+    const viaRelay = attempt >= 1 && env;
+    const target = viaRelay ? resolveRelay(env, url) : { url, headers: {} };
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(CONNECTOR_TIMEOUT_MS), headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json, text/plain, */*' } });
+      const response = await fetch(target.url, { signal: AbortSignal.timeout(CONNECTOR_TIMEOUT_MS), headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json, text/plain, */*', ...target.headers } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await streamJsonArrayBatches(response.body, onBatch, { maxBytes });
     } catch (error) {
       lastError = error;
-      if (/identifiants|HTTP 401|HTTP 403/i.test(String(error?.message ?? error))) throw error;
+      // Même règle que fetchJson : 403 ≠ refus d'identifiants → relais.
+      if (/identifiants|HTTP 401/i.test(String(error?.message ?? error))) throw error;
       if (attempt < 1) await sleep(2500);
     }
   }
