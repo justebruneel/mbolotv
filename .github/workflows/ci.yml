@@ -33,6 +33,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Le client généré peut être périmé dans le cache pnpm (le store embarque
+      # .prisma/client) : régénération explicite avant typecheck/test/build.
+      - name: Generate Prisma client
+        run: pnpm --filter @mbolo/api exec prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
       - name: Validate Cloudflare workers
         run: |
           find workers -path '*/src/*.js' -print0 | xargs -0 -n1 node --check
