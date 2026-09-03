@@ -290,8 +290,7 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     // Périmètre de l'import initial choisi à la création ('live', 'vod' ou
     // 'all'). Un scope 'vod' n'a de sens que si la source peut fournir de la
     // VOD (M3U toujours, Xtream avec vodEnabled) — sinon repli sur 'all'.
-    const requestedCreateScope = body?.scope;
-    const createScope = requestedCreateScope === 'vod' && (kind === 'M3U' || (kind === 'XTREAM' && vodEnabled)) ? 'vod' : requestedCreateScope === 'live' ? 'live' : 'all';
+    const createScope = normalizeSourceScope(kind, vodEnabled, body?.scope);
     if (kind === 'M3U' && (body.connection.url || body.connection.playlistUrl)) {
       const runId = await startImportRun(ctx, sourceId, createScope);
       ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId, createScope));
@@ -357,7 +356,7 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     // chaînes) ou 'all'. Accepté en corps JSON ou en ?scope=.
     const importBody = await ctx.readJson().catch(() => null);
     const requestedScope = importBody?.scope ?? url.searchParams.get('scope');
-    const scope = requestedScope === 'live' || requestedScope === 'vod' ? requestedScope : 'all';
+    const scope = normalizeSourceScope(source.kind, Boolean(source.vodEnabled), requestedScope);
     const runId = await startImportRun(ctx, source.id);
     await audit(ctx, owner.userId, 'source.import_request', 'source', source.id, { importRunId: runId, scope });
     ctx.waitUntil(runImportAndEpg(ctx, source.id, runId, scope));
@@ -390,8 +389,7 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     // Activer le VOD déclenche un import immédiat pour remplir VodItem —
     // avec le périmètre choisi ('vod' = sans les chaînes, sinon 'all').
     if (vodEnabled && !source.vodEnabled) {
-      const requestedVodScope = body?.scope;
-      const vodScope = requestedVodScope === 'vod' && (source.kind === 'M3U' || source.kind === 'XTREAM') ? 'vod' : requestedVodScope === 'live' ? 'live' : 'all';
+      const vodScope = normalizeSourceScope(source.kind, true, body?.scope);
       const runId = await startImportRun(ctx, source.id, vodScope);
       await audit(ctx, owner.userId, 'source.vod_enabled', 'source', source.id, { importRunId: runId, scope: vodScope });
       ctx.waitUntil(runImportAndEpg(ctx, source.id, runId, vodScope));
@@ -602,13 +600,26 @@ function hexRandom(bytes) {
   return [...values].map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
+// Périmètre d'import : 'live' (chaînes), 'vod' (films+séries), 'movies'
+// (films seuls), 'series' (séries seules), 'all'. Un périmètre VOD n'est
+// valide que si la source peut en fournir (M3U toujours, Xtream avec
+// vodEnabled ; 'series' seulement en Xtream) — sinon repli sur 'all'.
+function normalizeSourceScope(kind, vodEnabled, requested) {
+  if (requested === 'live') return 'live';
+  const hasVod = kind === 'M3U' || (kind === 'XTREAM' && vodEnabled);
+  if (!hasVod) return 'all';
+  if (requested === 'vod' || requested === 'movies') return requested;
+  if (requested === 'series' && kind === 'XTREAM') return 'series';
+  return 'all';
+}
+
 async function findOwnedSource(ctx, owner, id) {
   const rows = await ctx.env.db.query(ctx.env, `SELECT * FROM "Source" WHERE id = $1 AND "ownerId" = $2`, [id, owner.userId]);
   return rows.rows[0] ?? null;
 }
 
 export async function startImportRun(ctx, sourceId, scope = 'all') {
-  const normalizedScope = scope === 'live' || scope === 'vod' ? scope : 'all';
+  const normalizedScope = ['live', 'vod', 'movies', 'series'].includes(scope) ? scope : 'all';
   const active = await ctx.env.db.query(ctx.env, `SELECT id FROM "ImportRun" WHERE "sourceId" = $1 AND state IN ('QUEUED','FETCHING','PARSING','NORMALIZING') LIMIT 1`, [sourceId]);
   if (active.rows.length > 0) throw Object.assign(new Error('Un import est déjà en cours pour cette source'), { status: 409 });
   const runId = crypto.randomUUID();

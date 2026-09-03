@@ -13,9 +13,12 @@ export const importStateSchema = z.enum(['QUEUED', 'FETCHING', 'PARSING', 'NORMA
 export type ImportState = z.infer<typeof importStateSchema>;
 
 // Périmètre d'un import de source : 'live' = chaînes uniquement, 'vod' =
-// films/séries uniquement (sans toucher aux chaînes), 'all' = les deux.
-// Permet d'importer chaînes et VOD de manière individuelle par source.
-export const importScopeSchema = z.enum(['live', 'vod', 'all']);
+// films/séries uniquement (sans toucher aux chaînes), 'all' = les deux,
+// 'movies' = films seuls, 'series' = séries seules. Permet d'importer
+// chaînes, films et séries de manière individuelle par source.
+// Les lots d'ingestion VOD sont de 500 (progression persistée toutes les
+// 500 entrées — une reprise ne rejoue jamais plus de 500 items).
+export const importScopeSchema = z.enum(['live', 'vod', 'all', 'movies', 'series']);
 export type ImportScope = z.infer<typeof importScopeSchema>;
 export const sourceImportSchema = z.object({ scope: importScopeSchema.optional() });
 export type SourceImportInput = z.infer<typeof sourceImportSchema>;

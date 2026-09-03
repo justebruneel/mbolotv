@@ -30,7 +30,7 @@ interface ImportState { metrics: ImportMetrics; seenInput: Set<string>; seenChan
 // Clé VOD stable par source : hash de l'URL du panel (le stream_id Xtream
 // n'est unique que chez un fournisseur donné) + identifiant externe.
 // Indépendant du titre : pas de churn quand le fournisseur renomme un film.
-const VOD_BATCH = 2000;
+const VOD_BATCH = 500;
 function vodNormalizedKey(kind: string, externalId: string, baseHash: string): string { return `vod-${kind.toLowerCase()}-${baseHash}-${externalId}`; }
 
 const BATCH = 5000;
@@ -44,8 +44,8 @@ class ImportCanceled extends Error { constructor() { super('Import annulé'); } 
 // films/séries uniquement (les chaînes ne sont ni créées ni élaguées),
 // 'all' = les deux. Les chaînes gardent ainsi leur import individuel,
 // découplé de celui des films/séries.
-type ImportScope = 'live' | 'vod' | 'all';
-function normalizeScope(value: unknown): ImportScope { return value === 'live' || value === 'vod' ? value : 'all'; }
+type ImportScope = 'live' | 'vod' | 'all' | 'movies' | 'series';
+function normalizeScope(value: unknown): ImportScope { return ['live', 'vod', 'movies', 'series'].includes(value as string) ? (value as ImportScope) : 'all'; }
 const messageOf = (error: unknown): string => error instanceof Error ? error.message : 'Erreur inconnue';
 function catalogKey(title: string, country: string | null, group: string | undefined): string { const scope = [country, group].filter(Boolean).map((value) => slugify(value as string)).filter(Boolean).join('--'); const titleKey = slugify(title); return scope ? `${titleKey}--${scope}` : titleKey; }
 function legacyKey(title: string): string { return slugify(title); }
@@ -79,7 +79,7 @@ export class ImportProcessor implements OnModuleInit {
       // FAILED (codes VOD_* inspectables côté console).
       if (scope !== 'live' && source.kind === 'XTREAM' && source.vodEnabled) {
         await this.assertNotCanceled(importRunId);
-        await this.importVod(source, connection, importRunId, state);
+        await this.importVod(source, connection, importRunId, state, scope);
       }
       metrics.ignored = Math.max(0, metrics.read - (metrics.created + metrics.vodCreated) - (metrics.updated + metrics.vodUpdated) - metrics.duplicates - metrics.vodDuplicates - metrics.errors - metrics.vodErrors);
       const completed = await this.prisma.importRun.updateMany({ where: { id: importRunId, state: { not: 'CANCELED' } }, data: { state: 'COMPLETED', metrics: JSON.parse(JSON.stringify(metrics)), completedAt: new Date() } });
@@ -87,7 +87,7 @@ export class ImportProcessor implements OnModuleInit {
       await this.prisma.source.update({ where: { id: sourceId }, data: { status: 'READY', lastSyncedAt: new Date() } });
       await this.audit.log(source.ownerId, 'import.completed', 'source', source.id, { importRunId, metrics });
       // Pas d'EPG sur un run VOD seule : l'EPG ne concerne que les chaînes.
-      if (scope !== 'vod') void this.epgImport.runForSource(source.id).catch((error) => this.logger.warn(`EPG auto non déclenché pour ${source.id}: ${String(error)}`));
+      if (scope === 'live' || scope === 'all') void this.epgImport.runForSource(source.id).catch((error) => this.logger.warn(`EPG auto non déclenché pour ${source.id}: ${String(error)}`));
     } catch (error) { if (error instanceof ImportCanceled || await this.isCanceled(importRunId)) return; await this.fail(sourceId, importRunId, error instanceof ImportError ? error.code : 'INTERNAL', error); }
     finally { this.cancellation.unregister(importRunId); }
   }
@@ -99,8 +99,10 @@ export class ImportProcessor implements OnModuleInit {
     // playlist : toute URL en extension VOD (mp4/mkv/…) devient un VodItem
     // (kind MOVIE) au lieu de polluer le catalogue live — même découpage que
     // le Worker. scope 'vod' = VOD seule, sans toucher aux chaînes.
-    const liveActive = scope !== 'vod';
-    const vodActive = scope !== 'live';
+    const liveActive = scope !== 'vod' && scope !== 'movies' && scope !== 'series';
+    // Une playlist M3U n'expose que des films (liens directs) : scope
+    // 'series' = rien à ingérer ici, on ne télécharge même pas le flux.
+    const vodActive = scope !== 'live' && scope !== 'series';
     await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); const maxBytes = this.config.get<number>('IMPORT_MAX_BYTES', 512 * 1024 * 1024); let stream: NodeJS.ReadableStream;
     if (fileKey) { const stored = await this.storage.getStream(fileKey); if (!stored) throw new ImportError('FILE_NOT_FOUND', 'Playlist téléversée introuvable'); stream = stored; }
     else if (filePath) { const root = resolve(this.config.get<string>('STORAGE_LOCAL_DIR', './uploads')); const absolute = resolve(root, filePath); if (!absolute.startsWith(`${root}${sep}`)) throw new ImportError('INVALID_FILE_PATH', 'Chemin de fichier invalide'); stream = createReadStream(absolute); }
@@ -144,13 +146,13 @@ export class ImportProcessor implements OnModuleInit {
     for (const part of chunks(toPruneVod, 500)) { const result = await this.prisma.vodItem.updateMany({ where: { id: { in: part.map((item) => item.id) } }, data: { isActive: false } }); state.metrics.pruned += result.count; }
   }
   private async probeSubplaylists(entries: ParsedChannel[], importRunId: string): Promise<ParsedChannel[]> { const fetcher = new SafeFetcher(); const results: Array<ParsedChannel | null> = new Array(entries.length).fill(null); let cursor = 0; const worker = async (): Promise<void> => { for (;;) { const index = cursor++; if (index >= entries.length) return; await this.assertNotCanceled(importRunId); const result = await fetcher.fetch(entries[index].url, { maxBytes: 256 * 1024, timeoutMs: 10000, signal: this.cancellation.signal(importRunId) }); if (!result.ok || !result.body || !isSubplaylistContainer(result.body)) results[index] = entries[index]; } }; await Promise.all(Array.from({ length: Math.min(8, Math.max(1, entries.length)) }, () => worker())); return results.filter((entry): entry is ParsedChannel => entry !== null); }
-  private async importXtream(source: ImportSource, connection: Record<string, string>, importRunId: string, state: ImportState, scope: ImportScope = 'all'): Promise<ImportMetrics> { if (scope === 'vod') return state.metrics; if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants'); await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); try { return this.ingestEntries(source, (await fetchXtreamEntries({ url: connection.url, username: connection.username, password: connection.password })).entries, importRunId, state, true); } catch (error) { throw new ImportError('CONNECTOR_ERROR', messageOf(error)); } }
-  private async importMac(source: ImportSource, connection: Record<string, string>, importRunId: string, scope: ImportScope = 'all'): Promise<ImportMetrics> { if (scope === 'vod') return this.createImportState().metrics; const url = connection.url ?? connection.portal; const macAddress = connection.macAddress ?? connection.mac ?? connection.mac_address; if (!url || !macAddress) throw new ImportError('MISSING_CREDENTIALS', 'Adresse MAC du portail manquante'); await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); try { const state = this.createImportState(); return this.ingestEntries(source, (await fetchMacPortalEntries({ url, macAddress, signal: this.cancellation.signal(importRunId) })).entries, importRunId, state, true); } catch (error) { throw new ImportError('CONNECTOR_ERROR', messageOf(error)); } }
+  private async importXtream(source: ImportSource, connection: Record<string, string>, importRunId: string, state: ImportState, scope: ImportScope = 'all'): Promise<ImportMetrics> { if (scope !== 'live' && scope !== 'all') return state.metrics; if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants'); await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); try { return this.ingestEntries(source, (await fetchXtreamEntries({ url: connection.url, username: connection.username, password: connection.password })).entries, importRunId, state, true); } catch (error) { throw new ImportError('CONNECTOR_ERROR', messageOf(error)); } }
+  private async importMac(source: ImportSource, connection: Record<string, string>, importRunId: string, scope: ImportScope = 'all'): Promise<ImportMetrics> { if (scope !== 'live' && scope !== 'all') return this.createImportState().metrics; const url = connection.url ?? connection.portal; const macAddress = connection.macAddress ?? connection.mac ?? connection.mac_address; if (!url || !macAddress) throw new ImportError('MISSING_CREDENTIALS', 'Adresse MAC du portail manquante'); await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); try { const state = this.createImportState(); return this.ingestEntries(source, (await fetchMacPortalEntries({ url, macAddress, signal: this.cancellation.signal(importRunId) })).entries, importRunId, state, true); } catch (error) { throw new ImportError('CONNECTOR_ERROR', messageOf(error)); } }
 
   // VOD Xtream : films + séries dans VodItem (locator au même format que le
   // Worker : /movie/... ou JSON xtream-series). Non fatal : le live a déjà
   // été ingéré, un échec connecteur VOD est juste journalisé sur le run.
-  private async importVod(source: ImportSource, connection: Record<string, string>, importRunId: string, state: ImportState): Promise<void> {
+  private async importVod(source: ImportSource, connection: Record<string, string>, importRunId: string, state: ImportState, scope: ImportScope = 'all'): Promise<void> {
     if (!connection.url || !connection.username || !connection.password) return;
     await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } });
     try {
@@ -158,9 +160,12 @@ export class ImportProcessor implements OnModuleInit {
       await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'NORMALIZING' } });
       const baseHash = createHash('sha256').update(connection.url).digest('hex').slice(0, 8);
       const seenVodKeys = new Set<string>();
-      await this.ingestVodPhase(source, movies, state, baseHash, seenVodKeys);
-      await this.ingestVodPhase(source, series, state, baseHash, seenVodKeys);
-      await this.pruneVod(source, state, seenVodKeys);
+      // Sous-périmètres : 'movies' = films seuls, 'series' = séries seules.
+      const moviesActive = scope !== 'live' && scope !== 'series';
+      const seriesActive = scope !== 'live' && scope !== 'movies';
+      if (moviesActive) await this.ingestVodPhase(source, movies, state, baseHash, seenVodKeys);
+      if (seriesActive) await this.ingestVodPhase(source, series, state, baseHash, seenVodKeys);
+      if (moviesActive || seriesActive) await this.pruneVod(source, state, seenVodKeys);
     } catch (error) {
       state.metrics.vodErrors += 1;
       await this.prisma.importRun.update({ where: { id: importRunId }, data: { errorCode: 'VOD_CONNECTOR_ERROR', errorMessage: messageOf(error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300) } }).catch(() => undefined);

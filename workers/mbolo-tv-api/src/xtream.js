@@ -6,7 +6,7 @@ const MAX_API_BYTES = 50 * 1024 * 1024;
 const VOD_MAX_BYTES_DEFAULT = 1024 * 1024 * 1024;
 const LIVE_MAX_BYTES_DEFAULT = 256 * 1024 * 1024;
 const VOD_STREAM_IDLE_TIMEOUT_MS = 60_000;
-const VOD_BATCH_SIZE = 1000;
+const VOD_BATCH_SIZE = 500;
 const LIVE_STREAM_BATCH_SIZE = 1000;
 const CONNECTOR_TIMEOUT_MS = 180_000;
 const FETCH_RETRIES = 3;
@@ -316,7 +316,7 @@ function mapVodSerie(item, seriesCategories, connection) {
 // onMovies/onSeries reçoivent des lots d'entrées déjà normalisées.
 // skipSeries/skipMovies : sous-phases déjà terminées (reprise par curseur) —
 // le flux correspondant n'est même pas téléchargé.
-export async function fetchXtreamVodBatches(env, connection, touch, { onMovies, onSeries }, { skipSeries = false, skipMovies = false } = {}) {
+export async function fetchXtreamVodBatches(env, connection, touch, { onMovies, onSeries }, { skipSeries = false, skipMovies = false, onPhaseDone } = {}) {
   const base = connection.url.replace(/\/+$/, '');
   const user = encodeURIComponent(connection.username);
   const pass = encodeURIComponent(connection.password);
@@ -329,6 +329,9 @@ export async function fetchXtreamVodBatches(env, connection, touch, { onMovies, 
       const series = batch.map((item) => mapVodSerie(item, seriesCategories, connection)).filter(Boolean);
       if (series.length > 0) await onSeries(series);
     }, maxBytes);
+    // Sous-phase séries terminée : marquée faite AVANT de démarrer le flux
+    // des films (le plus lourd) — un isolate tué dessus converge à la reprise.
+    if (onPhaseDone) await onPhaseDone('series').catch(() => undefined);
     await sleep(INTER_CALL_DELAY_MS);
   }
 
@@ -340,6 +343,7 @@ export async function fetchXtreamVodBatches(env, connection, touch, { onMovies, 
       const movies = batch.map((stream) => mapVodMovie(stream, movieCategories, base, user, pass)).filter(Boolean);
       if (movies.length > 0) await onMovies(movies);
     }, maxBytes);
+    if (onPhaseDone) await onPhaseDone('movies').catch(() => undefined);
   }
 }
 

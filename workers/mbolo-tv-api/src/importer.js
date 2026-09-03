@@ -284,17 +284,17 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
     // ingéré : l'erreur est enregistrée sur le run sans le marquer FAILED).
     if (source.kind === 'XTREAM' && source.vodEnabled && vodActive) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
-      // Sous-phases déjà terminées : sautées (reprise) au lieu d'être
-      // retéléchargées — seuls les flux restants sont consommés.
-      const skipSeries = metrics.vodSeriesDone === 1;
-      const skipMovies = metrics.vodMoviesDone === 1;
+      // Sous-phases indépendantes (films / séries) : un périmètre restreint
+      // ('movies' ou 'series') n'active que son flux — l'autre est traité
+      // comme déjà fait (ni téléchargé, ni élagué). Déjà terminées :
+      // sautées (reprise) au lieu d'être retéléchargées.
+      const skipSeries = !seriesActive || metrics.vodSeriesDone === 1;
+      const skipMovies = !moviesActive || metrics.vodMoviesDone === 1;
       if (skipSeries && skipMovies) {
-        console.log(`[import ${sourceId}] VOD: déjà ingérée (reprise) — phase sautée`);
-        vodSeriesPassed = true;
-        vodMoviesPassed = true;
+        console.log(`[import ${sourceId}] VOD: rien à télécharger (reprise ou hors périmètre)`);
       } else {
         try {
-          console.log(`[import ${sourceId}] VOD: démarrage (flux via relais si 403)`);
+          console.log(`[import ${sourceId}] VOD: démarrage films=${moviesActive} séries=${seriesActive} (lots 500, flux via relais si 403)`);
           const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
           let moviesCursor = metrics.vodMoviesCursor;
           let seriesCursor = metrics.vodSeriesCursor;
@@ -321,12 +321,15 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
               console.log(`[import ${sourceId}] VOD: lot séries ${usable.length} (curseur ${seriesCursor})`);
               await persistMetrics();
             },
-          }, { skipSeries, skipMovies });
-          // Sous-phase marquée faite DÈS sa fin : une reprise saute les
-          // séries (déjà ingérées) au lieu de rejouer les deux flux, un
-          // isolate tué en plein téléchargement films converge sinon jamais.
-          if (!skipSeries) { vodSeriesPassed = true; metrics.vodSeriesDone = 1; await persistMetrics(); }
-          if (!skipMovies) { vodMoviesPassed = true; metrics.vodMoviesDone = 1; }
+          }, { skipSeries, skipMovies, onPhaseDone: async (phase) => {
+            // Sous-phase marquée faite DÈS sa fin (avant le flux suivant,
+            // le plus lourd) : un isolate tué en plein téléchargement
+            // converge à la reprise sans rejouer ce qui est déjà ingéré.
+            if (phase === 'series') { vodSeriesPassed = true; metrics.vodSeriesDone = 1; }
+            else { vodMoviesPassed = true; metrics.vodMoviesDone = 1; }
+            await persistMetrics();
+            console.log(`[import ${sourceId}] VOD: sous-phase ${phase} terminée`);
+          } });
           await persistMetrics();
           console.log(`[import ${sourceId}] VOD terminé: ${JSON.stringify({ vodRead: metrics.vodRead, vodCreated: metrics.vodCreated, vodUpdated: metrics.vodUpdated, vodDuplicates: metrics.vodDuplicates, vodErrors: metrics.vodErrors })}`);
         } catch (error) {

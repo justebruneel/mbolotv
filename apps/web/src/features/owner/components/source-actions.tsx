@@ -11,12 +11,14 @@ import {
   IconX,
 } from './ui/icons';
 
-type Action = 'test' | 'import' | 'import-vod' | 'delete';
+type Action = 'test' | 'import' | 'import-vod' | 'import-movies' | 'import-series' | 'delete';
 
 const CONFIRM_BY_ACTION: Record<Action, string | null> = {
   test: null,
   import: null,
   'import-vod': null,
+  'import-movies': null,
+  'import-series': null,
   delete: 'Cette action est définitive : les chaînes de la source seront supprimées.',
 };
 
@@ -45,6 +47,14 @@ export function SourceActions({ sourceId }: { sourceId: string }) {
         const run = await ownerApi.sources.import(sourceId, 'vod');
         setFeedback({ ok: true, message: `Import films & séries #${run.id} programmé (chaînes non touchées).` });
         router.refresh();
+      } else if (action === 'import-movies') {
+        const run = await ownerApi.sources.import(sourceId, 'movies');
+        setFeedback({ ok: true, message: `Import films #${run.id} programmé (lots de 500, chaînes et séries non touchées).` });
+        router.refresh();
+      } else if (action === 'import-series') {
+        const run = await ownerApi.sources.import(sourceId, 'series');
+        setFeedback({ ok: true, message: `Import séries #${run.id} programmé (lots de 500, chaînes et films non touchés).` });
+        router.refresh();
       } else {
         await ownerApi.sources.remove(sourceId);
         router.push('/control/sources');
@@ -70,7 +80,15 @@ export function SourceActions({ sourceId }: { sourceId: string }) {
         </button>
         <button onClick={() => run('import-vod')} disabled={busy !== null} className="btn" title="Importe uniquement les films & séries, sans toucher aux chaînes">
           <IconImports className="h-4 w-4" />
-          {busy === 'import-vod' ? 'Planification…' : 'Films & séries uniquement'}
+          {busy === 'import-vod' ? 'Planification…' : 'Films & séries'}
+        </button>
+        <button onClick={() => run('import-movies')} disabled={busy !== null} className="btn" title="Importe uniquement les films (lots de 500)">
+          <IconImports className="h-4 w-4" />
+          {busy === 'import-movies' ? 'Planification…' : 'Films seuls'}
+        </button>
+        <button onClick={() => run('import-series')} disabled={busy !== null} className="btn" title="Importe uniquement les séries (lots de 500)">
+          <IconImports className="h-4 w-4" />
+          {busy === 'import-series' ? 'Planification…' : 'Séries seules'}
         </button>
         <button onClick={() => run('delete')} disabled={busy !== null} className="btn btn-danger">
           <IconTrash className="h-4 w-4" />
