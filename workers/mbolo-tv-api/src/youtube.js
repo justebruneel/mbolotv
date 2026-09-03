@@ -57,19 +57,28 @@ async function ytFetch(env, action, params) {
   }
   let response;
   try {
+    const startedAt = Date.now();
     response = await fetch(url.toString(), {
       headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' },
       signal: AbortSignal.timeout(YT_TIMEOUT_MS),
     });
+    console.log(`[youtube] ${action} -> ${response.status} (${Math.round((Date.now() - startedAt) / 1000)}s, clé ${key.length} car.)`);
   } catch {
     throw Object.assign(new Error('YouTube injoignable'), { status: 502 });
   }
   if (!response.ok) {
     let reason = '';
+    let detail = '';
     try {
-      const body = await response.json();
-      reason = body?.error?.errors?.[0]?.reason ?? '';
+      const text = await response.text();
+      detail = text.slice(0, 200);
+      try {
+        const body = JSON.parse(text);
+        reason = body?.error?.errors?.[0]?.reason ?? '';
+        detail = body?.error?.message ?? detail;
+      } catch { /* pas du JSON : texte brut conservé */ }
     } catch { /* corps illisible : statut brut conservé */ }
+    if (detail) console.log(`[youtube] ${action} erreur: ${detail.slice(0, 160)}`);
     if (response.status === 403 && (reason === 'quotaExceeded' || reason === 'dailyLimitExceeded')) {
       throw Object.assign(new Error('Quota YouTube épuisé, réessayez plus tard'), { status: 429 });
     }
@@ -85,9 +94,11 @@ async function ytFetch(env, action, params) {
 async function uploadsPlaylistId(env, channelId) {
   const cached = uploadsCache.get(channelId);
   if (cached) return cached;
-  const data = await ytFetch(env, 'channels.list', { part: 'contentDetails', id: channelId });
-  const playlistId = data?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads ?? null;
-  if (!playlistId) throw Object.assign(new Error('Chaîne YouTube introuvable'), { status: 404 });
+  // Dérivation déterministe documentée : la playlist « uploads » d'une chaîne
+  // vaut 'UU' + ID sans préfixe 'UC'. Zéro unité de quota, zéro RTT — et pas
+  // de dépendance à channels.list (404 vide depuis certains egress).
+  if (!/^UC[A-Za-z0-9_-]{22}$/.test(channelId)) throw Object.assign(new Error('Chaîne YouTube introuvable'), { status: 404 });
+  const playlistId = `UU${channelId.slice(2)}`;
   uploadsCache.set(channelId, playlistId);
   return playlistId;
 }
