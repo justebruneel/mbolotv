@@ -50,6 +50,36 @@ function parseDuration(value) {
   return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
 }
 
+// Contournement DNS : le résolveur du Worker renvoie parfois googleapis vers
+// des IPs Cloudflare (edge 404 + cf-ray au lieu de Google). On résout via DoH
+// (cloudflare-dns.com, hôte distinct) et on force l'IP via resolveOverride
+// (SNI/Host conservés). Cache isolate 5 min. En cas d'échec DoH, on tente
+// quand même le DNS standard (repli existant).
+let dohCache = { ip: null, at: 0 };
+const DOH_TTL_MS = 5 * 60_000;
+
+async function resolveGoogleapisIp() {
+  const now = Date.now();
+  if (dohCache.ip && now - dohCache.at < DOH_TTL_MS) return dohCache.ip;
+  try {
+    const response = await fetch('https://cloudflare-dns.com/dns-query?name=www.googleapis.com&type=A', {
+      headers: { accept: 'application/dns-json', 'user-agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    const ip = (Array.isArray(body?.Answer) ? body.Answer : [])
+      .map((record) => record?.data)
+      .find((data) => /^\d{1,3}(\.\d{1,3}){3}$/.test(data ?? ''));
+    if (ip) {
+      dohCache = { ip, at: now };
+      console.log(`[youtube] DoH: www.googleapis.com -> ${ip}`);
+      return ip;
+    }
+  } catch { /* repli : DNS standard */ }
+  return null;
+}
+
 async function ytFetch(env, action, params) {
   const key = String(env.YOUTUBE_API_KEY ?? '').trim();
   if (!key) throw Object.assign(new Error('Clé YouTube non configurée'), { status: 503 });
@@ -57,11 +87,14 @@ async function ytFetch(env, action, params) {
   for (const [name, value] of Object.entries({ ...params, key })) {
     if (value !== undefined && value !== null) url.searchParams.set(name, String(value));
   }
-  // Direct d'abord, relais résidentiel en repli (l'edge Google refuse parfois
-  // les egress datacenter avec un 404 vide — même motif que xtream.js).
+  // Direct d'abord (avec override DNS si le DoH a résolu, puis DNS standard),
+  // relais résidentiel en repli (même motif que xtream.js).
   const relayed = resolveRelay(env, url.toString());
-  const targets = [{ url: url.toString(), headers: {}, viaRelay: false }];
-  if (relayed.url !== url.toString()) targets.push({ url: relayed.url, headers: relayed.headers, viaRelay: true });
+  const overrideIp = await resolveGoogleapisIp().catch(() => null);
+  const targets = [];
+  if (overrideIp) targets.push({ url: url.toString(), headers: {}, viaRelay: false, cf: { resolveOverride: overrideIp }, label: 'direct+doh' });
+  targets.push({ url: url.toString(), headers: {}, viaRelay: false, label: 'direct' });
+  if (relayed.url !== url.toString()) targets.push({ url: relayed.url, headers: relayed.headers, viaRelay: true, label: 'relais' });
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let lastError = null;
   for (const target of targets) {
@@ -75,8 +108,9 @@ async function ytFetch(env, action, params) {
         response = await fetch(target.url, {
           headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json', ...target.headers },
           signal: AbortSignal.timeout(YT_TIMEOUT_MS),
+          ...(target.cf ? { cf: target.cf } : {}),
         });
-        console.log(`[youtube] ${action} -> ${response.status} (${Math.round((Date.now() - startedAt) / 1000)}s, ${target.viaRelay ? 'relais' : 'direct'}, essai ${attempt + 1})`);
+        console.log(`[youtube] ${action} -> ${response.status} (${Math.round((Date.now() - startedAt) / 1000)}s, ${target.label ?? (target.viaRelay ? 'relais' : 'direct')}, essai ${attempt + 1})`);
       } catch {
         lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
         continue;
