@@ -119,16 +119,19 @@ export async function runSourceImport(env, sourceId, importRunId) {
     } else if (source.kind === 'XTREAM') {
       if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants');
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
+      console.log(`[import ${sourceId}] live: catégories + get_live_streams`);
       let entries;
       try {
         ({ entries } = await fetchXtreamEntries(env, connection, persistMetrics));
       } catch (error) {
         throw new ImportError('CONNECTOR_ERROR', error.message);
       }
+      console.log(`[import ${sourceId}] live: ${entries.length} chaînes reçues`);
       metrics.read = entries.length;
       await persistMetrics();
       await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
       await ingestEntries(q, key, source, entries, metrics, seenInput, seenChannelIds, persistMetrics);
+      console.log(`[import ${sourceId}] live ingéré: ${JSON.stringify({ created: metrics.created, updated: metrics.updated, duplicates: metrics.duplicates, errors: metrics.errors })}`);
     } else if (source.kind === 'MAC_PORTAL') {
       const url = connection.url ?? connection.portal;
       const macAddress = connection.macAddress ?? connection.mac ?? connection.mac_address;
@@ -156,16 +159,21 @@ export async function runSourceImport(env, sourceId, importRunId) {
     if (source.kind === 'XTREAM' && source.vodEnabled) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
       try {
+        console.log(`[import ${sourceId}] VOD: démarrage (flux via relais si 403)`);
         const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
         await fetchXtreamVodBatches(env, connection, persistMetrics, {
-          onMovies: (batch) => ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys),
-          onSeries: (batch) => ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys),
+          onMovies: (batch) => { console.log(`[import ${sourceId}] VOD: lot films ${batch.length}`); return ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys); },
+          onSeries: (batch) => { console.log(`[import ${sourceId}] VOD: lot séries ${batch.length}`); return ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys); },
         });
+        console.log(`[import ${sourceId}] VOD terminé: ${JSON.stringify({ vodRead: metrics.vodRead, vodCreated: metrics.vodCreated, vodUpdated: metrics.vodUpdated, vodDuplicates: metrics.vodDuplicates, vodErrors: metrics.vodErrors })}`);
       } catch (error) {
         const message = String(error instanceof Error ? error.message : error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300);
+        console.log(`[import ${sourceId}] VOD erreur (non fatale): ${message}`);
         metrics.vodErrors += 1;
         await q(`UPDATE "ImportRun" SET "errorCode" = 'VOD_CONNECTOR_ERROR', "errorMessage" = $2 WHERE id = $1`, [importRunId, message]).catch(() => undefined);
       }
+    } else if (source.kind === 'XTREAM') {
+      console.log(`[import ${sourceId}] VOD désactivé (vodEnabled=false) — films/séries ignorés`);
     }
 
     // Prune : variantes actives de la source absentes du dernier flux.

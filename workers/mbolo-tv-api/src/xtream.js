@@ -244,26 +244,29 @@ function mapVodSerie(item, seriesCategories, connection) {
 
 // VOD (films + séries) en flux : chaque lot est consommé par l'importeur dès
 // sa réception — le catalogue complet ne transite jamais en mémoire.
+// Les séries (payload légère) sont récupérées AVANT les films : sur un relais
+// résidentiel lent, elles atterrissent même si le flux des films est long.
 // onMovies/onSeries reçoivent des lots d'entrées déjà normalisées.
 export async function fetchXtreamVodBatches(env, connection, touch, { onMovies, onSeries }) {
   const base = connection.url.replace(/\/+$/, '');
   const user = encodeURIComponent(connection.username);
   const pass = encodeURIComponent(connection.password);
   const maxBytes = Number(env.IMPORT_VOD_MAX_BYTES ?? VOD_MAX_BYTES_DEFAULT);
-  const movieCategories = await fetchCategoryMap(env, base, user, pass, 'get_vod_categories', touch);
-  await sleep(INTER_CALL_DELAY_MS);
   const seriesCategories = await fetchCategoryMap(env, base, user, pass, 'get_series_categories', touch);
-  await sleep(INTER_CALL_DELAY_MS);
-
-  await streamXtreamAction(`${base}/player_api.php?username=${user}&password=${pass}&action=get_vod_streams`, env, touch, async (batch) => {
-    const movies = batch.map((stream) => mapVodMovie(stream, movieCategories, base, user, pass)).filter(Boolean);
-    if (movies.length > 0) await onMovies(movies);
-  }, maxBytes);
   await sleep(INTER_CALL_DELAY_MS);
 
   await streamXtreamAction(`${base}/player_api.php?username=${user}&password=${pass}&action=get_series`, env, touch, async (batch) => {
     const series = batch.map((item) => mapVodSerie(item, seriesCategories, connection)).filter(Boolean);
     if (series.length > 0) await onSeries(series);
+  }, maxBytes);
+  await sleep(INTER_CALL_DELAY_MS);
+
+  const movieCategories = await fetchCategoryMap(env, base, user, pass, 'get_vod_categories', touch);
+  await sleep(INTER_CALL_DELAY_MS);
+
+  await streamXtreamAction(`${base}/player_api.php?username=${user}&password=${pass}&action=get_vod_streams`, env, touch, async (batch) => {
+    const movies = batch.map((stream) => mapVodMovie(stream, movieCategories, base, user, pass)).filter(Boolean);
+    if (movies.length > 0) await onMovies(movies);
   }, maxBytes);
 }
 
