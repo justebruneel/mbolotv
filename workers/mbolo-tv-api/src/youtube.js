@@ -186,30 +186,3 @@ export async function serveYoutubeVideo(env, videoId) {
 }
 
 export const _internal = { YT_API, AFOREVO_CHANNEL_ID, LIST_CACHE_TTL_S, pickThumbnail, parseDuration };
-
-// Diagnostic temporaire : d'où vient le 404 vide ? Compare la doc discovery
-// (sans clé) et search sur les deux hôtes documentés (www vs youtube).
-export async function serveYoutubeDiag(env) {
-  const key = String(env.YOUTUBE_API_KEY ?? '').trim();
-  const probe = async (url) => {
-    try {
-      const response = await fetch(url, {
-        headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json' },
-        signal: AbortSignal.timeout(15_000),
-      });
-      const text = await response.text().catch(() => '');
-      return { status: response.status, server: response.headers.get('server'), len: text.length, head: text.slice(0, 80) };
-    } catch (error) {
-      return { error: String(error?.message ?? error).slice(0, 80) };
-    }
-  };
-  const search = `https://youtube.googleapis.com/youtube/v3/search?part=snippet&type=video&order=date&maxResults=1&channelId=${AFOREVO_CHANNEL_ID}&key=${encodeURIComponent(key)}`;
-  return new Response(
-    JSON.stringify({
-      discoveryWWW: await probe('https://www.googleapis.com/discovery/v1/apis/youtube/v3/rest'),
-      searchWWW: await probe(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&order=date&maxResults=1&channelId=${AFOREVO_CHANNEL_ID}&key=${encodeURIComponent(key)}`),
-      searchAltHost: await probe(search),
-    }),
-    { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } },
-  );
-}

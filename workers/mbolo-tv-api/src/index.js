@@ -497,7 +497,6 @@ async function route(ctx, url) {
   // YouTube (onglet Nollywood) : placées avant vodMatch qui capterait
   // sinon /api/vod/youtube comme un id d'item.
   if (path === "/api/vod/youtube" && method === "GET") {
-    if (url.searchParams.get("diag") === "1") return youtube.serveYoutubeDiag(env);
     return youtube.serveYoutubeList(
       env,
       url.searchParams.get("channel") ?? "",
