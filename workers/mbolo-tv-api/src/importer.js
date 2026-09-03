@@ -67,12 +67,14 @@ async function fetchWithLimits(url, { maxBytes = 512 * 1024 * 1024, timeoutMs = 
 // requête paierait un handshake Hyperdrive par requête), mises à jour en masse
 // (UPDATE…FROM VALUES) et déchiffrements parallélisés par lots.
 export async function runSourceImport(env, sourceId, importRunId, scope = 'all') {
-  const normalizedScope = scope === 'live' || scope === 'vod' ? scope : 'all';
-  // Périmètre d'import : 'live' = chaînes uniquement, 'vod' = films/séries
-  // uniquement (les chaînes ne sont ni lues ni élaguées), 'all' = les deux.
-  // Les chaînes gardent ainsi leur import individuel, découplé de la VOD.
-  const liveActive = normalizedScope !== 'vod';
+  const normalizedScope = ['live', 'vod', 'movies', 'series'].includes(scope) ? scope : 'all';
+  // Périmètre d'import : 'live' = chaînes uniquement, 'vod' = films/séries,
+  // 'movies' = films seuls, 'series' = séries seules, 'all' = tout.
+  // Chaînes, films et séries s'importent ainsi de manière individuelle.
+  const liveActive = normalizedScope !== 'vod' && normalizedScope !== 'movies' && normalizedScope !== 'series';
   const vodActive = normalizedScope !== 'live';
+  const moviesActive = normalizedScope !== 'live' && normalizedScope !== 'series';
+  const seriesActive = normalizedScope !== 'live' && normalizedScope !== 'movies';
   const key = await importKey(env.ENCRYPTION_KEY);
   const client = new pg.Client(env.HYPERDRIVE.connectionString);
   await client.connect();
