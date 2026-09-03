@@ -4,11 +4,16 @@
 // Category — aucune collision avec les catégories live).
 import { decryptLocatorWithSecret } from './crypto.js';
 import { fetchXtreamSeriesInfo } from './xtream.js';
+import { vodMetadata } from './vodmetadata.js';
+export { vodMetadata };
 
 const SERIES_CACHE_TTL = "interval '1 hour'";
 
 export const VISIBLE_VOD_ITEMS = `"isVisible" = true AND "isActive" = true`;
 
+// La description ne vit pas en base : elle est enrichie à la volée
+// (TVmaze, cache 30 j) sur les endpoints « riches » — hero et détail —
+// tandis que les rangées/grilles restent légères (pas d'appel par tuile).
 export function serializeVodItem(row) {
   return {
     id: row.id,
@@ -18,6 +23,9 @@ export function serializeVodItem(row) {
     rating: row.rating,
     category: row.categoryTitle,
     addedAt: row.addedAt ? new Date(row.addedAt).toISOString() : null,
+    ...(row.description !== undefined || row.backdropUrl !== undefined
+      ? { description: row.description ?? null, backdropUrl: row.backdropUrl ?? null, genres: row.genres ?? [], year: row.year ?? null }
+      : {}),
   };
 }
 
@@ -127,7 +135,10 @@ export async function vodHero(env, { kind, limit = 5 } = {}) {
      WHERE ${conditions.join(' AND ')} ORDER BY "addedAt" DESC NULLS LAST LIMIT ${Math.min(Math.max(1, Number(limit) || 5), 10)}`,
     params,
   );
-  return rows.rows.map(serializeVodItem);
+  // Hero enrichi en parallèle (synopsis, backdrop, genres, année). Un
+  // échec TVmaze ne retire jamais l'item du hero.
+  const metas = await Promise.all(rows.rows.map((row) => vodMetadata(env, row.title, row.kind).catch(() => null)));
+  return rows.rows.map((row, index) => serializeVodItem({ ...row, ...(metas[index] ?? {}) }));
 }
 
 export async function vodCategories(env, kind) {
@@ -207,7 +218,12 @@ export async function listSeriesEpisodes(env, encryptionKey, item) {
   if (connection.type !== 'xtream-series') throw new Error('Locator série invalide');
   const info = await fetchXtreamSeriesInfo(env, connection, connection.seriesId);
 
+  const meta = await vodMetadata(env, item.title, 'SERIES').catch(() => null);
   const payload = {
+    description: meta?.overview ?? null,
+    backdropUrl: meta?.backdropUrl ?? null,
+    genres: meta?.genres ?? [],
+    year: meta?.year ?? null,
     seasons: info.seasons.map((season) => ({
       number: season.number,
       episodes: season.episodes.map((episode) => ({

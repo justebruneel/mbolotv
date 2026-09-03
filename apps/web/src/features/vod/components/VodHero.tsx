@@ -66,9 +66,14 @@ export function VodHero({ items }: { items: VodItem[] }) {
             {item.rating !== null && item.rating > 0 && (
               <span className="inline-flex items-center gap-1 font-bold text-accent"><Icon.Star size={14} /> {item.rating.toFixed(1)}</span>
             )}
+            {item.year !== null && item.year !== undefined && <span>{item.year}</span>}
+            {item.genres && item.genres.length > 0 && <span className="max-w-[20rem] truncate">{item.genres.join(' · ')}</span>}
             {item.category && <span className="max-w-[16rem] truncate">{item.category}</span>}
             {item.addedAt && <span>{new Date(item.addedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>}
           </div>
+          {item.description && (
+            <p className="mt-3 line-clamp-3 max-w-2xl text-sm leading-relaxed text-white/85 drop-shadow md:line-clamp-4 md:text-base">{item.description}</p>
+          )}
           <div className="mt-5 flex flex-wrap gap-3">
             <Link href={`/vod/${item.id}`} className="btn btn-primary">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>

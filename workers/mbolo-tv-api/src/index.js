@@ -530,7 +530,10 @@ async function route(ctx, url) {
   if (vodMatch && !vodMatch[3] && method === "GET") {
     const item = await vod.findVodItemById(env, decodeURIComponent(vodMatch[1]));
     if (!item) return ctx.fail(404, "Item VOD introuvable");
-    return ctx.json(vod.serializeVodItem(item));
+    // Détail enrichi : synopsis + backdrop via TVmaze (cache 30 j). Non
+    // bloquant : un échec renvoie la fiche sans description.
+    const meta = await vod.vodMetadata(env, item.title, item.kind).catch(() => null);
+    return ctx.json(vod.serializeVodItem({ ...item, ...(meta ?? {}) }));
   }
 
   if (vodMatch && vodMatch[3] === "favorite" && (method === "PUT" || method === "DELETE")) {

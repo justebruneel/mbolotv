@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { VodCategory, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
+import { MetadataService } from '../metadata/metadata.service';
 
 // Catalogue VOD (films + séries) : miroir exact de workers/mbolo-tv-api/src/
 // vod.js sur Prisma. Les items actifs et visibles seuls sont exposés.
@@ -33,7 +34,18 @@ const VISIBLE = { isActive: true, isVisible: true } as const;
 
 @Injectable()
 export class VodService {
-  constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService) {}
+  constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService, private readonly metadata: MetadataService) {}
+
+  // Synopsis + backdrop via l'enrichissement TVmaze (cache 30 j) — miroir du
+  // Worker (vodmetadata.js). Jamais bloquant : null si pas de correspondance.
+  private async enrich(title: string): Promise<{ description: string | null; backdropUrl: string | null; genres: string[]; year: number | null }> {
+    try {
+      const meta = await this.metadata.enrich(title);
+      return { description: meta?.overview ?? null, backdropUrl: meta?.backdropUrl ?? null, genres: meta?.genres ?? [], year: meta?.year ?? null };
+    } catch {
+      return { description: null, backdropUrl: null, genres: [], year: null };
+    }
+  }
 
   async list({ kind, category, q, limit = 48, offset = 0 }: { kind?: VodKind; category?: string; q?: string; limit?: number; offset?: number }): Promise<VodListResponse> {
     const safeLimit = Math.min(Math.max(1, Number(limit) || 48), 100);
@@ -91,13 +103,15 @@ export class VodService {
       orderBy: [{ addedAt: 'desc' }, { title: 'asc' }],
       take: 5,
     });
-    return { items: rows.map(serializeVodItem) };
+    const metas = await Promise.all(rows.map((row) => this.enrich(row.title)));
+    return { items: rows.map((row, index) => ({ ...serializeVodItem(row), ...metas[index] })) };
   }
 
   async detail(id: string): Promise<VodItem & { containerExt: string | null }> {
     const row = await this.prisma.vodItem.findFirst({ where: { id, ...VISIBLE } });
     if (!row) throw new NotFoundException('VodItem introuvable');
-    return { ...serializeVodItem(row), containerExt: row.containerExt };
+    const meta = await this.enrich(row.title);
+    return { ...serializeVodItem(row), ...meta, containerExt: row.containerExt };
   }
 
   // Épisodes d'une série : déchiffre le locator (JSON xtream-series) et
@@ -134,7 +148,8 @@ export class VodService {
         }))
         .sort((a, b) => a.num - b.num),
     }));
-    const result = { seasons };
+    const meta = await this.enrich(row.title);
+    const result = { ...meta, seasons };
     await this.prisma.metadataCache
       .upsert({
         where: { cacheKey },

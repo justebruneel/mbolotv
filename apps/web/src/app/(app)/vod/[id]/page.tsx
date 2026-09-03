@@ -73,7 +73,9 @@ function VodDetailContent() {
   if (itemQuery.isError || !itemQuery.data) return <EmptyState title="Contenu introuvable" hint="Ce film ou cette série n'est plus disponible." />;
 
   const item = itemQuery.data;
-  const backdropUrl = item.posterUrl?.replace(/w600_and_h900[^/]*\//, 'w1280_and_h720_bestv2/');
+  // Backdrop réel si l'enrichissement TVmaze en fournit un, sinon fallback
+  // sur l'affiche TMDB recadrée en paysage.
+  const backdropUrl = item.backdropUrl ?? item.posterUrl?.replace(/w600_and_h900[^/]*\//, 'w1280_and_h720_bestv2/');
   const resumePct = progress && progress.duration > 0 && progress.position > 30
     ? Math.min(100, Math.round((progress.position / progress.duration) * 100))
     : null;
@@ -96,6 +98,7 @@ function VodDetailContent() {
             {item.rating !== null && item.rating > 0 && (
               <span className="inline-flex items-center gap-1 font-bold text-accent"><Icon.Star size={12} /> {item.rating.toFixed(1)}</span>
             )}
+            {item.year !== null && item.year !== undefined && <span>{item.year}</span>}
             {item.category && <span className="max-w-[18rem] truncate">{item.category}</span>}
             {item.addedAt && <span className="hidden sm:inline">{new Date(item.addedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>}
           </div>
@@ -138,6 +141,16 @@ function VodDetailContent() {
           </div>
 
           <div className="min-w-0 flex-1">
+            {item.description && (
+              <p className="mb-5 max-w-3xl text-sm leading-relaxed text-muted md:text-base">{item.description}</p>
+            )}
+            {item.genres && item.genres.length > 0 && (
+              <div className="mb-5 flex flex-wrap gap-2">
+                {item.genres.map((genre) => (
+                  <span key={genre} className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted">{genre}</span>
+                ))}
+              </div>
+            )}
             {isSeries && (
               <div>
                 {episodesQuery.isLoading && <div className="flex justify-center py-8"><Spinner /></div>}

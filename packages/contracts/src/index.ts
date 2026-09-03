@@ -108,7 +108,15 @@ export type PlayResponse = z.infer<typeof playResponseSchema>;
 // ---- VOD (films & séries) ----
 export const vodKindSchema = z.enum(['MOVIE', 'SERIES']);
 export type VodKind = z.infer<typeof vodKindSchema>;
-export const vodItemSchema = z.object({ id: z.string(), kind: vodKindSchema, title: z.string(), posterUrl: z.string().nullable(), rating: z.number().nullable(), category: z.string().nullable(), addedAt: z.string().nullable() });
+export const vodItemSchema = z.object({
+  id: z.string(), kind: vodKindSchema, title: z.string(), posterUrl: z.string().nullable(), rating: z.number().nullable(), category: z.string().nullable(), addedAt: z.string().nullable(),
+  // Enrichissement TVmage (hero + fiche détail uniquement) : synopsis,
+  // backdrop 16:9, genres, année. Absents (undefined) sur les grilles.
+  description: z.string().nullable().optional(),
+  backdropUrl: z.string().nullable().optional(),
+  genres: z.array(z.string()).optional(),
+  year: z.number().nullable().optional(),
+});
 export type VodItem = z.infer<typeof vodItemSchema>;
 export const vodListResponseSchema = z.object({ items: z.array(vodItemSchema), total: z.number(), hasMore: z.boolean() });
 export type VodListResponse = z.infer<typeof vodListResponseSchema>;
@@ -125,7 +133,14 @@ export const vodEpisodeSchema = z.object({ id: z.string(), num: z.number(), titl
 export type VodEpisode = z.infer<typeof vodEpisodeSchema>;
 export const vodSeasonSchema = z.object({ number: z.number(), episodes: z.array(vodEpisodeSchema) });
 export type VodSeason = z.infer<typeof vodSeasonSchema>;
-export const vodSeasonsResponseSchema = z.object({ seasons: z.array(vodSeasonSchema) });
+export const vodSeasonsResponseSchema = z.object({
+  // Enrichissement de la série (fiche) : synopsis, backdrop, genres, année.
+  description: z.string().nullable().optional(),
+  backdropUrl: z.string().nullable().optional(),
+  genres: z.array(z.string()).optional(),
+  year: z.number().nullable().optional(),
+  seasons: z.array(vodSeasonSchema),
+});
 export type VodSeasonsResponse = z.infer<typeof vodSeasonsResponseSchema>;
 // ---- YouTube (onglet Nollywood : parcourir + lire via embed) ----
 export const youtubeVideoSchema = z.object({ id: z.string(), title: z.string(), description: z.string().nullable(), posterUrl: z.string().nullable(), publishedAt: z.string().nullable(), duration: z.number().nullable() });
