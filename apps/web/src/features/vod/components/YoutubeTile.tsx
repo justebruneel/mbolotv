@@ -7,6 +7,16 @@ import { useState } from 'react';
 import { useYoutubeFavoritesStore, youtubeProgressId } from '../../../shared/stores/youtubeFavorites';
 import { useSettingsStore } from '../../../shared/stores/settings';
 
+// Fiche joignable même si l'API détail est injoignable : la tuile embarque
+// titre/affiche/date en params (repli n°3 après API puis cache React Query).
+export function youtubeDetailHref(item: Pick<YoutubeVideo, 'id' | 'title' | 'posterUrl' | 'publishedAt'>): string {
+  const search = new URLSearchParams();
+  search.set('t', item.title.slice(0, 120));
+  if (item.posterUrl) search.set('p', item.posterUrl);
+  if (item.publishedAt) search.set('pub', item.publishedAt);
+  return `/vod/yt/${item.id}?${search.toString()}`;
+}
+
 // Tuile affiche 16:9 (miniature YouTube) — même langage que VodTile
 // (2:3 poster) : hover play, favori local, barre de reprise.
 export function YoutubeTile({ item }: { item: YoutubeVideo }) {
@@ -19,7 +29,7 @@ export function YoutubeTile({ item }: { item: YoutubeVideo }) {
   return (
     <article className="group relative min-w-0">
       <div className="relative aspect-video overflow-hidden rounded-xl border border-border bg-surface transition-[transform,border-color,box-shadow] duration-300 group-hover:-translate-y-1 group-hover:border-accent/50 group-hover:shadow-lg">
-        <Link href={`/vod/yt/${item.id}`} aria-label={`Ouvrir la fiche de ${item.title}`} className="block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset">
+        <Link href={youtubeDetailHref(item)} aria-label={`Ouvrir la fiche de ${item.title}`} className="block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset">
           {item.posterUrl && !posterError ? (
             <img src={item.posterUrl} alt="" loading="lazy" decoding="async" onError={() => setPosterError(true)} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
           ) : (

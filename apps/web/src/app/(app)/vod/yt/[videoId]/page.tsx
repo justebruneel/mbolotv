@@ -1,8 +1,11 @@
 'use client';
 
 import { EmptyState, Icon, Spinner } from '@mbolo/ui';
-import { useParams } from 'next/navigation';
+import type { YoutubeVideo } from '@mbolo/contracts';
+import { useParams, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo } from 'react';
+import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import type { YoutubeListResponse } from '@mbolo/contracts';
 import { useYoutubeVideo } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
@@ -20,8 +23,33 @@ function formatTime(seconds: number): string {
 
 function YoutubeDetailContent() {
   const params = useParams<{ videoId: string }>();
+  const searchParams = useSearchParams();
   const videoId = typeof params.videoId === 'string' ? params.videoId : '';
   const itemQuery = useYoutubeVideo(videoId, Boolean(videoId));
+  const queryClient = useQueryClient();
+
+  // Fiche à trois niveaux (l'endpoint détail videos.list peut être
+  // injoignable selon l'egress) : 1) API, 2) item déjà chargé dans l'onglet
+  // (cache React Query des pages), 3) métadonnées embarquées dans l'URL.
+  const item: YoutubeVideo | null = useMemo(() => {
+    if (itemQuery.data) return itemQuery.data;
+    const cached = queryClient
+      .getQueriesData<InfiniteData<YoutubeListResponse>>({ queryKey: ['vod-youtube'] })
+      .flatMap(([, data]) => data?.pages ?? [])
+      .flatMap((page) => page?.items ?? [])
+      .find((entry) => entry?.id === videoId);
+    if (cached) return cached;
+    const title = searchParams.get('t');
+    if (!title) return null;
+    return {
+      id: videoId,
+      title,
+      description: null,
+      posterUrl: searchParams.get('p'),
+      publishedAt: searchParams.get('pub'),
+      duration: null,
+    };
+  }, [itemQuery.data, queryClient, videoId, searchParams]);
 
   const progressId = useMemo(() => youtubeProgressId(videoId), [videoId]);
   const isFavorite = useYoutubeFavoritesStore((state) => state.ids.includes(progressId));
@@ -34,10 +62,9 @@ function YoutubeDetailContent() {
   useEffect(() => { clearVod(); }, [clearVod]);
 
   if (!videoId) return <EmptyState title="Contenu introuvable" />;
-  if (itemQuery.isLoading) return <div className="flex justify-center py-24"><Spinner /></div>;
-  if (itemQuery.isError || !itemQuery.data) return <EmptyState title="Contenu introuvable" hint="Cette vidéo n'est plus disponible." />;
+  if (itemQuery.isLoading && !item) return <div className="flex justify-center py-24"><Spinner /></div>;
+  if (!item) return <EmptyState title="Contenu introuvable" hint="Cette vidéo n'est plus disponible." />;
 
-  const item = itemQuery.data;
   const startAt = progress && progress.position > 30 && progress.duration > 0 ? progress.position : 0;
 
   return (
