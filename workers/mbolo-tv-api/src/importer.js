@@ -2,12 +2,13 @@ import pg from 'pg';
 import { importKey, encryptLocator, decryptLocator, sha256Hex } from './crypto.js';
 import { slugify, detectCountry } from './normalize.js';
 import { parseM3uStream } from './m3u.js';
-import { fetchXtreamEntries, fetchXtreamVodEntries } from './xtream.js';
+import { fetchXtreamEntries, fetchXtreamVodBatches } from './xtream.js';
 import { fetchMacPortalEntries } from './macportal.js';
 
 const BATCH = 5000;
 const QUERY_BATCH = 2000;
 const CRYPTO_PARALLEL = 200;
+const VOD_BATCH = 2000;
 export const ACTIVE_IMPORT_STATES = ['QUEUED', 'FETCHING', 'PARSING', 'NORMALIZING'];
 
 function chunks(values, size) {
@@ -97,11 +98,24 @@ export async function runSourceImport(env, sourceId, importRunId) {
       const maxBytes = Number(env.IMPORT_MAX_BYTES ?? 512 * 1024 * 1024);
       const response = await fetchWithLimits(url, { maxBytes, timeoutMs: Number(env.IMPORT_FETCH_TIMEOUT_MS ?? 300_000) });
       const entries = [];
-      await parseM3uStream(response.body, (entry) => entries.push(entry), maxBytes);
-      metrics.read = entries.length;
+      const m3uMovies = [];
+      // Films M3U : URLs avec extension VOD (mp4/mkv/…) → VodItem au lieu du
+      // catalogue live ; group-title devient la catégorie VOD.
+      await parseM3uStream(response.body, (entry) => entries.push(entry), maxBytes, (movie) => {
+        let containerExt = 'mp4';
+        try { containerExt = new URL(movie.url).pathname.toLowerCase().split('.').pop() || 'mp4'; } catch { /* locator déjà validé par isVodUrl */ }
+        m3uMovies.push({ kind: 'MOVIE', externalId: movie.url, title: movie.title, posterUrl: movie.posterUrl, rating: null, categoryTitle: movie.categoryTitle, containerExt, addedAt: null, locator: movie.url });
+      });
+      metrics.read = entries.length + m3uMovies.length;
       await persistMetrics();
       await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
       await ingestEntries(q, key, source, entries, metrics, seenInput, seenChannelIds, persistMetrics);
+      if (m3uMovies.length > 0) {
+        const baseHash = (await sha256Hex(url)).slice(0, 8);
+        for (const part of chunks(m3uMovies, VOD_BATCH)) {
+          await ingestVodPhase(q, key, source, part, metrics, persistMetrics, baseHash, seenVodKeys);
+        }
+      }
     } else if (source.kind === 'XTREAM') {
       if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants');
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
@@ -135,19 +149,23 @@ export async function runSourceImport(env, sourceId, importRunId) {
     }
 
     // VOD (films/séries) : uniquement les sources XTREAM activées
-    // (Source.vodEnabled). Ingestion dans VodItem — la purge des variantes
-    // live ci-dessous n'est pas affectée (tables et cycles séparés).
+    // (Source.vodEnabled). Ingestion dans VodItem en flux — chaque lot du
+    // fournisseur est ingéré dès réception, le catalogue complet ne passe
+    // jamais en mémoire (l'échec VOD n'invalide pas l'import du live, déjà
+    // ingéré : l'erreur est enregistrée sur le run sans le marquer FAILED).
     if (source.kind === 'XTREAM' && source.vodEnabled) {
       await q(`UPDATE "ImportRun" SET state = 'PARSING' WHERE id = $1`, [importRunId]);
-      let vodEntries;
       try {
-        vodEntries = await fetchXtreamVodEntries(env, connection, persistMetrics);
+        const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
+        await fetchXtreamVodBatches(env, connection, persistMetrics, {
+          onMovies: (batch) => ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys),
+          onSeries: (batch) => ingestVodPhase(q, key, source, batch, metrics, persistMetrics, baseHash, seenVodKeys),
+        });
       } catch (error) {
-        throw new ImportError('VOD_CONNECTOR_ERROR', error.message);
+        const message = String(error instanceof Error ? error.message : error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300);
+        metrics.vodErrors += 1;
+        await q(`UPDATE "ImportRun" SET "errorCode" = 'VOD_CONNECTOR_ERROR', "errorMessage" = $2 WHERE id = $1`, [importRunId, message]).catch(() => undefined);
       }
-      await q(`UPDATE "ImportRun" SET state = 'NORMALIZING' WHERE id = $1`, [importRunId]);
-      const baseHash = (await sha256Hex(connection.url)).slice(0, 8);
-      await ingestVodEntries(q, key, source, vodEntries, metrics, persistMetrics, baseHash, seenVodKeys);
     }
 
     // Prune : variantes actives de la source absentes du dernier flux.
@@ -165,7 +183,7 @@ export async function runSourceImport(env, sourceId, importRunId) {
       metrics.pruned += result.rowCount;
     }
     metrics.processed = metrics.read;
-    metrics.ignored = Math.max(0, metrics.read - metrics.created - metrics.updated - metrics.duplicates - metrics.errors);
+    metrics.ignored = Math.max(0, metrics.read - (metrics.created + metrics.vodCreated) - (metrics.updated + metrics.vodUpdated) - metrics.duplicates - metrics.vodDuplicates - metrics.errors - metrics.vodErrors);
 
     const completed = await q(`UPDATE "ImportRun" SET state = 'COMPLETED', metrics = $2, "completedAt" = now() WHERE id = $1 AND state <> 'CANCELED' RETURNING id`, [importRunId, JSON.stringify(metrics)]);
     if (completed.rows.length > 0) {
@@ -375,17 +393,11 @@ async function ingestEntries(q, cryptoKey, source, entries, metrics, seenInput, 
 // ingestEntries mais table dédiée : pas de conflit de clé avec le live, pas
 // de catégorie Category partagée (categoryTitle texte libre), pas de
 // health-check (un mp4/mkv n'est pas un manifest #EXTM3U).
-// PHASES MÉMOIRE-BORNÉES : un gros catalogue Xtream VOD peut dépasser
-// 100 000 items — tout bufferiser en tableaux d'ingestion ferait exploser
-// l'isolate. Chaque phase (films, puis séries) est entièrement consommée
-// avant la suivante ; les tableaux intermédiaires sont libérés entre deux.
-async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metrics, persistMetrics, baseHash, seenVodKeys) {
-  await ingestVodPhase(q, cryptoKey, source, movies, 'MOVIE', metrics, persistMetrics, baseHash, seenVodKeys);
-  await ingestVodPhase(q, cryptoKey, source, series, 'SERIES', metrics, persistMetrics, baseHash, seenVodKeys);
-  await persistMetrics();
-}
-
-async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, persistMetrics, baseHash, seenVodKeys) {
+// MODE FLUX : ingestVodPhase est appelée par lot (fetchXtreamVodBatches) —
+// un gros catalogue Xtream VOD dépasse 100 000 items, tout bufferiser ferait
+// exploser l'isolate. Les lots films/séries sont consommés au fil de l'eau ;
+// la purge VOD balaie seenVodKeys rempli au fil des lots.
+async function ingestVodPhase(q, cryptoKey, source, entries, metrics, persistMetrics, baseHash, seenVodKeys) {
   if (!entries || entries.length === 0) return;
   const metas = [];
 
@@ -394,6 +406,7 @@ async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, pers
       const normalizedKey = vodNormalizedKey(entry.kind, entry.externalId, baseHash);
       if (seenVodKeys.has(normalizedKey)) { metrics.vodDuplicates += 1; continue; }
       seenVodKeys.add(normalizedKey);
+      metrics.vodRead += 1;
       metas.push({ ...entry, key: normalizedKey });
     } catch {
       metrics.vodErrors += 1;
@@ -403,12 +416,13 @@ async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, pers
 
   const existingByKey = new Map();
   for (const part of chunks(metas.map((meta) => meta.key), QUERY_BATCH)) {
-    const rows = await q(`SELECT id, kind, title, "normalizedKey", "posterUrl", rating, "categoryTitle", "containerExt", "isActive", "encryptedLocator" FROM "VodItem" WHERE "normalizedKey" = ANY($1::text[])`, [part]);
+    const rows = await q(`SELECT id, kind, title, "normalizedKey", "posterUrl", rating, "categoryTitle", "containerExt", "addedAt", "isActive", "encryptedLocator" FROM "VodItem" WHERE "normalizedKey" = ANY($1::text[])`, [part]);
     for (const row of rows.rows) existingByKey.set(row.normalizedKey, row);
   }
 
   const creates = [];
   const updates = [];
+  const reactivations = [];
   const locatorUpdates = [];
   const decryptPairs = [];
 
@@ -418,6 +432,10 @@ async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, pers
       creates.push(entry);
       continue;
     }
+    // Item revenu dans le flux mais inchangé : doit être réactivé s'il avait
+    // été purgé d'un import précédent (les updates plus bas ne l'auraient pas
+    // touché et il serait resté isActive = false à jamais).
+    if (!existing.isActive) reactivations.push(existing.id);
     const update = { id: existing.id };
     let changed = false;
     if (existing.title !== entry.title) { update.title = entry.title; changed = true; }
@@ -439,7 +457,6 @@ async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, pers
     });
   }
 
-  metrics.vodRead += entries.length;
   await persistMetrics();
 
   for (const part of chunks(creates, BATCH)) {
@@ -484,6 +501,11 @@ async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, pers
     );
   }
   metrics.vodUpdated += updates.length;
+
+  // Réactivation en masse des items revenus sans aucun changement.
+  for (const part of chunks(reactivations, 500)) {
+    await q(`UPDATE "VodItem" SET "isActive" = true WHERE id = ANY($1::text[])`, [part]);
+  }
 
   // Locators re-chiffrés en masse.
   for (const part of chunks(locatorUpdates, CRYPTO_PARALLEL)) {

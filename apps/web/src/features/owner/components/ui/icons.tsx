@@ -34,3 +34,4 @@ export const IconKey = wrap(Icon.Key);
 export const IconPlug = wrap(Icon.Plug);
 export const IconUsers = wrap(Icon.Users);
 export const IconBell = wrap(Icon.Bell);
+export const IconClapperboard = wrap(Icon.Clapperboard);

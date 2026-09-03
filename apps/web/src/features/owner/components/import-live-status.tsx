@@ -4,13 +4,16 @@ import type { ImportRun } from '@mbolo/contracts';
 import { useEffect, useState } from 'react';
 import { ownerApi } from '../api/owner-api';
 import { Card, CardBody } from './ui/card';
-import { IconLayers, IconRefresh, IconServer, IconTv, IconX } from './ui/icons';
+import { IconClapperboard, IconLayers, IconRefresh, IconServer, IconTv, IconX } from './ui/icons';
 import { ImportStateBadge } from './ui/status-badge';
 
 const METRICS: { key: string; label: string; icon: typeof IconTv; tone: string }[] = [
   { key: 'read', label: 'Chaînes lues', icon: IconLayers, tone: 'text-muted' },
   { key: 'created', label: 'Éléments créés', icon: IconTv, tone: 'text-success' },
   { key: 'updated', label: 'Éléments mis à jour', icon: IconRefresh, tone: 'text-accent' },
+  { key: 'vodRead', label: 'Films & séries analysés', icon: IconClapperboard, tone: 'text-muted' },
+  { key: 'vodCreated', label: 'Films & séries créés', icon: IconClapperboard, tone: 'text-success' },
+  { key: 'vodUpdated', label: 'Films & séries mis à jour', icon: IconClapperboard, tone: 'text-accent' },
   { key: 'duplicates', label: 'Doublons', icon: IconServer, tone: 'text-warning' },
   { key: 'errors', label: 'Erreurs', icon: IconX, tone: 'text-danger' },
 ];
@@ -46,7 +49,7 @@ export function ImportLiveStatus({ initialRun }: { initialRun: ImportRun }) {
           <CardBody>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2"><ImportStateBadge state={run.state} /><span className="text-sm text-muted">{processed}{total ? ` / ${total}` : ''} chaîne(s) traitée(s){pct ? ` · ${pct}%` : ''}</span></div>
+                <div className="flex items-center gap-2"><ImportStateBadge state={run.state} /><span className="text-sm text-muted">{processed}{total ? ` / ${total}` : ''} élément(s) traité(s){pct ? ` · ${pct}%` : ''}</span></div>
                 <p className="mt-2 text-xs text-muted">La progression se met à jour automatiquement.</p>
               </div>
               <button type="button" className="btn btn-secondary" onClick={cancel} disabled={canceling}>

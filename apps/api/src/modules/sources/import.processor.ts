@@ -16,15 +16,22 @@ import { parseM3uStreamBatched, type ParsedChannel } from './m3u.parser';
 import { ImportCancellationRegistry } from './import-cancellation';
 import { SafeFetcher } from './safe-fetcher';
 import { fetchXtreamEntries } from './xtream.connector';
+import { fetchXtreamVodEntries, type VodEntry } from './xtream-vod.connector';
 import { EpgImportService } from '../epg/epg-import.service';
 
-interface ImportSource { id: string; ownerId: string; kind: string; status: string; connectionEncrypted: Uint8Array; }
+interface ImportSource { id: string; ownerId: string; kind: string; status: string; vodEnabled: boolean; connectionEncrypted: Uint8Array; }
 interface ExistingChannel { id: string; name: string; canonicalName: string; normalizedKey: string; tvgId: string | null; country: string | null; categoryId: string | null; sortOrder: number; logoKey: string | null; }
-interface ImportMetrics { read: number; processed: number; created: number; updated: number; duplicates: number; ignored: number; errors: number; pruned: number; logos: number; }
+interface ImportMetrics { read: number; processed: number; created: number; updated: number; duplicates: number; ignored: number; errors: number; pruned: number; logos: number; vodRead: number; vodCreated: number; vodUpdated: number; vodDuplicates: number; vodErrors: number; }
 interface EntryMeta extends ParsedChannel { key: string; legacyKey: string; country: string | null; categorySlug: string | null; sortOrder: number; }
 interface PendingCreate { name: string; canonicalName: string; normalizedKey: string; tvgId: string | null; country: string | null; categorySlug: string | null; sortOrder: number; }
 interface PendingUpdate { id: string; sortOrder: number; tvgId?: string; country?: string; categorySlug?: string; }
 interface ImportState { metrics: ImportMetrics; seenInput: Set<string>; seenChannelIds: Set<string>; }
+
+// Clé VOD stable par source : hash de l'URL du panel (le stream_id Xtream
+// n'est unique que chez un fournisseur donné) + identifiant externe.
+// Indépendant du titre : pas de churn quand le fournisseur renomme un film.
+const VOD_BATCH = 2000;
+function vodNormalizedKey(kind: string, externalId: string, baseHash: string): string { return `vod-${kind.toLowerCase()}-${baseHash}-${externalId}`; }
 
 const BATCH = 5000;
 const QUERY_BATCH = 2000;
@@ -57,7 +64,17 @@ export class ImportProcessor implements OnModuleInit {
     const connection = JSON.parse(this.crypto.decrypt(source.connectionEncrypted)) as Record<string, string>;
     try {
       await this.assertNotCanceled(importRunId);
-      const metrics = source.kind === 'M3U' ? await this.importM3u(source, connection, importRunId) : source.kind === 'XTREAM' ? await this.importXtream(source, connection, importRunId) : source.kind === 'MAC_PORTAL' ? await this.importMac(source, connection, importRunId) : (() => { throw new ImportError('UNSUPPORTED_KIND', 'Type de source non pris en charge'); })();
+      const state = this.createImportState();
+      const metrics = source.kind === 'M3U' ? await this.importM3u(source, connection, importRunId, state) : source.kind === 'XTREAM' ? await this.importXtream(source, connection, importRunId, state) : source.kind === 'MAC_PORTAL' ? await this.importMac(source, connection, importRunId) : (() => { throw new ImportError('UNSUPPORTED_KIND', 'Type de source non pris en charge'); })();
+      // VOD (films/séries) : uniquement les sources Xtream activées
+      // (Source.vodEnabled). L'échec VOD n'invalide pas l'import du live,
+      // déjà ingéré : l'erreur est enregistrée sur le run sans le marquer
+      // FAILED (codes VOD_* inspectables côté console).
+      if (source.kind === 'XTREAM' && source.vodEnabled) {
+        await this.assertNotCanceled(importRunId);
+        await this.importVod(source, connection, importRunId, state);
+      }
+      metrics.ignored = Math.max(0, metrics.read - (metrics.created + metrics.vodCreated) - (metrics.updated + metrics.vodUpdated) - metrics.duplicates - metrics.vodDuplicates - metrics.errors - metrics.vodErrors);
       const completed = await this.prisma.importRun.updateMany({ where: { id: importRunId, state: { not: 'CANCELED' } }, data: { state: 'COMPLETED', metrics: JSON.parse(JSON.stringify(metrics)), completedAt: new Date() } });
       if (!completed.count) return;
       await this.prisma.source.update({ where: { id: sourceId }, data: { status: 'READY', lastSyncedAt: new Date() } });
@@ -67,20 +84,91 @@ export class ImportProcessor implements OnModuleInit {
     finally { this.cancellation.unregister(importRunId); }
   }
 
-  private createImportState(): ImportState { return { metrics: { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0 }, seenInput: new Set<string>(), seenChannelIds: new Set<string>() }; }
-  private async importM3u(source: ImportSource, connection: Record<string, string>, importRunId: string): Promise<ImportMetrics> {
+  private createImportState(): ImportState { return { metrics: { read: 0, processed: 0, created: 0, updated: 0, duplicates: 0, ignored: 0, errors: 0, pruned: 0, logos: 0, vodRead: 0, vodCreated: 0, vodUpdated: 0, vodDuplicates: 0, vodErrors: 0 }, seenInput: new Set<string>(), seenChannelIds: new Set<string>() }; }
+  private async importM3u(source: ImportSource, connection: Record<string, string>, importRunId: string, state: ImportState): Promise<ImportMetrics> {
     const url = connection.url ?? connection.playlistUrl; const fileKey = connection.fileKey; const filePath = connection.filePath; if (!url && !fileKey && !filePath) throw new ImportError('MISSING_URL', 'URL de playlist ou fichier local manquant');
     await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); const maxBytes = this.config.get<number>('IMPORT_MAX_BYTES', 512 * 1024 * 1024); let stream: NodeJS.ReadableStream;
     if (fileKey) { const stored = await this.storage.getStream(fileKey); if (!stored) throw new ImportError('FILE_NOT_FOUND', 'Playlist téléversée introuvable'); stream = stored; }
     else if (filePath) { const root = resolve(this.config.get<string>('STORAGE_LOCAL_DIR', './uploads')); const absolute = resolve(root, filePath); if (!absolute.startsWith(`${root}${sep}`)) throw new ImportError('INVALID_FILE_PATH', 'Chemin de fichier invalide'); stream = createReadStream(absolute); }
     else { const result = await new SafeFetcher().fetchStream(url as string, { maxBytes, streamTimeoutMs: this.config.get<number>('IMPORT_FETCH_TIMEOUT_MS', 300000), signal: this.cancellation.signal(importRunId) }); if (!result.ok || !result.stream) throw new ImportError('FETCH_ERROR', result.error ?? 'Échec de téléchargement'); stream = result.stream as unknown as NodeJS.ReadableStream; }
-    const state = this.createImportState();
     await parseM3uStreamBatched(stream as import('node:stream').Readable, { maxBytes, batchSize: BATCH, onBatch: async (batch) => { await this.assertNotCanceled(importRunId); const entries = this.probe ? await this.probeSubplaylists(batch, importRunId) : batch; await this.ingestEntries(source, entries, importRunId, state, false); } });
     await this.assertNotCanceled(importRunId); return this.finalizeIngest(source, importRunId, state);
   }
   private async probeSubplaylists(entries: ParsedChannel[], importRunId: string): Promise<ParsedChannel[]> { const fetcher = new SafeFetcher(); const results: Array<ParsedChannel | null> = new Array(entries.length).fill(null); let cursor = 0; const worker = async (): Promise<void> => { for (;;) { const index = cursor++; if (index >= entries.length) return; await this.assertNotCanceled(importRunId); const result = await fetcher.fetch(entries[index].url, { maxBytes: 256 * 1024, timeoutMs: 10000, signal: this.cancellation.signal(importRunId) }); if (!result.ok || !result.body || !isSubplaylistContainer(result.body)) results[index] = entries[index]; } }; await Promise.all(Array.from({ length: Math.min(8, Math.max(1, entries.length)) }, () => worker())); return results.filter((entry): entry is ParsedChannel => entry !== null); }
-  private async importXtream(source: ImportSource, connection: Record<string, string>, importRunId: string): Promise<ImportMetrics> { if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants'); await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); try { const state = this.createImportState(); return this.ingestEntries(source, (await fetchXtreamEntries({ url: connection.url, username: connection.username, password: connection.password })).entries, importRunId, state, true); } catch (error) { throw new ImportError('CONNECTOR_ERROR', messageOf(error)); } }
+  private async importXtream(source: ImportSource, connection: Record<string, string>, importRunId: string, state: ImportState): Promise<ImportMetrics> { if (!connection.url || !connection.username || !connection.password) throw new ImportError('MISSING_CREDENTIALS', 'Identifiants Xtream manquants'); await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); try { return this.ingestEntries(source, (await fetchXtreamEntries({ url: connection.url, username: connection.username, password: connection.password })).entries, importRunId, state, true); } catch (error) { throw new ImportError('CONNECTOR_ERROR', messageOf(error)); } }
   private async importMac(source: ImportSource, connection: Record<string, string>, importRunId: string): Promise<ImportMetrics> { const url = connection.url ?? connection.portal; const macAddress = connection.macAddress ?? connection.mac ?? connection.mac_address; if (!url || !macAddress) throw new ImportError('MISSING_CREDENTIALS', 'Adresse MAC du portail manquante'); await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } }); try { const state = this.createImportState(); return this.ingestEntries(source, (await fetchMacPortalEntries({ url, macAddress, signal: this.cancellation.signal(importRunId) })).entries, importRunId, state, true); } catch (error) { throw new ImportError('CONNECTOR_ERROR', messageOf(error)); } }
+
+  // VOD Xtream : films + séries dans VodItem (locator au même format que le
+  // Worker : /movie/... ou JSON xtream-series). Non fatal : le live a déjà
+  // été ingéré, un échec connecteur VOD est juste journalisé sur le run.
+  private async importVod(source: ImportSource, connection: Record<string, string>, importRunId: string, state: ImportState): Promise<void> {
+    if (!connection.url || !connection.username || !connection.password) return;
+    await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'PARSING' } });
+    try {
+      const { movies, series } = await fetchXtreamVodEntries({ url: connection.url, username: connection.username, password: connection.password }, this.cancellation.signal(importRunId));
+      await this.prisma.importRun.update({ where: { id: importRunId }, data: { state: 'NORMALIZING' } });
+      const baseHash = createHash('sha256').update(connection.url).digest('hex').slice(0, 8);
+      const seenVodKeys = new Set<string>();
+      await this.ingestVodPhase(source, movies, state, baseHash, seenVodKeys);
+      await this.ingestVodPhase(source, series, state, baseHash, seenVodKeys);
+      // Prune VOD : items actifs de la source absents du dernier flux.
+      const activeVod = await this.prisma.vodItem.findMany({ where: { sourceId: source.id, isActive: true }, select: { id: true, normalizedKey: true } });
+      const toPruneVod = activeVod.filter((item) => !seenVodKeys.has(item.normalizedKey));
+      for (const part of chunks(toPruneVod, 500)) { const result = await this.prisma.vodItem.updateMany({ where: { id: { in: part.map((item) => item.id) } }, data: { isActive: false } }); state.metrics.pruned += result.count; }
+    } catch (error) {
+      state.metrics.vodErrors += 1;
+      await this.prisma.importRun.update({ where: { id: importRunId }, data: { errorCode: 'VOD_CONNECTOR_ERROR', errorMessage: messageOf(error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300) } }).catch(() => undefined);
+      this.logger.warn(`Import VOD ignoré pour ${source.id} : ${messageOf(error)}`);
+    }
+  }
+
+  // Diff VOD par phase (films puis séries) : même logique que le Worker —
+  // lookup en masse par clé, création en masse, maj métadonnées, réactivation
+  // des items revenus, locator re-chiffré seulement s'il a réellement changé
+  // (IV aléatoire).
+  private async ingestVodPhase(source: ImportSource, entries: VodEntry[], state: ImportState, baseHash: string, seenVodKeys: Set<string>): Promise<void> {
+    if (!entries || entries.length === 0) return;
+    const metrics = state.metrics;
+    const metas: Array<{ entry: VodEntry; key: string }> = [];
+    for (const entry of entries) {
+      const key = vodNormalizedKey(entry.kind, entry.externalId, baseHash);
+      if (seenVodKeys.has(key)) { metrics.vodDuplicates += 1; continue; }
+      seenVodKeys.add(key);
+      metrics.vodRead += 1;
+      metas.push({ entry, key });
+    }
+    const existingByKey = new Map<string, { id: string; title: string; posterUrl: string | null; rating: number | null; categoryTitle: string | null; containerExt: string | null; addedAt: Date | null; isActive: boolean; encryptedLocator: Uint8Array }>();
+    for (const part of chunks(metas.map(({ key }) => key), QUERY_BATCH)) {
+      const rows = await this.prisma.vodItem.findMany({ where: { normalizedKey: { in: part } }, select: { id: true, normalizedKey: true, title: true, posterUrl: true, rating: true, categoryTitle: true, containerExt: true, addedAt: true, isActive: true, encryptedLocator: true } });
+      for (const row of rows) existingByKey.set(row.normalizedKey, row as never);
+    }
+    const creates: VodEntry[] = []; const updates: Array<{ id: string; data: Record<string, unknown> }> = []; const reactivations: string[] = []; const locatorUpdates: Array<{ id: string; locator: string }> = [];
+    for (const { entry, key } of metas) {
+      const existing = existingByKey.get(key);
+      if (!existing) { creates.push(entry); continue; }
+      // Item revenu dans le flux mais inchangé : doit être réactivé s'il
+      // avait été purgé d'un import précédent.
+      if (!existing.isActive) reactivations.push(existing.id);
+      const data: Record<string, unknown> = {};
+      if (existing.title !== entry.title) data['title'] = entry.title;
+      if ((existing.posterUrl ?? null) !== entry.posterUrl) data['posterUrl'] = entry.posterUrl;
+      if ((existing.rating ?? null) !== entry.rating) data['rating'] = entry.rating;
+      if ((existing.categoryTitle ?? null) !== entry.categoryTitle) data['categoryTitle'] = entry.categoryTitle;
+      if ((existing.containerExt ?? null) !== entry.containerExt) data['containerExt'] = entry.containerExt;
+      const existingAdded = existing.addedAt ? existing.addedAt.getTime() : null;
+      if (existingAdded !== (entry.addedAt ? entry.addedAt.getTime() : null)) data['addedAt'] = entry.addedAt;
+      if (Object.keys(data).length > 0) updates.push({ id: existing.id, data: { ...data, isActive: true } });
+      if (this.decryptLocator(existing.encryptedLocator) !== entry.locator) locatorUpdates.push({ id: existing.id, locator: entry.locator });
+    }
+    for (const part of chunks(creates, VOD_BATCH)) {
+      await this.prisma.vodItem.createMany({ data: part.map((entry) => ({ kind: entry.kind, title: entry.title, normalizedKey: vodNormalizedKey(entry.kind, entry.externalId, baseHash), posterUrl: entry.posterUrl, rating: entry.rating, categoryTitle: entry.categoryTitle, containerExt: entry.containerExt, addedAt: entry.addedAt, sourceId: source.id, encryptedLocator: this.crypto.encrypt(entry.locator) })) });
+      metrics.vodCreated += part.length;
+    }
+    for (const part of chunks(updates, 1000)) await this.prisma.$transaction(part.map((update) => this.prisma.vodItem.update({ where: { id: update.id }, data: update.data })));
+    metrics.vodUpdated += updates.length;
+    for (const part of chunks(reactivations, 500)) await this.prisma.vodItem.updateMany({ where: { id: { in: part } }, data: { isActive: true } });
+    for (const part of chunks(locatorUpdates, 1000)) await this.prisma.$transaction(part.map((update) => this.prisma.vodItem.update({ where: { id: update.id }, data: { encryptedLocator: this.crypto.encrypt(update.locator), isActive: true } })));
+  }
 
   // Un locator indéchiffrable (changement d'ENCRYPTION_KEY) ne doit pas faire
   // échouer l'import : retourner null force le re-chiffrement avec la clé courante.

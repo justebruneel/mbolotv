@@ -1,6 +1,11 @@
 import { resolveRelay } from './relay.js';
 
 const MAX_API_BYTES = 50 * 1024 * 1024;
+// Catalogues VOD volumineux : en flux, on ne bufferise que par lots — la
+// limite porte sur le volume cumulé téléchargé, pas sur la mémoire.
+const VOD_MAX_BYTES_DEFAULT = 1024 * 1024 * 1024;
+const VOD_STREAM_IDLE_TIMEOUT_MS = 60_000;
+const VOD_BATCH_SIZE = 2000;
 const CONNECTOR_TIMEOUT_MS = 180_000;
 const FETCH_RETRIES = 3;
 const FETCH_RETRY_DELAYS_MS = [800, 2500, 6000];
@@ -83,37 +88,174 @@ async function fetchCategoryMap(env, base, user, pass, action, touch) {
 function toRating(value) { const rating = Number(value); return Number.isFinite(rating) && rating >= 0 ? rating : null; }
 function toAddedAt(value) { const added = Number(value); return Number.isFinite(added) && added > 0 ? new Date(added * 1000) : null; }
 
-export async function fetchXtreamVodEntries(env, connection, touch) {
+// Parseur JSON incrémental : émet les éléments d'un tableau racine par lots
+// sans bufferiser le corps de la réponse. Un panel de 100 000+ films renvoie
+// une payload de plusieurs dizaines de Mo — response.text() + JSON.parse()
+// dépasse la mémoire de l'isolate Workers et tue le waitUntil (run orphelin,
+// import VOD qui n'aboutit jamais). Reconnaît [...] et {"clé":[…]}.
+export async function streamJsonArrayBatches(body, onBatch, { maxBytes = MAX_API_BYTES, idleTimeoutMs = VOD_STREAM_IDLE_TIMEOUT_MS, batchSize = VOD_BATCH_SIZE } = {}) {
+  if (!body) throw new Error('Réponse Xtream VOD vide');
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const reader = body.getReader();
+  let received = 0;
+  let buffer = '';
+  let scanPos = 0;
+  // seek : localise le tableau racine (éventuellement enveloppé dans un objet)
+  // items : émission des éléments | done : tableau fermé, reste ignoré.
+  let phase = 'seek';
+  let depth = 0;
+  let objectStart = -1;
+  let inString = false;
+  let pending = [];
+  let emitted = 0;
+  let done = false;
+
+  const compact = (cut) => { buffer = cut >= buffer.length ? '' : buffer.slice(cut); scanPos -= cut; if (scanPos < 0) scanPos = 0; objectStart = objectStart >= 0 ? objectStart - cut : -1; };
+  // Scanner synchrone : les caractères hors chaînes ne nous intéressent que
+  // comme délimiteurs ; les chaînes sont sautées jusqu'à leur guillemet fermant
+  // non échappé (les \" comptent, les \\\" non).
+  const scan = () => {
+    for (;;) {
+      if (inString) {
+        let pos = scanPos;
+        let closed = false;
+        while (pos < buffer.length) {
+          const quote = buffer.indexOf('"', pos);
+          if (quote === -1) { scanPos = buffer.length; return; }
+          let backslashes = 0;
+          for (let i = quote - 1; i >= 0 && buffer[i] === '\\'; i -= 1) backslashes += 1;
+          if (backslashes % 2 === 0) { inString = false; scanPos = quote + 1; closed = true; break; }
+          pos = quote + 1;
+        }
+        if (!closed) return;
+        continue;
+      }
+      let next = -1;
+      for (let i = scanPos; i < buffer.length; i += 1) {
+        const c = buffer[i];
+        if (c === '"') { next = i; break; }
+        if (c === '{' || c === '}' || c === '[' || c === ']') { next = i; break; }
+      }
+      if (next === -1) { scanPos = buffer.length; return; }
+      const c = buffer[next];
+      scanPos = next + 1;
+      if (c === '"') { inString = true; continue; }
+      if (phase === 'seek') {
+        if (c === '[') { phase = 'items'; depth = 0; }
+        else if (c === '{') depth += 1;
+        else if (c === '}') depth -= 1;
+        continue;
+      }
+      if (c === '{') { if (depth === 0) objectStart = next; depth += 1; }
+      else if (c === '[') { if (depth === 0) objectStart = next; depth += 1; }
+      else if (c === '}') { depth -= 1; if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); } }
+      else if (c === ']') {
+        if (depth === 0) { phase = 'done'; return; }
+        depth -= 1;
+        if (depth === 0 && objectStart >= 0) { push(buffer.slice(objectStart, next + 1)); compact(next + 1); }
+      }
+    }
+  };
+  function push(raw) {
+    try { pending.push(JSON.parse(raw)); } catch { /* élément tronqué ou invalide : ignoré */ }
+    objectStart = -1;
+  }
+
+  try {
+    for (;;) {
+      let read;
+      if (idleTimeoutMs > 0) {
+        let timer;
+        read = await Promise.race([
+          reader.read(),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Flux Xtream VOD interrompu (aucune donnée reçue)')), idleTimeoutMs); }),
+        ]).finally(() => clearTimeout(timer));
+      } else {
+        read = await reader.read();
+      }
+      const { done: streamDone, value } = read;
+      if (streamDone) break;
+      received += value.byteLength;
+      if (received > maxBytes) throw new Error(`Réponse Xtream VOD trop volumineuse (${received} octets, limite ${maxBytes})`);
+      buffer += decoder.decode(value, { stream: true });
+      scan();
+      if (done) break;
+      if (pending.length >= batchSize) {
+        const batch = pending;
+        pending = [];
+        await onBatch(batch);
+        emitted += batch.length;
+      }
+    }
+    scan();
+    if (pending.length > 0) { const batch = pending; pending = []; await onBatch(batch); emitted += batch.length; }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  if (done) await reader.cancel().catch(() => undefined);
+  return emitted;
+}
+
+// Téléchargement en flux d'une action Xtream renvoyant une liste, avec une
+// relance unique si l'échec survient avant le premier élément (réseau capricieux).
+async function streamXtreamAction(url, env, touch, onBatch, maxBytes) {
+  let lastError;
+  for (let attempt = 0; attempt <= 1; attempt += 1) {
+    if (touch) await touch().catch(() => undefined);
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(CONNECTOR_TIMEOUT_MS), headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json, text/plain, */*' } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await streamJsonArrayBatches(response.body, onBatch, { maxBytes });
+    } catch (error) {
+      lastError = error;
+      if (/identifiants|HTTP 401|HTTP 403/i.test(String(error?.message ?? error))) throw error;
+      if (attempt < 1) await sleep(2500);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Échec Xtream inconnu');
+}
+
+function mapVodMovie(stream, movieCategories, base, user, pass) {
+  if (stream == null || typeof stream !== 'object' || stream.stream_id == null) return null;
+  const title = String(stream.name ?? `Film ${stream.stream_id}`).trim();
+  if (!title || isFolderMarker(title)) return null;
+  const containerExt = String(stream.container_extension ?? 'mp4').trim().replace(/^\./, '') || 'mp4';
+  const categoryTitle = (stream.category_id != null && movieCategories.get(String(stream.category_id))) || (stream.category_name ? String(stream.category_name).trim() : undefined);
+  return { kind: 'MOVIE', externalId: String(stream.stream_id), title, posterUrl: normalizeIcon(stream.stream_icon) ?? null, rating: toRating(stream.rating), categoryTitle: categoryTitle ?? null, containerExt, addedAt: toAddedAt(stream.added), locator: `${base}/movie/${user}/${pass}/${stream.stream_id}.${containerExt}` };
+}
+
+function mapVodSerie(item, seriesCategories, connection) {
+  if (item == null || typeof item !== 'object' || item.series_id == null) return null;
+  const title = String(item.name ?? `Série ${item.series_id}`).trim();
+  if (!title || isFolderMarker(title)) return null;
+  const categoryTitle = (item.category_id != null && seriesCategories.get(String(item.category_id))) || (item.category_name ? String(item.category_name).trim() : undefined);
+  return { kind: 'SERIES', externalId: String(item.series_id), title, posterUrl: normalizeIcon(item.cover ?? item.stream_icon) ?? null, rating: toRating(item.rating), categoryTitle: categoryTitle ?? null, containerExt: null, addedAt: toAddedAt(item.last_modified ?? item.added), locator: JSON.stringify({ type: 'xtream-series', base: connection.url.replace(/\/+$/, ''), username: connection.username, password: connection.password, seriesId: String(item.series_id) }) };
+}
+
+// VOD (films + séries) en flux : chaque lot est consommé par l'importeur dès
+// sa réception — le catalogue complet ne transite jamais en mémoire.
+// onMovies/onSeries reçoivent des lots d'entrées déjà normalisées.
+export async function fetchXtreamVodBatches(env, connection, touch, { onMovies, onSeries }) {
   const base = connection.url.replace(/\/+$/, '');
   const user = encodeURIComponent(connection.username);
   const pass = encodeURIComponent(connection.password);
+  const maxBytes = Number(env.IMPORT_VOD_MAX_BYTES ?? VOD_MAX_BYTES_DEFAULT);
   const movieCategories = await fetchCategoryMap(env, base, user, pass, 'get_vod_categories', touch);
   await sleep(INTER_CALL_DELAY_MS);
   const seriesCategories = await fetchCategoryMap(env, base, user, pass, 'get_series_categories', touch);
   await sleep(INTER_CALL_DELAY_MS);
-  const vodPayload = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_vod_streams`, env, touch);
+
+  await streamXtreamAction(`${base}/player_api.php?username=${user}&password=${pass}&action=get_vod_streams`, env, touch, async (batch) => {
+    const movies = batch.map((stream) => mapVodMovie(stream, movieCategories, base, user, pass)).filter(Boolean);
+    if (movies.length > 0) await onMovies(movies);
+  }, maxBytes);
   await sleep(INTER_CALL_DELAY_MS);
-  const seriesPayload = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_series`, env, touch);
-  const vodStreams = Array.isArray(vodPayload) ? vodPayload : Array.isArray(vodPayload?.vod_streams) ? vodPayload.vod_streams : [];
-  const seriesList = Array.isArray(seriesPayload) ? seriesPayload : Array.isArray(seriesPayload?.series) ? seriesPayload.series : [];
-  const movies = [];
-  for (const stream of vodStreams) {
-    if (stream.stream_id == null) continue;
-    const title = String(stream.name ?? `Film ${stream.stream_id}`).trim();
-    if (!title || isFolderMarker(title)) continue;
-    const containerExt = String(stream.container_extension ?? 'mp4').trim().replace(/^\./, '') || 'mp4';
-    const categoryTitle = (stream.category_id != null && movieCategories.get(String(stream.category_id))) || (stream.category_name ? String(stream.category_name).trim() : undefined);
-    movies.push({ kind: 'MOVIE', externalId: String(stream.stream_id), title, posterUrl: normalizeIcon(stream.stream_icon) ?? null, rating: toRating(stream.rating), categoryTitle: categoryTitle ?? null, containerExt, addedAt: toAddedAt(stream.added), locator: `${base}/movie/${user}/${pass}/${stream.stream_id}.${containerExt}` });
-  }
-  const series = [];
-  for (const item of seriesList) {
-    if (item.series_id == null) continue;
-    const title = String(item.name ?? `Série ${item.series_id}`).trim();
-    if (!title || isFolderMarker(title)) continue;
-    const categoryTitle = (item.category_id != null && seriesCategories.get(String(item.category_id))) || (item.category_name ? String(item.category_name).trim() : undefined);
-    series.push({ kind: 'SERIES', externalId: String(item.series_id), title, posterUrl: normalizeIcon(item.cover ?? item.stream_icon) ?? null, rating: toRating(item.rating), categoryTitle: categoryTitle ?? null, containerExt: null, addedAt: toAddedAt(item.last_modified ?? item.added), locator: JSON.stringify({ type: 'xtream-series', base, username: connection.username, password: connection.password, seriesId: String(item.series_id) }) });
-  }
-  return { movies, series };
+
+  await streamXtreamAction(`${base}/player_api.php?username=${user}&password=${pass}&action=get_series`, env, touch, async (batch) => {
+    const series = batch.map((item) => mapVodSerie(item, seriesCategories, connection)).filter(Boolean);
+    if (series.length > 0) await onSeries(series);
+  }, maxBytes);
 }
 
 export async function fetchXtreamSeriesInfo(env, connection, seriesId, touch) {
