@@ -7,6 +7,7 @@ import * as epg from "./epg.js";
 import * as activity from "./activity.js";
 import * as access from "./access.js";
 import * as favorites from "./favorites.js";
+import * as logo from "./logo.js";
 import * as vod from "./vod.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
@@ -287,6 +288,11 @@ async function route(ctx, url) {
 
   if (path === "/api/channels/countries" && method === "GET")
     return ctx.json(await channels.countries(env));
+
+  // Proxy d'images (logos) : URLs signées par l'existence en base, servies
+  // depuis notre domaine avec cache edge (hôtes fournisseur souvent morts).
+  if (path === "/api/logo" && method === "GET")
+    return logo.serveLogo(env, url.searchParams.get("url") ?? "");
 
   const channelMatch = path.match(/^\/api\/channels\/([^/]+)(\/(epg|play))?$/);
 

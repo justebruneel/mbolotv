@@ -6,13 +6,13 @@ export const VISIBLE_VARIANTS =
 export function resolveLogoUrl(env, logoKey) {
   if (!logoKey) return null;
   if (/^https?:\/\//i.test(logoKey)) {
-    try {
-      const url = new URL(logoKey);
-      if (url.protocol === "http:") url.protocol = "https:";
-      return url.toString();
-    } catch {
-      return logoKey;
-    }
+    // URL fournisseur servie via le proxy /api/logo (l'hôte d'origine est
+    // souvent mort/bloqué/mixed-content). L'URL brute est conservée telle
+    // quelle : la route vérifie son existence en base (allowlist) et monte
+    // en https au moment du fetch.
+    const base = (env.PUBLIC_API_URL ?? "").replace(/\/+$/, "");
+    if (!base) return logoKey;
+    return `${base}/api/logo?url=${encodeURIComponent(logoKey)}`;
   }
   const base = (env.PUBLIC_API_URL ?? "").replace(/\/+$/, "");
   return base ? `${base}/uploads/${logoKey}` : null;

@@ -8,7 +8,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { apiGet } from '../../../shared/api/client';
 import { useSettingsStore } from '../../../shared/stores/settings';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
-import { channelBadge, channelInitials, buildWatchHref, type WatchContext } from '../utils';
+import { channelBadge, channelInitials, channelMonogramStyle, buildWatchHref, type WatchContext } from '../utils';
 
 export function ChannelTile({ channel, watchContext, highlight }: { channel: Channel; watchContext?: WatchContext; highlight?: boolean }) {
   const queryClient = useQueryClient();
@@ -88,7 +88,7 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
             />
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center bg-gradient-to-br from-surface-2 to-surface text-4xl font-bold text-muted/30">
+          <div className="flex h-full items-center justify-center text-4xl font-bold text-white/80" style={channelMonogramStyle(channel.name)}>
             {channelInitials(channel.name)}
           </div>
         )}
@@ -140,7 +140,7 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
                 className="h-full w-full object-contain p-1"
               />
             ) : (
-              <span className="text-xs font-bold text-muted">{channelInitials(channel.name)}</span>
+              <span className="flex h-full w-full items-center justify-center text-xs font-bold text-white/85" style={channelMonogramStyle(channel.name)}>{channelInitials(channel.name)}</span>
             )}
           </div>
           {/* Programme info : 1 ligne discrète + barre, pour ne pas concurrencer le nom de la chaîne */}

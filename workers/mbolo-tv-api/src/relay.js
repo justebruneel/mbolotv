@@ -7,7 +7,7 @@
 // partagé « x-relay-token » (secret RELAY_TOKEN, même valeur que le proxy).
 
 export function isPrivateHostname(hostname) {
-  const host = String(hostname).toLowerCase();
+  const host = String(hostname).toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return true;
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
   if (v4) {

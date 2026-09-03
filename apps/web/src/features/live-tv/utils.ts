@@ -28,6 +28,15 @@ export function channelInitials(name: string): string {
   return words.map((word) => word[0]?.toUpperCase()).join('') || '?';
 }
 
+// Fond déterministe du monogramme de secours (logo indisponible) : même
+// teinte pour une même chaîne entre deux rendus, sans dépendance réseau.
+export function channelMonogramStyle(name: string): { background: string } {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  const hue = hash % 360;
+  return { background: `linear-gradient(135deg, hsl(${hue} 45% 28%), hsl(${(hue + 40) % 360} 50% 16%))` };
+}
+
 export function channelBadge(name: string): string | null {
   if (/^VIP\b/i.test(name.trim())) return 'VIP';
   const quality = name.match(/\b(FHD|UHD|4K|HD)\b/i);

@@ -4,7 +4,7 @@ import type { Channel } from '@mbolo/contracts';
 import Link from 'next/link';
 import { useState } from 'react';
 import { ProgrammeProgress } from '@mbolo/ui';
-import { buildWatchHref, channelBadge, channelInitials, type WatchContext } from '../utils';
+import { buildWatchHref, channelBadge, channelInitials, channelMonogramStyle, type WatchContext } from '../utils';
 import { ChevronRightIcon } from './Icons';
 
 function programmeThumb(channel: Channel): string | null {
@@ -73,6 +73,7 @@ function UpNextCard({ channel, context }: { channel: Channel; context?: WatchCon
   const thumb = programmeThumb(channel);
   const badge = channelBadge(channel.name);
   const down = channel.healthStatus === 'DOWN';
+  const [logoError, setLogoError] = useState(false);
 
   return (
     <Link
@@ -85,10 +86,10 @@ function UpNextCard({ channel, context }: { channel: Channel; context?: WatchCon
           <img src={thumb} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-surface-3 to-surface">
-            {channel.logoUrl ? (
-              <img src={channel.logoUrl} alt="" loading="lazy" decoding="async" className="max-h-[55%] max-w-[65%] object-contain drop-shadow-md" />
+            {channel.logoUrl && !logoError ? (
+              <img src={channel.logoUrl} alt="" loading="lazy" decoding="async" onError={() => setLogoError(true)} className="max-h-[55%] max-w-[65%] object-contain drop-shadow-md" />
             ) : (
-              <span className="text-2xl font-black text-white/10">{channelInitials(channel.name)}</span>
+              <span className="flex h-full w-full items-center justify-center text-2xl font-black text-white/85" style={channelMonogramStyle(channel.name)}>{channelInitials(channel.name)}</span>
             )}
           </div>
         )}
