@@ -1,0 +1,46 @@
+name: Repair worker importer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[repair-importer]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch VOD seen-key scope
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('workers/mbolo-tv-api/src/importer.js')
+          s = p.read_text()
+          replacements = {
+            'await ingestVodEntries(q, key, source, vodEntries, metrics, persistMetrics, baseHash);': 'await ingestVodEntries(q, key, source, vodEntries, metrics, persistMetrics, baseHash, seenVodKeys);',
+            'async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metrics, persistMetrics, baseHash) {': 'async function ingestVodEntries(q, cryptoKey, source, { movies, series }, metrics, persistMetrics, baseHash, seenVodKeys) {',
+            "await ingestVodPhase(q, cryptoKey, source, movies, 'MOVIE', metrics, persistMetrics, baseHash);": "await ingestVodPhase(q, cryptoKey, source, movies, 'MOVIE', metrics, persistMetrics, baseHash, seenVodKeys);",
+            "await ingestVodPhase(q, cryptoKey, source, series, 'SERIES', metrics, persistMetrics, baseHash);": "await ingestVodPhase(q, cryptoKey, source, series, 'SERIES', metrics, persistMetrics, baseHash, seenVodKeys);",
+            'async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, persistMetrics, baseHash) {': 'async function ingestVodPhase(q, cryptoKey, source, entries, kind, metrics, persistMetrics, baseHash, seenVodKeys) {',
+          }
+          for old, new in replacements.items():
+            if old not in s:
+              raise SystemExit(f'Expected importer fragment missing: {old}')
+            s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          node --check workers/mbolo-tv-api/src/importer.js
+      - name: Commit repair
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "MboloTV CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add workers/mbolo-tv-api/src/importer.js
+          git commit -m "fix(import): keep Xtream VOD seen keys in run scope"
+          git push origin HEAD:main
