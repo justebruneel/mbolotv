@@ -1,5 +1,4 @@
 import { resolveRelay } from './relay.js';
-import { resolveGoogleapisIp } from './youtube.js';
 import { playResponse } from './play.js';
 
 // Extraction de flux pour le lecteur maison (Player @mbolo/ui) : l'iframe
@@ -83,13 +82,16 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
     const hit = await cache.match(cacheKey).catch(() => null);
     if (hit) return hit;
   }
-  const overrideIp = await resolveGoogleapisIp().catch(() => null);
+  // DoH override calibré pour googleapis.com : NE PAS l'appliquer à
+  // youtube.com (IP googleapis + SNI youtube.com = 400 upstream).
+  const overrideIp = null;
   const relayed = resolveRelay(env, INNERTUBE_API);
   // Ordre : relais résidentiel d'abord (IP résidentielle = pas de bot-check
   // « LOGIN_REQUIRED » que Google impose aux IP datacenter), puis direct CF
   // (souvent suffisant pour InnerTube), DoH en appoint.
   let playerResponse = null;
   let lastError = null;
+  const debugTargets = [];
   for (const client of INNERTUBE_CLIENTS) {
     const init = {
       method: 'POST',
@@ -114,20 +116,25 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
           ...(target.cf ? { cf: target.cf } : {}),
         });
         if (!response.ok) {
+          const body = (await response.text().catch(() => '')).slice(0, 120);
+          debugTargets.push(`${target.label ?? '?'}:${response.status}:${body}`);
           lastError = Object.assign(new Error(`YouTube a répondu ${response.status}`), { status: 502 });
           continue;
         }
         playerResponse = await response.json();
         if (playerResponse?.playabilityStatus?.status === 'OK' && pickPlayableFormats(playerResponse).length > 0) break;
         playerResponse = null;
-      } catch {
+      } catch (error) {
+        debugTargets.push(`${target.label ?? '?'}:ERR:${String(error).slice(0, 60)}`);
         lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
       }
     }
     if (playerResponse) break;
   }
   if (!playerResponse) {
-    return jsonError(lastError?.message ?? 'YouTube indisponible', lastError?.status ?? 502, cors);
+    // Debug header aplati (les \n dans un header => TypeError Invalid header value).
+    const flat = debugTargets.join(' | ').replace(/[\r\n]+/g, ' ').slice(0, 400);
+    return jsonError(lastError?.message ?? 'YouTube indisponible', lastError?.status ?? 502, { ...cors, 'x-yt-debug': flat });
   }
   const status = playerResponse?.playabilityStatus?.status;
   const urls = pickPlayableFormats(playerResponse);

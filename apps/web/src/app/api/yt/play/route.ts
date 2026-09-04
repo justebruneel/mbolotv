@@ -100,7 +100,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // 2) Résolution InnerTube directe depuis Vercel (souvent bot-checkée, mais
   //    utile si le Worker est indisponible et que l'utilisateur n'est pas
   //    derrière un FAI filtrant les SNI YouTube).
-  let lastStatus: { client: string; status?: unknown; reason?: unknown } | null = null;
+  const statuses: Array<{ client: string; status?: unknown; reason?: unknown }> = [];
   for (const client of CLIENTS) {
     let response: Response;
     try {
@@ -114,7 +114,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       continue;
     }
     if (!response.ok) {
-      lastStatus = { client: String((client.context as { client?: { clientName?: unknown } }).client?.clientName ?? '?'), status: `HTTP ${response.status}`, reason: (await response.text().catch(() => '')).slice(0, 140) };
+      statuses.push({ client: String((client.context as { client?: { clientName?: unknown } }).client?.clientName ?? '?'), status: `HTTP ${response.status}`, reason: (await response.text().catch(() => '')).slice(0, 120) });
       continue;
     }
     let playerResponse: {
@@ -127,11 +127,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       continue;
     }
     const urls = pickPlayableFormats(playerResponse);
-    lastStatus = {
-      client: client.context ? String((client.context as { client?: { clientName?: unknown } }).client?.clientName ?? '?') : '?',
+    statuses.push({
+      client: String((client.context as { client?: { clientName?: unknown } }).client?.clientName ?? '?'),
       status: playerResponse?.playabilityStatus?.status,
       reason: playerResponse?.playabilityStatus?.reason,
-    };
+    });
     if (playerResponse?.playabilityStatus?.status === 'OK' && urls.length > 0) {
       return NextResponse.json({
         id: videoId,
@@ -144,6 +144,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // le motif réel (bot-check, PO token, restriction geo) plutôt qu'un 451 aveugle.
   return NextResponse.json({
     message: 'Flux indisponible pour cette vidéo',
-    playability: lastStatus ?? null,
+    playability: statuses,
   }, { status: 451 });
 }
