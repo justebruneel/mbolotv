@@ -292,13 +292,20 @@ async function streamXtreamAction(url, env, touch, onBatch, maxBytes) {
   throw lastError instanceof Error ? lastError : new Error('Échec Xtream inconnu');
 }
 
+// Synopsis fourni par le panel dans les listes VOD (champ plot), souvent
+// tronqué mais gratuit : source de vérité, TVmaze/TMDB ne font que secourir.
+function providerPlot(value) {
+  const text = String(value ?? '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
 function mapVodMovie(stream, movieCategories, base, user, pass) {
   if (stream == null || typeof stream !== 'object' || stream.stream_id == null) return null;
   const title = String(stream.name ?? `Film ${stream.stream_id}`).trim();
   if (!title || isFolderMarker(title)) return null;
   const containerExt = String(stream.container_extension ?? 'mp4').trim().replace(/^\./, '') || 'mp4';
   const categoryTitle = (stream.category_id != null && movieCategories.get(String(stream.category_id))) || (stream.category_name ? String(stream.category_name).trim() : undefined);
-  return { kind: 'MOVIE', externalId: String(stream.stream_id), title, posterUrl: normalizeIcon(stream.stream_icon) ?? null, rating: toRating(stream.rating), categoryTitle: categoryTitle ?? null, containerExt, addedAt: toAddedAt(stream.added), locator: `${base}/movie/${user}/${pass}/${stream.stream_id}.${containerExt}` };
+  return { kind: 'MOVIE', externalId: String(stream.stream_id), title, posterUrl: normalizeIcon(stream.stream_icon) ?? null, rating: toRating(stream.rating), categoryTitle: categoryTitle ?? null, containerExt, addedAt: toAddedAt(stream.added), description: providerPlot(stream.plot), locator: `${base}/movie/${user}/${pass}/${stream.stream_id}.${containerExt}` };
 }
 
 function mapVodSerie(item, seriesCategories, connection) {
@@ -306,7 +313,7 @@ function mapVodSerie(item, seriesCategories, connection) {
   const title = String(item.name ?? `Série ${item.series_id}`).trim();
   if (!title || isFolderMarker(title)) return null;
   const categoryTitle = (item.category_id != null && seriesCategories.get(String(item.category_id))) || (item.category_name ? String(item.category_name).trim() : undefined);
-  return { kind: 'SERIES', externalId: String(item.series_id), title, posterUrl: normalizeIcon(item.cover ?? item.stream_icon) ?? null, rating: toRating(item.rating), categoryTitle: categoryTitle ?? null, containerExt: null, addedAt: toAddedAt(item.last_modified ?? item.added), locator: JSON.stringify({ type: 'xtream-series', base: connection.url.replace(/\/+$/, ''), username: connection.username, password: connection.password, seriesId: String(item.series_id) }) };
+  return { kind: 'SERIES', externalId: String(item.series_id), title, posterUrl: normalizeIcon(item.cover ?? item.stream_icon) ?? null, rating: toRating(item.rating), categoryTitle: categoryTitle ?? null, containerExt: null, addedAt: toAddedAt(item.last_modified ?? item.added), description: providerPlot(item.plot), locator: JSON.stringify({ type: 'xtream-series', base: connection.url.replace(/\/+$/, ''), username: connection.username, password: connection.password, seriesId: String(item.series_id) }) };
 }
 
 // VOD (films + séries) en flux : chaque lot est consommé par l'importeur dès

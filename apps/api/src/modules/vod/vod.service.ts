@@ -36,14 +36,19 @@ const VISIBLE = { isActive: true, isVisible: true } as const;
 export class VodService {
   constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService, private readonly metadata: MetadataService) {}
 
-  // Synopsis + backdrop via l'enrichissement TVmaze (cache 30 j) — miroir du
-  // Worker (vodmetadata.js). Jamais bloquant : null si pas de correspondance.
-  private async enrich(title: string): Promise<{ description: string | null; backdropUrl: string | null; genres: string[]; year: number | null }> {
+  // Synopsis fournisseur en priorité ; TVmaze/TMDB ne comblent que les
+  // manques (backdrop, genres, année) — miroir du Worker (vodmetadata.js).
+  private async enrich(title: string, providerDescription?: string | null): Promise<{ description: string | null; backdropUrl: string | null; genres: string[]; year: number | null }> {
     try {
       const meta = await this.metadata.enrich(title);
-      return { description: meta?.overview ?? null, backdropUrl: meta?.backdropUrl ?? null, genres: meta?.genres ?? [], year: meta?.year ?? null };
+      return {
+        description: providerDescription ?? meta?.overview ?? null,
+        backdropUrl: meta?.backdropUrl ?? null,
+        genres: meta?.genres ?? [],
+        year: meta?.year ?? null,
+      };
     } catch {
-      return { description: null, backdropUrl: null, genres: [], year: null };
+      return { description: providerDescription ?? null, backdropUrl: null, genres: [], year: null };
     }
   }
 
@@ -103,14 +108,14 @@ export class VodService {
       orderBy: [{ addedAt: 'desc' }, { title: 'asc' }],
       take: 5,
     });
-    const metas = await Promise.all(rows.map((row) => this.enrich(row.title)));
+    const metas = await Promise.all(rows.map((row) => this.enrich(row.title, row.description)));
     return { items: rows.map((row, index) => ({ ...serializeVodItem(row), ...metas[index] })) };
   }
 
   async detail(id: string): Promise<VodItem & { containerExt: string | null }> {
     const row = await this.prisma.vodItem.findFirst({ where: { id, ...VISIBLE } });
     if (!row) throw new NotFoundException('VodItem introuvable');
-    const meta = await this.enrich(row.title);
+    const meta = await this.enrich(row.title, row.description);
     return { ...serializeVodItem(row), ...meta, containerExt: row.containerExt };
   }
 

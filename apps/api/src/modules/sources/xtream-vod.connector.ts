@@ -11,6 +11,8 @@ export interface VodEntry {
   externalId: string;
   title: string;
   posterUrl: string | null;
+  // Synopsis fourni par le panel (champ plot) : source de vérité.
+  description: string | null;
   rating: number | null;
   categoryTitle: string | null;
   containerExt: string | null;
@@ -18,11 +20,18 @@ export interface VodEntry {
   locator: string;
 }
 
+// Le panel envoie du HTML parfois tronqué : on strip et on borne.
+function providerPlot(value: unknown): string | null {
+  const text = String(value ?? '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
 interface XtreamVodStream {
   stream_id?: number | string;
   name?: string;
   stream_icon?: string;
   container_extension?: string;
+  plot?: string | null;
   rating?: string | number;
   added?: string | number;
   category_id?: number | string;
@@ -34,6 +43,7 @@ interface XtreamSerie {
   name?: string;
   cover?: string;
   stream_icon?: string;
+  plot?: string | null;
   rating?: string | number;
   last_modified?: string | number;
   added?: string | number;
@@ -139,6 +149,7 @@ function mapVodMovie(stream: XtreamVodStream, movieCategories: Map<string, strin
     externalId: String(stream.stream_id),
     title,
     posterUrl: normalizeIcon(stream.stream_icon) ?? null,
+    description: providerPlot(stream.plot),
     rating: toRating(stream.rating),
     categoryTitle: categoryTitle ?? null,
     containerExt,
@@ -159,6 +170,7 @@ function mapVodSerie(item: XtreamSerie, seriesCategories: Map<string, string>, b
     externalId: String(item.series_id),
     title,
     posterUrl: normalizeIcon(item.cover ?? item.stream_icon) ?? null,
+    description: providerPlot(item.plot),
     rating: toRating(item.rating),
     categoryTitle: categoryTitle ?? null,
     containerExt: null,

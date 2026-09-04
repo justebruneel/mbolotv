@@ -200,7 +200,7 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
         let containerExt = 'mp4';
         try { containerExt = new URL(movie.url).pathname.toLowerCase().split('.').pop() || 'mp4'; } catch { /* locator déjà validé par isVodUrl */ }
         metrics.read += 1;
-        vodBatch.push({ kind: 'MOVIE', externalId: movie.url, title: movie.title, posterUrl: movie.posterUrl, rating: null, categoryTitle: movie.categoryTitle, containerExt, addedAt: null, locator: movie.url });
+        vodBatch.push({ kind: 'MOVIE', externalId: movie.url, title: movie.title, posterUrl: movie.posterUrl, description: null, rating: null, categoryTitle: movie.categoryTitle, containerExt, addedAt: null, locator: movie.url });
         if (vodBatch.length >= VOD_BATCH) return flushVod();
       }, () => touchThrottled());
       await flushLive();
@@ -625,7 +625,7 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
 
   const existingByKey = new Map();
   for (const part of chunks(metas.map((meta) => meta.key), QUERY_BATCH)) {
-    const rows = await q(`SELECT id, kind, title, "normalizedKey", "posterUrl", rating, "categoryTitle", "containerExt", "addedAt", "isActive", "encryptedLocator" FROM "VodItem" WHERE "normalizedKey" = ANY($1::text[])`, [part]);
+    const rows = await q(`SELECT id, kind, title, "normalizedKey", "posterUrl", description, rating, "categoryTitle", "containerExt", "addedAt", "isActive", "encryptedLocator" FROM "VodItem" WHERE "normalizedKey" = ANY($1::text[])`, [part]);
     for (const row of rows.rows) existingByKey.set(row.normalizedKey, row);
   }
 
@@ -649,6 +649,7 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
     let changed = false;
     if (existing.title !== entry.title) { update.title = entry.title; changed = true; }
     if ((existing.posterUrl ?? null) !== entry.posterUrl) { update.posterUrl = entry.posterUrl; changed = true; }
+    if ((existing.description ?? null) !== (entry.description ?? null)) { update.description = entry.description ?? null; changed = true; }
     if ((existing.rating ?? null) !== entry.rating) { update.rating = entry.rating; changed = true; }
     if ((existing.categoryTitle ?? null) !== entry.categoryTitle) { update.categoryTitle = entry.categoryTitle; changed = true; }
     if ((existing.containerExt ?? null) !== entry.containerExt) { update.containerExt = entry.containerExt; changed = true; }
@@ -673,12 +674,12 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
     const values = [];
     const params = [];
     part.forEach((entry, position) => {
-      const base = position * 11;
-      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`);
-      params.push(crypto.randomUUID(), entry.kind, entry.title, entry.key, entry.posterUrl, entry.rating, entry.categoryTitle, entry.containerExt, entry.addedAt, source.id, locators[position]);
+      const base = position * 12;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12})`);
+      params.push(crypto.randomUUID(), entry.kind, entry.title, entry.key, entry.posterUrl, entry.description ?? null, entry.rating, entry.categoryTitle, entry.containerExt, entry.addedAt, source.id, locators[position]);
     });
     const inserted = await q(
-      `INSERT INTO "VodItem" (id, kind, title, "normalizedKey", "posterUrl", rating, "categoryTitle", "containerExt", "addedAt", "sourceId", "encryptedLocator") VALUES ${values.join(', ')}
+      `INSERT INTO "VodItem" (id, kind, title, "normalizedKey", "posterUrl", description, rating, "categoryTitle", "containerExt", "addedAt", "sourceId", "encryptedLocator") VALUES ${values.join(', ')}
        ON CONFLICT ("normalizedKey") DO NOTHING RETURNING id`,
       params,
     );
@@ -691,20 +692,21 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
     const values = [];
     const params = [];
     part.forEach((update, position) => {
-      const base = position * 7;
-      values.push(`($${base + 1}::text, $${base + 2}::text, $${base + 3}::text, $${base + 4}::float8, $${base + 5}::text, $${base + 6}::text, $${base + 7}::timestamptz)`);
-      params.push(update.id, update.title ?? null, update.posterUrl ?? null, update.rating ?? null, update.categoryTitle ?? null, update.containerExt ?? null, update.addedAt ?? null);
+      const base = position * 8;
+      values.push(`($${base + 1}::text, $${base + 2}::text, $${base + 3}::text, $${base + 4}::text, $${base + 5}::float8, $${base + 6}::text, $${base + 7}::text, $${base + 8}::timestamptz)`);
+      params.push(update.id, update.title ?? null, update.posterUrl ?? null, update.description ?? null, update.rating ?? null, update.categoryTitle ?? null, update.containerExt ?? null, update.addedAt ?? null);
     });
     await q(
       `UPDATE "VodItem" AS v SET
          title = COALESCE(v2.title, v.title),
          "posterUrl" = COALESCE(v2."posterUrl", v."posterUrl"),
+         description = COALESCE(v2.description, v.description),
          rating = COALESCE(v2.rating, v.rating),
          "categoryTitle" = COALESCE(v2."categoryTitle", v."categoryTitle"),
          "containerExt" = COALESCE(v2."containerExt", v."containerExt"),
          "addedAt" = COALESCE(v2."addedAt", v."addedAt"),
          "isActive" = true
-       FROM (VALUES ${values.join(', ')}) AS v2(id, title, "posterUrl", rating, "categoryTitle", "containerExt", "addedAt")
+       FROM (VALUES ${values.join(', ')}) AS v2(id, title, "posterUrl", description, rating, "categoryTitle", "containerExt", "addedAt")
        WHERE v.id = v2.id`,
       params,
     );

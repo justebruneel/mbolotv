@@ -135,10 +135,12 @@ export async function vodHero(env, { kind, limit = 5 } = {}) {
      WHERE ${conditions.join(' AND ')} ORDER BY "addedAt" DESC NULLS LAST LIMIT ${Math.min(Math.max(1, Number(limit) || 5), 10)}`,
     params,
   );
-  // Hero enrichi en parallèle (synopsis, backdrop, genres, année). Un
-  // échec TVmaze ne retire jamais l'item du hero.
+  // Hero enrichi en parallèle (synopsis, backdrop, genres, année). Le
+  // synopsis du fournisseur (description en base) reste prioritaire ;
+  // TVmaze/TMDB ne comblent que les manques. Un échec ne retire jamais
+  // l'item du hero.
   const metas = await Promise.all(rows.rows.map((row) => vodMetadata(env, row.title, row.kind).catch(() => null)));
-  return rows.rows.map((row, index) => serializeVodItem({ ...row, ...(metas[index] ?? {}) }));
+  return rows.rows.map((row, index) => serializeVodItem({ ...(metas[index] ?? {}), ...row, description: row.description ?? metas[index]?.description ?? null, backdropUrl: metas[index]?.backdropUrl ?? null }));
 }
 
 export async function vodCategories(env, kind) {
@@ -220,7 +222,7 @@ export async function listSeriesEpisodes(env, encryptionKey, item) {
 
   const meta = await vodMetadata(env, item.title, 'SERIES').catch(() => null);
   const payload = {
-    description: meta?.overview ?? null,
+    description: item.description ?? meta?.description ?? null,
     backdropUrl: meta?.backdropUrl ?? null,
     genres: meta?.genres ?? [],
     year: meta?.year ?? null,

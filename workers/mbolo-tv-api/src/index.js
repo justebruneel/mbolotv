@@ -533,7 +533,8 @@ async function route(ctx, url) {
     // Détail enrichi : synopsis + backdrop via TVmaze (cache 30 j). Non
     // bloquant : un échec renvoie la fiche sans description.
     const meta = await vod.vodMetadata(env, item.title, item.kind).catch(() => null);
-    return ctx.json(vod.serializeVodItem({ ...item, ...(meta ?? {}) }));
+    // Synopsis fournisseur prioritaire ; backdrop/genres/année viennent du secours.
+    return ctx.json(vod.serializeVodItem({ ...(meta ?? {}), ...item, description: item.description ?? meta?.description ?? null, backdropUrl: meta?.backdropUrl ?? null }));
   }
 
   if (vodMatch && vodMatch[3] === "favorite" && (method === "PUT" || method === "DELETE")) {

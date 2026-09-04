@@ -171,6 +171,9 @@ model VodItem {
   title String
   normalizedKey String @unique
   posterUrl String?
+  // Synopsis du fournisseur (Xtream plot / M3U à venir) : la source de
+  // vérité ; TVmaze/TMDB ne servent qu'en secours à l'affichage.
+  description String?
   rating Float?
   categoryTitle String?
   containerExt String?
