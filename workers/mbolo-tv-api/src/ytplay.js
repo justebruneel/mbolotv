@@ -15,7 +15,7 @@ const INNERTUBE_API = 'https://www.youtube.com/youtubei/v1/player';
 const INNERTUBE_CLIENTS = [
   {
     key: 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
-    context: { client: { clientName: 'ANDROID', clientVersion: '19.09.37', androidSdkVersion: 30, osName: 'Android', osVersion: '11', hl: 'fr', gl: 'GA' } },
+    context: { client: { clientName: 'ANDROID', clientVersion: '21.26.364', androidSdkVersion: 30, osName: 'Android', osVersion: '11', hl: 'fr', gl: 'GA' } },
     headers: {
       'user-agent': 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
       'x-youtube-client-name': '3',
@@ -24,7 +24,7 @@ const INNERTUBE_CLIENTS = [
   },
   {
     key: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
-    context: { client: { clientName: 'IOS', clientVersion: '19.29.1', deviceMake: 'Apple', deviceModel: 'iPhone16,2', osName: 'iPhone', osVersion: '17.5.1.21F90', hl: 'fr', gl: 'GA' } },
+    context: { client: { clientName: 'IOS', clientVersion: '21.26.4', deviceMake: 'Apple', deviceModel: 'iPhone16,2', osName: 'iPhone', osVersion: '18.3.2.22D82', hl: 'fr', gl: 'GA' } },
     headers: {
       'user-agent': 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
       'x-youtube-client-name': '5',
@@ -85,13 +85,11 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
   // DoH override calibré pour googleapis.com : NE PAS l'appliquer à
   // youtube.com (IP googleapis + SNI youtube.com = 400 upstream).
   const overrideIp = null;
-  const relayed = resolveRelay(env, INNERTUBE_API);
   // Ordre : relais résidentiel d'abord (IP résidentielle = pas de bot-check
   // « LOGIN_REQUIRED » que Google impose aux IP datacenter), puis direct CF
   // (souvent suffisant pour InnerTube), DoH en appoint.
   let playerResponse = null;
   let lastError = null;
-  const debugTargets = [];
   for (const client of INNERTUBE_CLIENTS) {
     const init = {
       method: 'POST',
@@ -103,8 +101,11 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
       body: JSON.stringify({ context: client.context, videoId, contentCheckOk: true, racyCheckOk: true }),
     };
     const base = `${INNERTUBE_API}?key=${client.key}&prettyPrint=false`;
+    // resolveRelay remappe l'autorité de l'URL COMPLÈTE (query incluse) :
+    // recalcul sur « base » (et non INNERTUBE_API nu) sinon la clé est perdue.
+    const relayedBase = resolveRelay(env, base);
     const targets = [];
-    if (relayed.url !== base) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+    if (relayedBase.url !== base) targets.push({ url: relayedBase.url, headers: relayedBase.headers, label: 'relais' });
     if (overrideIp) targets.push({ url: base, cf: { resolveOverride: overrideIp }, label: 'direct+doh' });
     targets.push({ url: base, label: 'direct' });
     for (const target of targets) {
@@ -116,25 +117,20 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
           ...(target.cf ? { cf: target.cf } : {}),
         });
         if (!response.ok) {
-          const body = (await response.text().catch(() => '')).slice(0, 120);
-          debugTargets.push(`${target.label ?? '?'}:${response.status}:${body}`);
           lastError = Object.assign(new Error(`YouTube a répondu ${response.status}`), { status: 502 });
           continue;
         }
         playerResponse = await response.json();
         if (playerResponse?.playabilityStatus?.status === 'OK' && pickPlayableFormats(playerResponse).length > 0) break;
         playerResponse = null;
-      } catch (error) {
-        debugTargets.push(`${target.label ?? '?'}:ERR:${String(error).slice(0, 60)}`);
+      } catch {
         lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
       }
     }
     if (playerResponse) break;
   }
   if (!playerResponse) {
-    // Debug header aplati (les \n dans un header => TypeError Invalid header value).
-    const flat = debugTargets.join(' | ').replace(/[\r\n]+/g, ' ').slice(0, 400);
-    return jsonError(lastError?.message ?? 'YouTube indisponible', lastError?.status ?? 502, { ...cors, 'x-yt-debug': flat });
+    return jsonError(lastError?.message ?? 'YouTube indisponible', lastError?.status ?? 502, cors);
   }
   const status = playerResponse?.playabilityStatus?.status;
   const urls = pickPlayableFormats(playerResponse);
