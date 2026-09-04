@@ -29,7 +29,7 @@ export function thumbUpstreamUrl(videoId: string, quality: ThumbQuality): string
 // subissent pas le blocage SNI et notre regex d'ID ne s'appliquerait pas.
 export function proxiedThumbUrl(posterUrl: string | null | undefined): string | null {
   if (!posterUrl) return null;
-  const match = /i\.ytimg\.com\/vi\/([A-Za-z0-9_-]{11})\/(?:maxres|sd|hq|mq|default)(?:default)?\.jpg/i.exec(posterUrl);
+  const match = /i\.ytimg\.com\/vi\/([A-Za-z0-9_-]{11})\/([a-z]+default)\.jpg/i.exec(posterUrl);
   if (!match) return posterUrl;
   const [, videoId, file] = match;
   const quality = file.startsWith('maxres') ? 'maxres' : file.startsWith('sd') ? 'sd' : file.startsWith('mq') ? 'mq' : 'hq';
