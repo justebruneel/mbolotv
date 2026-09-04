@@ -43,7 +43,11 @@ function GlobalPlayerInner() {
   // La lecture ne survit à une navigation vers live / favoris que si
   // l'option « Mini-lecteur sur l'accueil » est activée (Préférences).
   const miniPlayerOnBrowse = useSettingsStore((state) => state.miniPlayerOnBrowse);
-  const keepAlive = Boolean(pathname && (isWatch || isVodRoute || (miniPlayerOnBrowse && (pathname.startsWith('/live') || pathname.startsWith('/favorites') || pathname.startsWith('/vod')))));
+  // /vod/yt/* (fiche Nollywood) est exclue du keep-alive : elle possède son
+  // propre lecteur inline — sans exclusion, le mini-lecteur précédent (live
+  // ou VOD Xtream) persiste par-dessus avec ses contrôles => doublons
+  // pause/volume/plein écran.
+  const keepAlive = Boolean(pathname && (isWatch || isVodRoute || (miniPlayerOnBrowse && (pathname.startsWith('/live') || pathname.startsWith('/favorites') || (pathname.startsWith('/vod') && !pathname.startsWith('/vod/yt/'))))));
   // Priorité : watch > vod (route) > vod (mini) > chaîne. Le heartbeat
   // d'activité ne suit que les chaînes live : l'éco adaptatif mesure la
   // charge du relais résidentiel, que le VOD (sortie directe) n'utilise pas.
