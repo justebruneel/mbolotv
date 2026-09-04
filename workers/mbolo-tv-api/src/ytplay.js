@@ -1,5 +1,6 @@
 import { resolveRelay } from './relay.js';
 import { resolveGoogleapisIp } from './youtube.js';
+import { playResponse } from './play.js';
 
 // Extraction de flux pour le lecteur maison (Player @mbolo/ui) : l'iframe
 // officielle YouTube est remplacée par la lecture directe « Netflix-like ».
@@ -57,6 +58,23 @@ function pickPlayableFormats(playerResponse) {
   return urls;
 }
 
+// Remap chaque URL googlevideo vers le proxy vidéo signé : le navigateur ne
+// parle jamais à googlevideo directement (blocage FAI des SNI YouTube +
+// Range/Referer/CORS). Le proxy vidéo (Workers) stream et sort par le relais
+// résidentiel (applyRelay : fournisseur inconnu -> relay-dns).
+async function proxiedPlayResponse(env, videoId, urls, expiresInSeconds) {
+  const out = [];
+  for (const providerUrl of urls) {
+    try {
+      const play = await playResponse(env, providerUrl, null);
+      out.push(play.url);
+    } catch {
+      out.push(providerUrl);
+    }
+  }
+  return { id: videoId, urls: out, expiresInSeconds };
+}
+
 export async function serveYoutubePlay(env, videoId, cors = {}) {
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return jsonError('Identifiant vidéo invalide', 400, cors);
   const cache = globalThis.caches?.default;
@@ -67,10 +85,9 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
   }
   const overrideIp = await resolveGoogleapisIp().catch(() => null);
   const relayed = resolveRelay(env, INNERTUBE_API);
-  const targets = [];
-  if (overrideIp) targets.push({ url: INNERTUBE_API, cf: { resolveOverride: overrideIp }, label: 'direct+doh' });
-  targets.push({ url: INNERTUBE_API, label: 'direct' });
-  if (relayed.url !== INNERTUBE_API) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  // Ordre : relais résidentiel d'abord (IP résidentielle = pas de bot-check
+  // « LOGIN_REQUIRED » que Google impose aux IP datacenter), puis direct CF
+  // (souvent suffisant pour InnerTube), DoH en appoint.
   let playerResponse = null;
   let lastError = null;
   for (const client of INNERTUBE_CLIENTS) {
@@ -85,9 +102,9 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
     };
     const base = `${INNERTUBE_API}?key=${client.key}&prettyPrint=false`;
     const targets = [];
-    if (overrideIp) targets.push({ url: base, cf: { resolveOverride: overrideIp } });
-    targets.push({ url: base });
-    if (relayed.url !== INNERTUBE_API) targets.push({ url: relayed.url, headers: relayed.headers });
+    if (relayed.url !== base) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+    if (overrideIp) targets.push({ url: base, cf: { resolveOverride: overrideIp }, label: 'direct+doh' });
+    targets.push({ url: base, label: 'direct' });
     for (const target of targets) {
       try {
         const response = await fetch(target.url, {
@@ -118,7 +135,7 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
     const reason = playerResponse?.playabilityStatus?.reason ?? 'Flux indisponible pour cette vidéo';
     return jsonError(reason, 451, cors);
   }
-  const payload = { id: videoId, urls, expiresInSeconds: Number(playerResponse?.streamingData?.expiresInSeconds) || 21540 };
+  const payload = await proxiedPlayResponse(env, videoId, urls, Number(playerResponse?.streamingData?.expiresInSeconds) || 21540);
   const out = new Response(JSON.stringify(payload), {
     status: 200,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${PLAY_CACHE_TTL_S}`, ...cors },

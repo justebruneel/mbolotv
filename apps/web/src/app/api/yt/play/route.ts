@@ -78,7 +78,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
     return NextResponse.json({ message: 'Identifiant vidéo invalide' }, { status: 400 });
   }
-  let lastStatus: { status?: unknown; reason?: unknown; client?: string } | null = null;
+  // 1) Le Worker (API_URL) résout via son relais résidentiel et renvoie des
+  //    URLs proxifiées — indispensable quand Google bot-check les IP
+  //    datacenter (LOGIN_REQUIRED) ou que le FAI filtre les SNI YouTube.
+  const apiBase = (process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? '').trim().replace(/\/+$/, '');
+  if (apiBase && !apiBase.includes('localhost') && !apiBase.includes('127.0.0.1')) {
+    try {
+      const upstream = await fetch(`${apiBase}/api/yt/play?id=${encodeURIComponent(videoId)}`, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(20_000),
+        cache: 'no-store',
+      });
+      if (upstream.ok) {
+        const payload = (await upstream.json()) as { urls?: unknown };
+        if (Array.isArray(payload?.urls) && payload.urls.length > 0) {
+          return NextResponse.json(payload, { headers: { 'cache-control': `public, max-age=${REVALIDATE_S}` } });
+        }
+      }
+    } catch { /* repli : résolution directe ci-dessous */ }
+  }
+  // 2) Résolution InnerTube directe depuis Vercel (souvent bot-checkée, mais
+  //    utile si le Worker est indisponible et que l'utilisateur n'est pas
+  //    derrière un FAI filtrant les SNI YouTube).
+  let lastStatus: { client: string; status?: unknown; reason?: unknown } | null = null;
   for (const client of CLIENTS) {
     let response: Response;
     try {
