@@ -35,7 +35,9 @@ function GlobalPlayerInner() {
   const clearVod = useVodPlayerStore((state) => state.clearVod);
 
   const watchId = pathname?.match(/^\/watch\/([^/]+)/)?.[1] ?? null;
-  const routeVodId = pathname?.match(/^\/vod\/([^/]+)/)?.[1] ?? null;
+  // /vod/yt/<videoId> = fiche Nollywood avec son propre lecteur inline :
+  // exclue de la capture VOD (sinon 'yt' partirait vers l'API Xtream).
+  const routeVodId = pathname?.match(/^\/vod\/(?!yt\/)([^/]+)/)?.[1] ?? null;
   const isWatch = Boolean(watchId);
   const isVodRoute = Boolean(routeVodId);
   // La lecture ne survit à une navigation vers live / favoris que si

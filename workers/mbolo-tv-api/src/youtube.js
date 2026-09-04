@@ -67,7 +67,7 @@ function parseDuration(value) {
 let dohCache = { ip: null, at: 0 };
 const DOH_TTL_MS = 5 * 60_000;
 
-async function resolveGoogleapisIp() {
+export async function resolveGoogleapisIp() {
   const now = Date.now();
   if (dohCache.ip && now - dohCache.at < DOH_TTL_MS) return dohCache.ip;
   try {

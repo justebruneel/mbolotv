@@ -10,6 +10,7 @@ import * as favorites from "./favorites.js";
 import * as logo from "./logo.js";
 import * as vod from "./vod.js";
 import * as youtube from "./youtube.js";
+import * as ytplay from "./ytplay.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
@@ -524,6 +525,10 @@ async function route(ctx, url) {
 
   if (path === "/api/vod/youtube/video" && method === "GET")
     return youtube.serveYoutubeVideo(env, url.searchParams.get("id") ?? "", ctx.corsHeaders());
+
+  // Flux direct pour le lecteur maison (fiche Nollywood /vod/yt/<id>).
+  if (path === "/api/yt/play" && method === "GET")
+    return ytplay.serveYoutubePlay(env, url.searchParams.get("id") ?? "", ctx.corsHeaders());
 
   const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
 

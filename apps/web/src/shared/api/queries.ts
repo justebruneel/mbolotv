@@ -348,6 +348,25 @@ export function useYoutubeVideo(videoId: string, enabled = true) {
   });
 }
 
+// Flux direct (InnerTube) pour le lecteur maison : liste d'URLs MP4 avec
+// repli automatique. 30 min de fraîcheur — les URL expirent ~6 h côté Google.
+export function useYoutubePlay(videoId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['vod-youtube-play', videoId],
+    queryFn: async (): Promise<{ urls: string[] }> => {
+      const response = await fetch(`/api/yt/play?id=${encodeURIComponent(videoId)}`, { headers: { accept: 'application/json' } });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? `Flux indisponible (${response.status})`);
+      }
+      return (await response.json()) as { urls: string[] };
+    },
+    enabled: enabled && Boolean(videoId),
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
+}
+
 export function useVodEpisodes(id: string, enabled = true) {
   return useQuery({
     queryKey: ['vod-episodes', id],
