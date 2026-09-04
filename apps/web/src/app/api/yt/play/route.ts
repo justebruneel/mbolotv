@@ -78,6 +78,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
     return NextResponse.json({ message: 'Identifiant vidéo invalide' }, { status: 400 });
   }
+  let lastStatus: { status?: unknown; reason?: unknown; client?: string } | null = null;
   for (const client of CLIENTS) {
     let response: Response;
     try {
@@ -101,6 +102,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       continue;
     }
     const urls = pickPlayableFormats(playerResponse);
+    lastStatus = {
+      client: client.context ? String((client.context as { client?: { clientName?: unknown } }).client?.clientName ?? '?') : '?',
+      status: playerResponse?.playabilityStatus?.status,
+      reason: playerResponse?.playabilityStatus?.reason,
+    };
     if (playerResponse?.playabilityStatus?.status === 'OK' && urls.length > 0) {
       return NextResponse.json({
         id: videoId,
@@ -109,5 +115,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }, { headers: { 'cache-control': `public, max-age=${REVALIDATE_S}` } });
     }
   }
-  return NextResponse.json({ message: 'Flux indisponible pour cette vidéo' }, { status: 451 });
+  // Diagnostic : le statut InnerTube (LOGIN_REQUIRED, CHECK_REQUIRED…) identifie
+  // le motif réel (bot-check, PO token, restriction geo) plutôt qu'un 451 aveugle.
+  return NextResponse.json({
+    message: 'Flux indisponible pour cette vidéo',
+    playability: lastStatus ?? null,
+  }, { status: 451 });
 }
