@@ -237,6 +237,19 @@
   white-space: nowrap;
 }
 
+/* Titre du média dans le rail VOD : doit pouvoir rétrécir (min-width: 0) et
+   tronquer proprement — sinon un titre long glisse SOUS les icônes PiP /
+   plein écran qui le suivent dans le rail flex. */
+.statTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font-weight: 600;
+  color: var(--mbolo-text);
+}
+
 .statWrap {
   position: relative;
   flex: 0 0 auto;

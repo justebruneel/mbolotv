@@ -124,7 +124,7 @@ function YoutubeDetailContent() {
           Player prend SA place SEUL dans un cadre 16:9 natif (pas de hack de
           taille : forcer h-full sur les enfants du lecteur étire la .seekBar
           et son dégradé sombre sur toute l'image => rendu sombre). */}
-      <section className={playing ? 'relative -mt-px aspect-video w-full bg-black' : 'relative -mt-px h-[340px] sm:h-[400px] md:h-[480px]'}>
+      <section className={playing ? 'relative z-0 -mt-px aspect-video w-full bg-black' : 'relative z-0 -mt-px h-[340px] sm:h-[400px] md:h-[480px]'}>
         {playing ? (
           <div className="absolute inset-0 bg-black" data-player-chrome>
             <Player
@@ -189,9 +189,11 @@ function YoutubeDetailContent() {
       </section>
 
       {/* Barre de page pendant la lecture : Arrêter + Favori, SOUS le lecteur
-          (le Player garde ses propres contrôles intacts, rien ne se superpose). */}
+          (le Player garde ses propres contrôles intacts). z-10 au-dessus du
+          lecteur (z-0) : aucun chevauchement flottant possible, et marges
+          généreuses pour empiler proprement la section détail dessous. */}
       {playing && (
-        <div className="mx-auto mt-3 flex w-full max-w-6xl flex-wrap items-center gap-3 px-4">
+        <div className="relative z-10 mx-auto mt-4 flex w-full max-w-6xl flex-wrap items-center gap-3 px-4">
           <button type="button" className="btn btn-primary" onClick={stopPlayback}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
             Arrêter
@@ -211,9 +213,10 @@ function YoutubeDetailContent() {
         </div>
       )}
 
-      {/* Détail : affiche + synopsis, même langage que la fiche VOD Xtream. */}
-      <div className="mx-auto w-full max-w-6xl px-4">
-        <div className="mt-6 flex flex-col gap-6 md:flex-row">
+      {/* Détail : affiche + synopsis, même langage que la fiche VOD Xtream.
+         relative z-0 : reste sous la barre d'actions (z-10), empilement net. */}
+      <div className="relative z-0 mx-auto w-full max-w-6xl px-4">
+        <div className="mt-8 flex flex-col gap-6 border-t border-border/60 pt-6 md:flex-row">
           <div className="w-36 shrink-0 md:w-48">
             <div className="aspect-video overflow-hidden rounded-xl border border-border bg-surface shadow-lg">
               {item.posterUrl ? (
