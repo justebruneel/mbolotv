@@ -82,8 +82,20 @@ function normalizeListPayload(payload: RawListPayload): YoutubeListResponse {
   return { items, nextPageToken: typeof payload?.nextPageToken === 'string' ? payload.nextPageToken : null };
 }
 
+// Les fetchs directs vers googleapis peuvent rester suspendus très longtemps
+// chez certains FAI (filtrage SNI : la connexion ni réussit ni échoue).
+// Sans timeout, le repli proxy (Next/Vercel puis Worker — tous deux
+// fonctionnels) ne prend jamais la main : rail Nollywood et dossier
+// restent vides des minutes entières. 6 s : assez pour une 3G lente,
+// assez court pour basculer vite.
+const DIRECT_TIMEOUT_MS = 6_000;
+
+function directSignal(): AbortSignal | undefined {
+  return typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(DIRECT_TIMEOUT_MS) : undefined;
+}
+
 async function ytListFetch(url: URL): Promise<YoutubeListResponse> {
-  const response = await fetch(url.toString(), { headers: { accept: 'application/json' } });
+  const response = await fetch(url.toString(), { headers: { accept: 'application/json' }, signal: directSignal() });
   if (!response.ok) {
     if (response.status === 403) throw new Error('Quota YouTube épuisé, réessayez plus tard');
     throw new Error(`YouTube a répondu ${response.status}`);
@@ -133,7 +145,7 @@ async function directVideo(videoId: string): Promise<YoutubeVideo> {
   url.searchParams.set('part', 'snippet,contentDetails');
   url.searchParams.set('id', videoId);
   url.searchParams.set('key', key);
-  const response = await fetch(url.toString(), { headers: { accept: 'application/json' } });
+  const response = await fetch(url.toString(), { headers: { accept: 'application/json' }, signal: directSignal() });
   if (!response.ok) {
     if (response.status === 403) throw new Error('Quota YouTube épuisé, réessayez plus tard');
     throw new Error(`YouTube a répondu ${response.status}`);
