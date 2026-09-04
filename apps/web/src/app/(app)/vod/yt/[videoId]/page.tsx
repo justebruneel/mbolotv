@@ -121,13 +121,12 @@ function YoutubeDetailContent() {
   return (
     <div className="pb-10">
       {/* Hero Netflix : backdrop + actions. Dès que la lecture démarre, le
-          Player prend SA place SEUL — l'overlay du hero disparaît (le lecteur
-          affiche déjà titre, barre de progression et contrôles) : aucun
-          chevauchement ni doublon. Les actions de page (Arrêter, Favori)
-          passent dans la barre sous le lecteur. */}
-      <section className="relative -mt-px h-[340px] sm:h-[400px] md:h-[480px]">
+          Player prend SA place SEUL dans un cadre 16:9 natif (pas de hack de
+          taille : forcer h-full sur les enfants du lecteur étire la .seekBar
+          et son dégradé sombre sur toute l'image => rendu sombre). */}
+      <section className={playing ? 'relative -mt-px aspect-video w-full bg-black' : 'relative -mt-px h-[340px] sm:h-[400px] md:h-[480px]'}>
         {playing ? (
-          <div className="absolute inset-0 [&>div]:h-full [&>div]:w-full [&>div>div]:h-full [&>div>div]:w-full bg-black" data-player-chrome>
+          <div className="absolute inset-0 bg-black" data-player-chrome>
             <Player
               key={videoId}
               urls={playUrls}
