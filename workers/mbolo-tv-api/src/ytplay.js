@@ -9,16 +9,29 @@ import { resolveGoogleapisIp } from './youtube.js';
 // chiffrés (signature vide). Paramètres validés (regex d'ID vidéo).
 // Réseau : même cascade que ytFetch (direct, relais résidentiel en repli).
 const INNERTUBE_API = 'https://www.youtube.com/youtubei/v1/player';
-const ANDROID_CONTEXT = {
-  client: {
-    clientName: 'ANDROID',
-    clientVersion: '19.09.37',
-    androidSdkVersion: 30,
-    hl: 'fr',
-    gl: 'GA',
+// Chaîne de clients InnerTube (clés publiques intégrées à l'app YouTube,
+// cf. yt-dlp) : ANDROID d'abord, IOS en repli. Ils renvoient des formats
+// progressifs MP4 généralement non chiffrés.
+const INNERTUBE_CLIENTS = [
+  {
+    key: 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
+    context: { client: { clientName: 'ANDROID', clientVersion: '19.09.37', androidSdkVersion: 30, osName: 'Android', osVersion: '11', hl: 'fr', gl: 'GA' } },
+    headers: {
+      'user-agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+      'x-youtube-client-name': '3',
+      'x-youtube-client-version': '19.09.37',
+    },
   },
-};
-const UA_ANDROID = 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip';
+  {
+    key: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
+    context: { client: { clientName: 'IOS', clientVersion: '19.29.1', deviceMake: 'Apple', deviceModel: 'iPhone16,2', osName: 'iPhone', osVersion: '17.5.1.21F90', hl: 'fr', gl: 'GA' } },
+    headers: {
+      'user-agent': 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)',
+      'x-youtube-client-name': '5',
+      'x-youtube-client-version': '19.29.1',
+    },
+  },
+];
 const PLAY_TIMEOUT_MS = 15_000;
 const PLAY_CACHE_TTL_S = 60 * 60 * 4; // Les URL de flux expirent ~6 h ; cache 4 h.
 
@@ -58,36 +71,43 @@ export async function serveYoutubePlay(env, videoId, cors = {}) {
   if (overrideIp) targets.push({ url: INNERTUBE_API, cf: { resolveOverride: overrideIp }, label: 'direct+doh' });
   targets.push({ url: INNERTUBE_API, label: 'direct' });
   if (relayed.url !== INNERTUBE_API) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
-  const init = {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'user-agent': UA_ANDROID,
-      'x-youtube-client-name': '3',
-      'x-youtube-client-version': '19.09.37',
-      'accept-language': 'fr-FR,fr;q=0.9',
-    },
-    body: JSON.stringify({ context: ANDROID_CONTEXT, videoId, contentCheckOk: true, racyCheckOk: true }),
-  };
   let playerResponse = null;
   let lastError = null;
-  for (const target of targets) {
-    try {
-      const response = await fetch(target.url, {
-        ...init,
-        headers: { ...init.headers, ...(target.headers ?? {}) },
-        signal: AbortSignal.timeout(PLAY_TIMEOUT_MS),
-        ...(target.cf ? { cf: target.cf } : {}),
-      });
-      if (!response.ok) {
-        lastError = Object.assign(new Error(`YouTube a répondu ${response.status}`), { status: 502 });
-        continue;
+  for (const client of INNERTUBE_CLIENTS) {
+    const init = {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'accept-language': 'fr-FR,fr;q=0.9',
+        ...client.headers,
+      },
+      body: JSON.stringify({ context: client.context, videoId, contentCheckOk: true, racyCheckOk: true }),
+    };
+    const base = `${INNERTUBE_API}?key=${client.key}&prettyPrint=false`;
+    const targets = [];
+    if (overrideIp) targets.push({ url: base, cf: { resolveOverride: overrideIp } });
+    targets.push({ url: base });
+    if (relayed.url !== INNERTUBE_API) targets.push({ url: relayed.url, headers: relayed.headers });
+    for (const target of targets) {
+      try {
+        const response = await fetch(target.url, {
+          ...init,
+          headers: { ...init.headers, ...(target.headers ?? {}) },
+          signal: AbortSignal.timeout(PLAY_TIMEOUT_MS),
+          ...(target.cf ? { cf: target.cf } : {}),
+        });
+        if (!response.ok) {
+          lastError = Object.assign(new Error(`YouTube a répondu ${response.status}`), { status: 502 });
+          continue;
+        }
+        playerResponse = await response.json();
+        if (playerResponse?.playabilityStatus?.status === 'OK' && pickPlayableFormats(playerResponse).length > 0) break;
+        playerResponse = null;
+      } catch {
+        lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
       }
-      playerResponse = await response.json();
-      break;
-    } catch {
-      lastError = Object.assign(new Error('YouTube injoignable'), { status: 502 });
     }
+    if (playerResponse) break;
   }
   if (!playerResponse) {
     return jsonError(lastError?.message ?? 'YouTube indisponible', lastError?.status ?? 502, cors);
