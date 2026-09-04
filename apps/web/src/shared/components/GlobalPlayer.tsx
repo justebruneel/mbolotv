@@ -232,6 +232,12 @@ function GlobalPlayerInner() {
     else clearSource();
   }, [vodId, isVodRoute, isWatch, goBack, clearSource, clearVod, router]);
 
+  // Garde structurelle : la fiche Nollywood (/vod/yt/<id>) monte SON propre
+  // lecteur. Aucune instance du GlobalPlayer ne doit coexister sur cette
+  // route, même transitoirement (sinon : deux rails de contrôles superposés,
+  // un en fond et un en clair).
+  if (pathname?.startsWith('/vod/yt/')) return null;
+
   if (!mounted || (!channelId && !vodId)) return null;
 
   const playerTitle = vodId ? (vodItemQuery.data?.title ?? 'Mbolo TV') : (channelQuery.data?.name ?? 'Mbolo TV');
