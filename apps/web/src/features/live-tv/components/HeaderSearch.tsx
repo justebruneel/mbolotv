@@ -3,16 +3,20 @@
 import { useCategories } from '../../../shared/api/queries';
 import { categoryLabel } from '../utils';
 import { SearchIcon, XIcon } from './Icons';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 const DEBOUNCE_MS = 300;
 
-// Recherche Netflix dans la barre de navigation : filtre le dossier courant
-// (?category) ou tout le catalogue. L'état est piloté par l'URL (?q=) —
-// l'écriture est gardée par un ref pour éviter tout écho replace ↔ searchParams.
+// Recherche Netflix dans la barre de navigation : elle appartient à la
+// section courante — /live filtre les chaînes (dossier ?category ou tout le
+// catalogue), /vod filtre films/séries (+ Nollywood via ?dossier). Depuis une
+// page de détail /vod/<id>, on bascule sur la liste /vod?q=. L'état est
+// piloté par l'URL (?q=) — l'écriture est gardée par un ref pour éviter tout
+// écho replace ↔ searchParams.
 export function HeaderSearch() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const category = searchParams.get('category') ?? undefined;
   const urlQuery = searchParams.get('q') ?? '';
@@ -22,14 +26,20 @@ export function HeaderSearch() {
 
   const categoriesQuery = useCategories();
   const folderName = category ? categoryLabel(categoriesQuery.data ?? [], category) : undefined;
+  const onVod = pathname.startsWith('/vod');
+  const onVodList = pathname === '/vod';
 
   function writeUrl(query: string): void {
     if (lastWrittenRef.current === query) return;
     lastWrittenRef.current = query;
-    const params = new URLSearchParams(window.location.search);
+    // Liste courante : on préserve les paramètres de section (kind, dossier,
+    // category…). Détail /vod/<id> : on repart d'une URL propre.
+    const params = onVodList || !onVod ? new URLSearchParams(window.location.search) : new URLSearchParams();
     if (query) params.set('q', query);
     else params.delete('q');
-    router.replace(params.toString() ? `/live?${params}` : '/live', { scroll: false });
+    const search = params.toString();
+    const base = onVod ? '/vod' : '/live';
+    router.replace(search ? `${base}?${search}` : base, { scroll: false });
   }
 
   // Debounce : écrit ?q une seule fois par frappe stabilisée.
@@ -69,8 +79,8 @@ export function HeaderSearch() {
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => { if (event.key === 'Escape') close(); }}
-        placeholder={folderName ? `Rechercher dans « ${format(folderName)} »…` : 'Rechercher une chaîne…'}
-        aria-label={folderName ? `Rechercher dans ${folderName}` : 'Rechercher une chaîne'}
+        placeholder={folderName ? `Rechercher dans « ${format(folderName)} »…` : onVod ? 'Rechercher un film ou une série…' : 'Rechercher une chaîne…'}
+        aria-label={folderName ? `Rechercher dans ${folderName}` : onVod ? 'Rechercher un film ou une série' : 'Rechercher une chaîne'}
         className="w-full rounded-xl border border-border bg-surface-2 py-2 pl-10 pr-9 text-sm font-medium placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
       />
       <button

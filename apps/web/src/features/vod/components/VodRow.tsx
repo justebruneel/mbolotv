@@ -10,13 +10,11 @@ import { VodTile } from './VodTile';
 // au survol desktop, toujours utiles au doigt via le swipe natif). Le
 // défilement glisse par page (≈ 85 % de la largeur visible) plutôt que par
 // carte. « Voir tout » mène à la grille filtrée sur la catégorie.
-export function VodRow({ title, count, items, seeAllKind, seeAllCategory }: {
-  title: string;
-  count?: number | null;
-  items: VodItem[];
-  seeAllKind: 'MOVIE' | 'SERIES';
-  seeAllCategory: string;
-}) {
+// Coquille commune des rails horizontaux : refs + état des flèches +
+// saut de page (≈ 85 % de la largeur visible). `updateArrows` doit être
+// rappelé par l'appelant quand le contenu change (le ResizeObserver ne voit
+// que la boîte de l'élément, pas la croissance de son scrollWidth).
+export function useRowPager() {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
@@ -31,19 +29,34 @@ export function VodRow({ title, count, items, seeAllKind, seeAllCategory }: {
   }, []);
 
   useEffect(() => {
-    updateArrows();
     const el = scrollerRef.current;
     if (!el) return;
     const observer = new ResizeObserver(updateArrows);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [updateArrows, items.length]);
+  }, [updateArrows]);
 
   function scrollByPage(direction: 1 | -1): void {
     const el = scrollerRef.current;
     if (!el) return;
     el.scrollBy({ left: direction * Math.round(el.clientWidth * 0.85), behavior: 'smooth' });
   }
+
+  return { scrollerRef, atStart, atEnd, scrollByPage, updateArrows };
+}
+
+export function VodRow({ title, count, items, seeAllKind, seeAllCategory }: {
+  title: string;
+  count?: number | null;
+  items: VodItem[];
+  seeAllKind: 'MOVIE' | 'SERIES';
+  seeAllCategory: string;
+}) {
+  const { scrollerRef, atStart, atEnd, scrollByPage, updateArrows } = useRowPager();
+
+  useEffect(() => {
+    updateArrows();
+  }, [updateArrows, items.length]);
 
   if (items.length === 0) return null;
   const params = new URLSearchParams({ kind: seeAllKind });
