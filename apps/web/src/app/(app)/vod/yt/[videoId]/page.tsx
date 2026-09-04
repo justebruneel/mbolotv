@@ -121,7 +121,10 @@ function YoutubeDetailContent() {
   return (
     <div className="pb-10">
       {/* Hero Netflix : backdrop + actions. Dès que la lecture démarre, le
-          Player prend SA place (aucun double cadre vidéo à l'écran). */}
+          Player prend SA place SEUL — l'overlay du hero disparaît (le lecteur
+          affiche déjà titre, barre de progression et contrôles) : aucun
+          chevauchement ni doublon. Les actions de page (Arrêter, Favori)
+          passent dans la barre sous le lecteur. */}
       <section className="relative -mt-px h-[340px] sm:h-[400px] md:h-[480px]">
         {playing ? (
           <div className="absolute inset-0 [&>div]:h-full [&>div]:w-full [&>div>div]:h-full [&>div>div]:w-full bg-black" data-player-chrome>
@@ -146,50 +149,62 @@ function YoutubeDetailContent() {
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0f] via-black/50 to-black/10" />
             <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/20 to-transparent" />
+
+            <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-6xl px-4 pb-6 md:pb-8">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
+                <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>
+                <span>Nollywood · Aforevo</span>
+                {item.duration !== null && item.duration > 0 && <span>{formatTime(item.duration)}</span>}
+                {item.publishedAt && <span className="hidden sm:inline">{new Date(item.publishedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>}
+              </div>
+              <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white drop-shadow-lg md:text-5xl">{item.title}</h1>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                {playQuery.isFetching ? (
+                  <button type="button" className="btn btn-primary" disabled>
+                    <Spinner />
+                    Résolution du flux…
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-primary" onClick={startPlayback}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                    {resumePct !== null ? 'Reprendre' : 'Lecture'}
+                  </button>
+                )}
+                <FavoriteButton
+                  label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
+                  isActive={isFavorite}
+                  onToggle={() => toggleFavorite(progressId)}
+                />
+              </div>
+              {resumePct !== null && (
+                <div className="mt-3 max-w-xs">
+                  <div className="h-1 overflow-hidden rounded-full bg-white/20">
+                    <div className="h-full bg-accent" style={{ width: `${resumePct}%` }} />
+                  </div>
+                  <p className="mt-1 text-xs text-white/70">{resumePct} % vus · reprise à {formatTime(progress!.position)}</p>
+                </div>
+              )}
+            </div>
           </>
         )}
-
-        <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-6xl px-4 pb-6 md:pb-8">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
-            <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>
-            <span>Nollywood · Aforevo</span>
-            {item.duration !== null && item.duration > 0 && <span>{formatTime(item.duration)}</span>}
-            {item.publishedAt && <span className="hidden sm:inline">{new Date(item.publishedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>}
-          </div>
-          {!playing && <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white drop-shadow-lg md:text-5xl">{item.title}</h1>}
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            {playQuery.isFetching && !playing ? (
-              <button type="button" className="btn btn-primary" disabled>
-                <Spinner />
-                Résolution du flux…
-              </button>
-            ) : playing ? (
-              <button type="button" className="btn btn-primary" onClick={stopPlayback}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
-                Arrêter
-              </button>
-            ) : (
-              <button type="button" className="btn btn-primary" onClick={startPlayback}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                {resumePct !== null ? 'Reprendre' : 'Lecture'}
-              </button>
-            )}
-            <FavoriteButton
-              label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
-              isActive={isFavorite}
-              onToggle={() => toggleFavorite(progressId)}
-            />
-          </div>
-          {!playing && resumePct !== null && (
-            <div className="mt-3 max-w-xs">
-              <div className="h-1 overflow-hidden rounded-full bg-white/20">
-                <div className="h-full bg-accent" style={{ width: `${resumePct}%` }} />
-              </div>
-              <p className="mt-1 text-xs text-white/70">{resumePct} % vus · reprise à {formatTime(progress!.position)}</p>
-            </div>
-          )}
-        </div>
       </section>
+
+      {/* Barre de page pendant la lecture : Arrêter + Favori, SOUS le lecteur
+          (le Player garde ses propres contrôles intacts, rien ne se superpose). */}
+      {playing && (
+        <div className="mx-auto mt-3 flex w-full max-w-6xl flex-wrap items-center gap-3 px-4">
+          <button type="button" className="btn btn-primary" onClick={stopPlayback}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
+            Arrêter
+          </button>
+          <FavoriteButton
+            label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
+            isActive={isFavorite}
+            onToggle={() => toggleFavorite(progressId)}
+          />
+          <span className="text-xs text-muted">Nollywood · Aforevo{item.duration !== null && item.duration > 0 ? ` · ${formatTime(item.duration)}` : ''}</span>
+        </div>
+      )}
 
       {playQuery.isError && !playing && (
         <div className="mx-auto mt-8 w-full max-w-6xl px-4">
