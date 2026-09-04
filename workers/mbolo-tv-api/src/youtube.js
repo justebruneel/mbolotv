@@ -9,6 +9,8 @@ import { resolveRelay } from './relay.js';
 // Stratégie quota : search.list scopé chaîne (type=video, order=date) =
 // 100 unités/appel, amorties par le cache edge partagé (1 h) : ~10-20 pages
 // uniques/jour. JAMAIS de search global non scopé. Fiche : videos.list.
+// Chemins REST corrects : /search et /videos (search.list/videos.list,
+// notation de la doc, répondent 404 — c'était la cause du « blocage egress »).
 // (playlistItems/channels répondent 404 vide depuis nos egress.)
 // Réseau : repli via le relais résidentiel si le direct échoue (même motif
 // que xtream.js — les egress datacenter sont parfois refusés).
@@ -171,7 +173,7 @@ export async function serveYoutubeList(env, channelId, pageToken, limit, q, cors
   }
   let payload;
   try {
-    payload = await ytFetch(env, 'search.list', {
+    payload = await ytFetch(env, 'search', {
       part: 'snippet',
       type: 'video',
       order: 'date',
@@ -203,7 +205,7 @@ export async function serveYoutubeVideo(env, videoId, cors = {}) {
   }
   let payload;
   try {
-    payload = await ytFetch(env, 'videos.list', { part: 'snippet,contentDetails', id: videoId });
+    payload = await ytFetch(env, 'videos', { part: 'snippet,contentDetails', id: videoId });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'YouTube indisponible', error instanceof Error && typeof error.status === 'number' ? error.status : 502, cors);
   }

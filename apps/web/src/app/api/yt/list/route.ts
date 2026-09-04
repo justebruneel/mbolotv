@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 // googleapis répond 404 vide). Clé via YOUTUBE_API_KEY (variables Vercel,
 // jamais exposée). search.list scopé chaîne (type=video, order=date),
 // cache Next 1 h (quota : 100 unités/appel partagé).
+// Chemin REST = /search (et non /search.list qui est la notation de la doc
+// et répond 404).
 const YT_API = 'https://www.googleapis.com/youtube/v3';
 const AFOREVO_CHANNEL_ID = 'UCyd79F-lNLCbGPQrf_L7KiA';
 const REVALIDATE_S = 3600;
@@ -38,7 +40,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const pageToken = params.get('pageToken');
   const q = (params.get('q') ?? '').trim().slice(0, 80);
 
-  const upstream = new URL(`${YT_API}/search.list`);
+  const upstream = new URL(`${YT_API}/search`);
   upstream.searchParams.set('part', 'snippet');
   upstream.searchParams.set('type', 'video');
   upstream.searchParams.set('order', 'date');
@@ -67,6 +69,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ message: 'Quota YouTube épuisé, réessayez plus tard' }, { status: 429 });
       }
     } catch { /* corps illisible */ }
+    console.log(`[yt/list] ${response.status} url=${upstream.toString()} server=${response.headers.get('server') ?? '?'} cf-ray=${response.headers.get('cf-ray') ?? '-'} alt-svc=${(response.headers.get('alt-svc') ?? '-').slice(0, 40)}`);
     return NextResponse.json({ message: `YouTube a répondu ${response.status}` }, { status: 502 });
   }
   let payload: {

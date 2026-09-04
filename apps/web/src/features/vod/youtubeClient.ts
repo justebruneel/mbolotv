@@ -11,6 +11,8 @@ import type { YoutubeListResponse, YoutubeVideo } from '@mbolo/contracts';
 // le réseau de l'utilisateur bloquerait googleapis mais pas notre API).
 // Quota : search = 100 unités/appel -> cache sessionStorage (30 min listes,
 // 24 h fiches) + clé restreinte par referer au domaine de l'app.
+// Chemins REST corrects : /search et /videos (search.list/videos.list,
+// notation de la doc, répondent 404).
 const YT_API = 'https://www.googleapis.com/youtube/v3';
 const LIST_TTL_MS = 30 * 60_000;
 const VIDEO_TTL_MS = 24 * 3600_000;
@@ -58,7 +60,7 @@ function pickThumbnail(thumbnails: unknown): string | null {
 async function directSearch(channelId: string, opts: { q?: string; pageToken?: string; maxResults: number }): Promise<YoutubeListResponse> {
   const key = publicKey();
   if (!key) throw new Error('Clé YouTube publique absente');
-  const url = new URL(`${YT_API}/search.list`);
+  const url = new URL(`${YT_API}/search`);
   url.searchParams.set('part', 'snippet');
   url.searchParams.set('type', 'video');
   url.searchParams.set('order', 'date');
@@ -96,7 +98,7 @@ async function directSearch(channelId: string, opts: { q?: string; pageToken?: s
 async function directVideo(videoId: string): Promise<YoutubeVideo> {
   const key = publicKey();
   if (!key) throw new Error('Clé YouTube publique absente');
-  const url = new URL(`${YT_API}/videos.list`);
+  const url = new URL(`${YT_API}/videos`);
   url.searchParams.set('part', 'snippet,contentDetails');
   url.searchParams.set('id', videoId);
   url.searchParams.set('key', key);
@@ -121,6 +123,26 @@ async function directVideo(videoId: string): Promise<YoutubeVideo> {
   };
 }
 
+function proxyListParams(channelId: string, opts: { q?: string; pageToken?: string; maxResults: number }): URLSearchParams {
+  const params = new URLSearchParams({ channel: channelId, limit: String(opts.maxResults) });
+  if (opts.q) params.set('q', opts.q);
+  if (opts.pageToken) params.set('pageToken', opts.pageToken);
+  return params;
+}
+
+// Repli 1 : route Next.js même origine (/api/yt/list, déployée sur Vercel) —
+// contourne l'egress Worker bloqué par l'edge Google. Repli 2 : proxy Worker
+// (au cas où Vercel serait indisponible). Sans les deux, l'état vide s'affiche.
+async function proxySearch(channelId: string, opts: { q?: string; pageToken?: string; maxResults: number }): Promise<YoutubeListResponse> {
+  const params = proxyListParams(channelId, opts);
+  try {
+    const response = await fetch(`/api/yt/list?${params.toString()}`, { headers: { accept: 'application/json' } });
+    if (response.ok) return (await response.json()) as YoutubeListResponse;
+  } catch { /* on tente le Worker */ }
+  const { apiGet } = await import('../../shared/api/client');
+  return apiGet<YoutubeListResponse>('/vod/youtube', Object.fromEntries(params) as Record<string, string>);
+}
+
 /** Liste paginée : direct navigateur d'abord, proxy serveur en repli. */
 export async function fetchYoutubeList(channelId: string, opts: { q?: string; pageToken?: string; maxResults: number }): Promise<YoutubeListResponse> {
   const cacheKey = `list:${channelId}:${opts.q ?? ''}:${opts.pageToken ?? ''}:${opts.maxResults}`;
@@ -131,15 +153,7 @@ export async function fetchYoutubeList(channelId: string, opts: { q?: string; pa
     cacheSet(cacheKey, fresh, LIST_TTL_MS);
     return fresh;
   } catch {
-    // Repli : proxy serveur (utile si le réseau bloque googleapis mais pas
-    // notre API ; échoue proprement sinon et l'UI affiche l'état vide).
-    const { apiGet } = await import('../../shared/api/client');
-    return apiGet<YoutubeListResponse>('/vod/youtube', {
-      channel: channelId,
-      ...(opts.q ? { q: opts.q } : {}),
-      ...(opts.pageToken ? { pageToken: opts.pageToken } : {}),
-      limit: opts.maxResults,
-    });
+    return proxySearch(channelId, opts);
   }
 }
 
@@ -153,6 +167,10 @@ export async function fetchYoutubeVideo(videoId: string): Promise<YoutubeVideo> 
     cacheSet(cacheKey, fresh, VIDEO_TTL_MS);
     return fresh;
   } catch {
+    try {
+      const response = await fetch(`/api/yt/video?id=${encodeURIComponent(videoId)}`, { headers: { accept: 'application/json' } });
+      if (response.ok) return (await response.json()) as YoutubeVideo;
+    } catch { /* on tente le Worker */ }
     const { apiGet } = await import('../../shared/api/client');
     return apiGet<YoutubeVideo>('/vod/youtube/video', { id: videoId });
   }
