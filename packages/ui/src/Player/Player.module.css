@@ -815,12 +815,26 @@
   .player {
     border-radius: var(--mbolo-radius);
   }
-  .controlRail {
-    display: none;
-  }
+  /* Le JS décide du rail via matchMedia (max-width: 767px) : il masque
+     controlRail et rend mobileBottomBar. Ici on n'écrase PLUS controlRail en
+     display:none : entre 640 et 767px (petite fenêtre desktop), isMobile=false
+     côté JS mais cette media-query masquait le rail => AUCUN contrôle. */
   .statTooltip {
     display: none;
   }
+}
+
+/* Seekbar indéterminée (durée inconnue) : pointillés animés discrets. */
+.seekBarIndeterminate {
+  background: linear-gradient(transparent, oklch(0.10 0.018 260 / 0.85));
+}
+.seekBarIndeterminate .seekFill {
+  background: repeating-linear-gradient(90deg, var(--mbolo-accent) 0 14px, transparent 14px 22px);
+  animation: seekIndeterminate 1.6s linear infinite;
+}
+@keyframes seekIndeterminate {
+  from { background-position: 0 0; }
+  to { background-position: 44px 0; }
 }
 
 /* ---------- Pseudo fullscreen (iOS fallback) ---------- */

@@ -138,11 +138,13 @@ function YoutubeBrowse({ q }: { q: string }) {
 
   if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
   if (query.isError) return <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
-  // Recherche serveur (q transmis à l'API) ; filtre local en surplus pour
-  // les pages déjà chargées quand on tape pendant le défilement.
-  const needle = q.trim().toLowerCase();
-  const items = (query.data?.pages.flatMap((page) => page.items) ?? [])
-    .filter((item) => needle === '' || item.title.toLowerCase().includes(needle));
+  // Pas de filtre local en surplus : la recherche est déjà SERVEUR (q transmis
+  // à l'API, 100 unités de quota). Un includes() local sur le titre excluait
+  // des résultats pertinents (match description) -> faux « Aucun résultat »
+  // pour des résultats pourtant payés.
+  // Dédupe par id : un décalage playlistItems (nouvelle vidéo publiée entre
+  // deux pages) duplique un item — collision de key React + visuel doublé.
+  const items = [...new Map((query.data?.pages.flatMap((page) => page.items) ?? []).map((item) => [item.id, item])).values()];
   if (items.length === 0) return <EmptyState title="Aucun résultat" hint={q ? `Aucun titre ne correspond à « ${q} ».` : 'Ce catalogue est vide pour le moment.'} />;
 
   return (

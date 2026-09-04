@@ -333,8 +333,23 @@ export function useInfiniteYoutube(channelId: string, pageSize = 25, q = '') {
         }),
       ),
     initialPageParam: '' as string,
-    getNextPageParam: (lastPage) => lastPage.nextPageToken ?? undefined,
+    // Garde page vide : YouTube renvoie parfois items:[] AVEC un token —
+    // suivre ce token bouclerait indéfiniment sur des pages vides.
+    getNextPageParam: (lastPage) => (lastPage.nextPageToken && lastPage.items.length > 0 ? lastPage.nextPageToken : undefined),
     placeholderData: keepPreviousData,
+    // Coût quota : search.list = 100 unités, playlistItems = 1. staleTime 5 min
+    // évite le refetch systématique au remontage de la liste (le cache
+    // sessionStorage de youtubeClient prend le relais ensuite).
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    // JAMAIS de retry sur 429/403/451 : un retry 3× sur search.list amplifie
+    // l'épuisement du quota (4 × 100 unités pour le même appel). On retente
+    // seulement les erreurs réseau/5xx.
+    retry: (failureCount, error) => {
+      const status = error instanceof Error && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+      if (status === 429 || status === 403 || status === 451) return false;
+      return failureCount < 1;
+    },
   });
 }
 

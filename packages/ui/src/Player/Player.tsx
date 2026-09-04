@@ -152,6 +152,10 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     return mpegtsReadyRef.current;
   }, []);
   const retryRef = useRef<(() => void) | null>(null);
+  // Listeners VOD courants (loadedmetadata/error) : gardés en ref pour pouvoir
+  // les retirer avant chaque remontage (retry/source suivante) et au destroy.
+  const vodOnMetaRef = useRef<(() => void) | null>(null);
+  const vodOnErrorRef = useRef<(() => void) | null>(null);
   const networkCapRef = useRef(-1);
   // Fast-start : actif + timer de libération ABR en refs pour que l'effet
   // qualité (un choix manuel hors Auto) puisse annuler la libération
@@ -257,9 +261,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     const video = videoRef.current;
     if (!video) return;
     const tick = (): void => {
-      if (video.buffered.length === 0) return;
       // VOD : progression currentTime/duration pour la barre seekable +
       // remontée de position (reprise de lecture, throttlée au tick 500 ms).
+      // SANS garde buffered : un MP4 progressif peut mettre plusieurs secondes
+      // à remplir le premier bloc — currentTime est déjà fiable, on doit
+      // persister la reprise dès le démarrage (sinon stop précoce = perte).
       if (isVod) {
         setVodPosition(video.currentTime);
         if (video.duration > 0 && Number.isFinite(video.duration)) {
@@ -268,6 +274,8 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         }
         return;
       }
+      // Live : les stats de buffer/latence nécessitent un bloc téléchargé.
+      if (video.buffered.length === 0) return;
       const bufferedEnd = video.buffered.end(video.buffered.length - 1);
       const ahead = Math.max(0, bufferedEnd - video.currentTime);
       const edge = Math.max(liveEdgeRef.current, bufferedEnd);
@@ -399,6 +407,10 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       }
       mpegtsRef.current = null;
       try { el.pause(); } catch { /* ignore */ }
+      // Retrait des listeners VOD courants (sinon ils survivent au destroy et
+      // s'accumulent sur le <video> réutilisé par le montage suivant).
+      if (vodOnMetaRef.current) { el.removeEventListener('loadedmetadata', vodOnMetaRef.current); vodOnMetaRef.current = null; }
+      if (vodOnErrorRef.current) { el.removeEventListener('error', vodOnErrorRef.current); vodOnErrorRef.current = null; }
       try { el.removeAttribute('src'); el.load(); } catch { /* ignore */ }
     };
     const bufferAhead = (): number => el.buffered.length === 0 ? 0 : Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
@@ -483,11 +495,23 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         started = false;
         playbackInitiated = false;
         const onMeta = (): void => {
+          // Auto-désinscription : le readyState>=1 peut déclencher onMeta
+          // manuellement pendant que le listener {once:true} est encore posé.
+          el.removeEventListener('loadedmetadata', onMeta);
+          vodOnMetaRef.current = null;
           if (initialTime && Number.isFinite(initialTime) && el.duration > 0)
             el.currentTime = clamp(initialTime, 0, Math.max(0, el.duration - 5));
           attemptPlayback();
         };
         const onFileError = (): void => { if (!cancelled) { setErrorInfo({ type: 'networkError', httpCode: null }); advance(); } };
+        // Listeners nommés + retirés avant chaque (re)montage : loadCurrent()
+        // est rappelé à chaque retry/source suivante sur le MÊME <video> —
+        // avec { once: true } non retirés, onMeta/onFileError s'empilent
+        // (doubles seeks, doubles advance()).
+        if (vodOnMetaRef.current) el.removeEventListener('loadedmetadata', vodOnMetaRef.current);
+        if (vodOnErrorRef.current) el.removeEventListener('error', vodOnErrorRef.current);
+        vodOnMetaRef.current = onMeta;
+        vodOnErrorRef.current = onFileError;
         el.addEventListener('loadedmetadata', onMeta, { once: true });
         el.addEventListener('error', onFileError, { once: true });
         if (isHlsStream && Hls.isSupported()) {
@@ -790,6 +814,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}><Icon.Volume2 size={28} /></span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
     {status === 'ready' && !isVod && <div className={styles.progressBar} title={stats.latency !== null ? `Latence au direct : ${formatBuffer(stats.latency)}` : undefined}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}
     {status === 'ready' && isVod && vodDuration > 0 && <div className={styles.seekBar} aria-label="Progression de la vidéo"><input type="range" className={styles.seekSlider} min={0} max={vodDuration} step={1} value={Math.min(vodPosition, vodDuration)} onChange={(e) => seekTo(Number(e.target.value))} aria-label="Position de lecture" /><div className={styles.seekFill} style={{ width: `${clamp((vodPosition / vodDuration) * 100, 0, 100)}%` }} /><span className={styles.seekTime}>{formatTime(vodPosition)} / {formatTime(vodDuration)}</span></div>}
+    {/* Durée encore inconnue (MP4 progressif lent à donner ses métadonnées) :
+        seekbar en mode indéterminé — repère visuel + temps écoulé, seek désactivé. */}
+    {status === 'ready' && isVod && vodDuration <= 0 && <div className={`${styles.seekBar} ${styles.seekBarIndeterminate}`} aria-label="Progression (durée inconnue)"><div className={styles.seekFill} style={{ width: '30%', opacity: 0.4 }} /><span className={styles.seekTime}>{formatTime(vodPosition)}</span></div>}
     {status === 'ready' && !isVod && !isMobile && <div className={styles.controlRail} aria-label="Contrôles du lecteur"><button type="button" className={styles.iconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={16} /> : <Icon.Pause size={16} />}</button><span className={styles.liveBadge}>DIRECT</span><span className={styles.stat}>Qualité {qualityLabel}</span><span className={styles.statWrap}><span className={styles.statHint}>Buffer {formatBuffer(stats.bufferAhead)}</span><span className={styles.statTooltip}>Secondes de vidéo en mémoire tampon</span></span><span className={styles.statWrap}><span className={styles.statHint}>Démarrage {formatDuration(stats.startupMs)}</span><span className={styles.statTooltip}>Temps de chargement initial</span></span>{stats.rebufferCount > 0 && <span className={styles.statWarning}>Rebuffers {stats.rebufferCount}</span>}<div className={styles.volumeControl}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={16} /></button><input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /></div>{levels.length > 1 && <select className={styles.qualitySelect} value={resolvedIndex} aria-label="Qualité vidéo" onChange={(e) => { const idx = Number(e.target.value); const height = idx === -1 ? -1 : (levels.find((l) => l.index === idx)?.height ?? -1); // Un choix manuel hors Auto quitte Éco (sources différentes).
   if (height !== -1 && dataSaver) { setDataSaver(false); onDataSaverChange?.(false); } setSelectedHeight(height); onLevelChange?.(height); }}><option value={-1}>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</option>{levels.map((level) => <option key={level.index} value={level.index}>{level.height}p — {formatBitrate(level.bitrate)}</option>)}</select>}<label className={styles.dataSaverToggle}><input type="checkbox" checked={dataSaver} onChange={(e) => { setDataSaver(e.target.checked); onDataSaverChange?.(e.target.checked); }} />Éco</label>{pipSupported && <button type="button" className={styles.iconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={16} /></button>}{fsSupported && <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}</button>}</div>}
     {status === 'ready' && isVod && !isMobile && <div className={styles.controlRail} aria-label="Contrôles du lecteur"><button type="button" className={styles.iconBtn} onClick={togglePlayback} aria-label={isPaused ? 'Lire' : 'Pause'}>{isPaused ? <Icon.Play size={16} /> : <Icon.Pause size={16} />}</button><span className={`${styles.stat} ${styles.statTitle}`} title={title}>{title}</span><div className={styles.volumeControl}><button type="button" className={styles.iconBtn} onClick={toggleMute} aria-label={muted ? 'Activer le son' : 'Couper le son'}><VolumeIcon size={16} /></button><input type="range" className={styles.volumeSlider} min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={handleVolumeChange} aria-label="Volume" /></div>{levels.length > 1 && <select className={styles.qualitySelect} value={resolvedIndex} aria-label="Qualité vidéo" onChange={(e) => { const idx = Number(e.target.value); const height = idx === -1 ? -1 : (levels.find((l) => l.index === idx)?.height ?? -1); setSelectedHeight(height); onLevelChange?.(height); }}><option value={-1}>Auto{activeHeight ? ` — ${activeHeight}p` : ''}</option>{levels.map((level) => <option key={level.index} value={level.index}>{level.height}p — {formatBitrate(level.bitrate)}</option>)}</select>}{pipSupported && <button type="button" className={styles.iconBtn} onClick={() => void togglePip()} aria-label={isPip ? 'Quitter le mini-player' : 'Mini-player'}><Icon.Monitor size={16} /></button>}{fsSupported && <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} aria-label={isFullscreen || isPseudoFullscreen ? 'Quitter le plein écran' : 'Plein écran'}>{isFullscreen || isPseudoFullscreen ? <Icon.Minimize size={16} /> : <Icon.Maximize size={16} />}</button>}</div>}

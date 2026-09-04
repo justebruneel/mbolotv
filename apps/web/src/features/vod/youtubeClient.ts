@@ -164,12 +164,28 @@ function proxyListParams(channelId: string, opts: { q?: string; pageToken?: stri
 // Repli 1 : route Next.js même origine (/api/yt/list, déployée sur Vercel) —
 // contourne l'egress Worker bloqué par l'edge Google. Repli 2 : proxy Worker
 // (au cas où Vercel serait indisponible). Sans les deux, l'état vide s'affiche.
+// Les messages serveur (quota 429, chaîne interdite…) sont propagés en Error
+// avec .status pour que React Query ne relance pas un appel coûteux (et que
+// l'UI affiche « Quota épuisé » au lieu de « Catalogue indisponible »).
+async function proxyListError(response: Response): Promise<Error> {
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  return Object.assign(new Error(body?.message ?? `Liste indisponible (${response.status})`), { status: response.status });
+}
+
 async function proxySearch(channelId: string, opts: { q?: string; pageToken?: string; maxResults: number }): Promise<YoutubeListResponse> {
   const params = proxyListParams(channelId, opts);
+  let response: Response;
   try {
-    const response = await fetch(`/api/yt/list?${params.toString()}`, { headers: { accept: 'application/json' } });
-    if (response.ok) return (await response.json()) as YoutubeListResponse;
-  } catch { /* on tente le Worker */ }
+    response = await fetch(`/api/yt/list?${params.toString()}`, { headers: { accept: 'application/json' } });
+    if (response.ok) {
+      const fresh = (await response.json()) as YoutubeListResponse;
+      return fresh;
+    }
+    if (response.status === 429 || response.status === 403) throw await proxyListError(response);
+  } catch (error) {
+    if ((error as { status?: unknown }).status === 429 || (error as { status?: unknown }).status === 403) throw error;
+    // sinon : on tente le Worker
+  }
   const { apiGet } = await import('../../shared/api/client');
   return apiGet<YoutubeListResponse>('/vod/youtube', Object.fromEntries(params) as Record<string, string>);
 }
@@ -185,8 +201,14 @@ export async function fetchYoutubeList(channelId: string, opts: { q?: string; pa
       : await directUploads(channelId, opts);
     cacheSet(cacheKey, fresh, LIST_TTL_MS);
     return fresh;
-  } catch {
-    return proxySearch(channelId, opts);
+  } catch (directError) {
+    // Le repli proxy (et son message d'erreur) est mis en cache comme le
+    // direct : sinon chaque navigation refrappe Vercel + Worker alors que la
+    // réponse (souvent « quota épuisé ») est la même à quelques minutes près.
+    const result = await proxySearch(channelId, opts);
+    cacheSet(cacheKey, result, Math.floor(LIST_TTL_MS / 2));
+    void directError;
+    return result;
   }
 }
 
@@ -200,10 +222,12 @@ export async function fetchYoutubeVideo(videoId: string): Promise<YoutubeVideo> 
     cacheSet(cacheKey, fresh, VIDEO_TTL_MS);
     return fresh;
   } catch {
-    try {
-      const response = await fetch(`/api/yt/video?id=${encodeURIComponent(videoId)}`, { headers: { accept: 'application/json' } });
-      if (response.ok) return (await response.json()) as YoutubeVideo;
-    } catch { /* on tente le Worker */ }
+    const response = await fetch(`/api/yt/video?id=${encodeURIComponent(videoId)}`, { headers: { accept: 'application/json' } });
+    if (response.ok) {
+      const fresh = (await response.json()) as YoutubeVideo;
+      cacheSet(cacheKey, fresh, Math.floor(VIDEO_TTL_MS / 2));
+      return fresh;
+    }
     const { apiGet } = await import('../../shared/api/client');
     return apiGet<YoutubeVideo>('/vod/youtube/video', { id: videoId });
   }

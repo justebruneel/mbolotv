@@ -8,7 +8,7 @@
 import { EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import type { YoutubeVideo } from '@mbolo/contracts';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useMemo } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { YoutubeListResponse } from '@mbolo/contracts';
 import { useYoutubePlay, useYoutubeVideo } from '../../../../../shared/api/queries';
@@ -99,24 +99,27 @@ function YoutubeDetailContent() {
   const resumePct = progress && progress.duration > 0 && progress.position > 30
     ? Math.min(100, Math.round((progress.position / progress.duration) * 100))
     : null;
-  const startAt = progress && progress.position > 30 && progress.duration > 0 && progress.position < progress.duration - 30
-    ? progress.position
-    : 0;
   const playUrls = playQuery.data?.urls ?? [];
   const playing = playUrls.length > 0;
+
+  // Reprise : figée à l'INSTANT du clic Lecture (state, pas render-derived).
+  // Lire vodProgress au render est non fiable : le store persist s'hydrate
+  // après le premier render -> startAt aurait pu valoir 0 (reprise perdue).
+  const [startAt, setStartAt] = useState(0);
+  const refetchPlay = playQuery.refetch;
+  const startPlayback = useCallback((): void => {
+    const entry = useSettingsStore.getState().vodProgress[progressId];
+    const pos = entry && entry.duration > 0 && entry.position > 30 && entry.position < entry.duration - 30 ? entry.position : 0;
+    setStartAt(pos);
+    void refetchPlay();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [refetchPlay, progressId]);
 
   // Arrêt : démonte le Player et purge la requête de flux (bouton ⏹ du hero).
   const stopPlayback = useCallback((): void => {
     queryClient.removeQueries({ queryKey: ['vod-youtube-play', videoId] });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [queryClient, videoId]);
-
-  // Démarrage : résout le flux puis replie en haut de page (le Player prend
-  // la place du hero).
-  const startPlayback = useCallback((): void => {
-    void playQuery.refetch();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [playQuery.refetch]);
 
   return (
     <div className="pb-10">
