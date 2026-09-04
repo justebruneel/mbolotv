@@ -154,15 +154,17 @@ async function ytFetch(env, action, params) {
   throw lastError ?? Object.assign(new Error('YouTube indisponible'), { status: 502 });
 }
 
-function normalizeSearchItem(item) {
-  const videoId = item?.id?.videoId;
+// search.list ET playlistItems partagent la forme snippet : id.videoId ou
+// snippet.resourceId.videoId selon l'endpoint.
+function normalizeListItem(entry) {
+  const videoId = entry?.id?.videoId ?? entry?.snippet?.resourceId?.videoId;
   if (typeof videoId !== 'string' || !videoId) return null;
   return {
     id: videoId,
-    title: typeof item.snippet?.title === 'string' ? item.snippet.title : 'Sans titre',
-    description: typeof item.snippet?.description === 'string' ? item.snippet.description : null,
-    posterUrl: pickThumbnail(item.snippet?.thumbnails),
-    publishedAt: typeof item.snippet?.publishedAt === 'string' ? item.snippet.publishedAt : null,
+    title: typeof entry.snippet?.title === 'string' ? entry.snippet.title : 'Sans titre',
+    description: typeof entry.snippet?.description === 'string' ? entry.snippet.description : null,
+    posterUrl: pickThumbnail(entry.snippet?.thumbnails),
+    publishedAt: typeof entry.snippet?.publishedAt === 'string' ? entry.snippet.publishedAt : null,
     duration: null,
   };
 }
@@ -178,21 +180,23 @@ export async function serveYoutubeList(env, channelId, pageToken, limit, q, cors
     const hit = await cache.match(cacheKey).catch(() => null);
     if (hit) return hit;
   }
+  // Sans q : playlist uploads (catalogue complet ~2500 items, 1 unité de
+  // quota). Avec q : search.list (moteur, 100 unités). UC… -> UU… pour la
+  // playlist « uploads » de la chaîne. Les deux partagent la forme snippet.
   let payload;
   try {
-    payload = await ytFetch(env, 'search', {
+    payload = await ytFetch(env, query ? 'search' : 'playlistItems', {
       part: 'snippet',
-      type: 'video',
-      order: 'date',
-      channelId,
+      ...(query
+        ? { type: 'video', order: 'date', channelId, q: query }
+        : { playlistId: channelId.startsWith('UC') ? `UU${channelId.slice(2)}` : channelId }),
       maxResults,
-      ...(query ? { q: query } : {}),
       ...(pageToken ? { pageToken } : {}),
     });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'YouTube indisponible', error instanceof Error && typeof error.status === 'number' ? error.status : 502, cors);
   }
-  const items = (Array.isArray(payload?.items) ? payload.items : []).map(normalizeSearchItem).filter(Boolean);
+  const items = (Array.isArray(payload?.items) ? payload.items : []).map(normalizeListItem).filter(Boolean);
   const response = new Response(JSON.stringify({ items, nextPageToken: typeof payload?.nextPageToken === 'string' ? payload.nextPageToken : null }), {
     status: 200,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${LIST_CACHE_TTL_S}`, ...cors },

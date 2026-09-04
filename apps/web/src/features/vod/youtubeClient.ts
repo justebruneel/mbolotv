@@ -58,30 +58,16 @@ function pickThumbnail(thumbnails: unknown): string | null {
   return null;
 }
 
-async function directSearch(channelId: string, opts: { q?: string; pageToken?: string; maxResults: number }): Promise<YoutubeListResponse> {
-  const key = publicKey();
-  if (!key) throw new Error('Clé YouTube publique absente');
-  const url = new URL(`${YT_API}/search`);
-  url.searchParams.set('part', 'snippet');
-  url.searchParams.set('type', 'video');
-  url.searchParams.set('order', 'date');
-  url.searchParams.set('channelId', channelId);
-  url.searchParams.set('maxResults', String(opts.maxResults));
-  if (opts.q) url.searchParams.set('q', opts.q);
-  if (opts.pageToken) url.searchParams.set('pageToken', opts.pageToken);
-  url.searchParams.set('key', key);
-  const response = await fetch(url.toString(), { headers: { accept: 'application/json' } });
-  if (!response.ok) {
-    if (response.status === 403) throw new Error('Quota YouTube épuisé, réessayez plus tard');
-    throw new Error(`YouTube a répondu ${response.status}`);
-  }
-  const payload = (await response.json()) as {
-    items?: Array<{ id?: { videoId?: unknown }; snippet?: { title?: unknown; description?: unknown; publishedAt?: unknown; thumbnails?: unknown } }>;
-    nextPageToken?: unknown;
-  };
+interface RawListPayload {
+  items?: Array<{ id?: { videoId?: unknown }; snippet?: { title?: unknown; description?: unknown; publishedAt?: unknown; thumbnails?: unknown; resourceId?: { videoId?: unknown } } }>;
+  nextPageToken?: unknown;
+}
+
+// search.list ET playlistItems partagent la forme snippet : un seul mapper.
+function normalizeListPayload(payload: RawListPayload): YoutubeListResponse {
   const items = (Array.isArray(payload?.items) ? payload.items : [])
     .map((entry): YoutubeVideo | null => {
-      const videoId = entry?.id?.videoId;
+      const videoId = entry?.id?.videoId ?? entry?.snippet?.resourceId?.videoId;
       if (typeof videoId !== 'string' || !videoId) return null;
       return {
         id: videoId,
@@ -94,6 +80,50 @@ async function directSearch(channelId: string, opts: { q?: string; pageToken?: s
     })
     .filter((entry): entry is YoutubeVideo => entry !== null);
   return { items, nextPageToken: typeof payload?.nextPageToken === 'string' ? payload.nextPageToken : null };
+}
+
+async function ytListFetch(url: URL): Promise<YoutubeListResponse> {
+  const response = await fetch(url.toString(), { headers: { accept: 'application/json' } });
+  if (!response.ok) {
+    if (response.status === 403) throw new Error('Quota YouTube épuisé, réessayez plus tard');
+    throw new Error(`YouTube a répondu ${response.status}`);
+  }
+  return normalizeListPayload((await response.json()) as RawListPayload);
+}
+
+// Catalogue complet : la playlist uploads liste TOUTES les vidéos publiées
+// (search n'indexe qu'un sous-ensemble : ~18 résultats vs ~2500 pour Aforevo)
+// et coûte 1 unité de quota vs 100. Identifiant déduit du canal (UC… -> UU…).
+function uploadsPlaylistId(channelId: string): string {
+  return channelId.startsWith('UC') ? `UU${channelId.slice(2)}` : channelId;
+}
+
+async function directUploads(channelId: string, opts: { pageToken?: string; maxResults: number }): Promise<YoutubeListResponse> {
+  const key = publicKey();
+  if (!key) throw new Error('Clé YouTube publique absente');
+  const url = new URL(`${YT_API}/playlistItems`);
+  url.searchParams.set('part', 'snippet');
+  url.searchParams.set('playlistId', uploadsPlaylistId(channelId));
+  url.searchParams.set('maxResults', String(opts.maxResults));
+  if (opts.pageToken) url.searchParams.set('pageToken', opts.pageToken);
+  url.searchParams.set('key', key);
+  return ytListFetch(url);
+}
+
+// Recherche par mot-clé uniquement (le listing sans q passe par directUploads).
+async function directSearch(channelId: string, opts: { q: string; pageToken?: string; maxResults: number }): Promise<YoutubeListResponse> {
+  const key = publicKey();
+  if (!key) throw new Error('Clé YouTube publique absente');
+  const url = new URL(`${YT_API}/search`);
+  url.searchParams.set('part', 'snippet');
+  url.searchParams.set('type', 'video');
+  url.searchParams.set('order', 'date');
+  url.searchParams.set('channelId', channelId);
+  url.searchParams.set('maxResults', String(opts.maxResults));
+  url.searchParams.set('q', opts.q);
+  if (opts.pageToken) url.searchParams.set('pageToken', opts.pageToken);
+  url.searchParams.set('key', key);
+  return ytListFetch(url);
 }
 
 async function directVideo(videoId: string): Promise<YoutubeVideo> {
@@ -150,7 +180,9 @@ export async function fetchYoutubeList(channelId: string, opts: { q?: string; pa
   const cached = cacheGet(cacheKey);
   if (cached && 'items' in cached) return cached as YoutubeListResponse;
   try {
-    const fresh = await directSearch(channelId, opts);
+    const fresh = opts.q
+      ? await directSearch(channelId, { q: opts.q, pageToken: opts.pageToken, maxResults: opts.maxResults })
+      : await directUploads(channelId, opts);
     cacheSet(cacheKey, fresh, LIST_TTL_MS);
     return fresh;
   } catch {

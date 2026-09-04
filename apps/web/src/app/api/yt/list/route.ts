@@ -41,13 +41,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const pageToken = params.get('pageToken');
   const q = (params.get('q') ?? '').trim().slice(0, 80);
 
-  const upstream = new URL(`${YT_API}/search`);
+  // Sans q : playlist uploads (catalogue complet ~2500 items, 1 unité de
+  // quota). Avec q : search.list (moteur, 100 unités). UC… -> UU… pour la
+  // playlist « uploads » de la chaîne.
+  const upstream = new URL(`${YT_API}/${q ? 'search' : 'playlistItems'}`);
+  if (q) {
+    upstream.searchParams.set('type', 'video');
+    upstream.searchParams.set('order', 'date');
+    upstream.searchParams.set('channelId', channelId);
+    upstream.searchParams.set('q', q);
+  } else {
+    upstream.searchParams.set('playlistId', channelId.startsWith('UC') ? `UU${channelId.slice(2)}` : channelId);
+  }
   upstream.searchParams.set('part', 'snippet');
-  upstream.searchParams.set('type', 'video');
-  upstream.searchParams.set('order', 'date');
-  upstream.searchParams.set('channelId', channelId);
   upstream.searchParams.set('maxResults', String(maxResults));
-  if (q) upstream.searchParams.set('q', q);
   if (pageToken) upstream.searchParams.set('pageToken', pageToken);
   upstream.searchParams.set('key', key);
 
@@ -70,11 +77,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ message: 'Quota YouTube épuisé, réessayez plus tard' }, { status: 429 });
       }
     } catch { /* corps illisible */ }
-    console.log(`[yt/list] ${response.status} url=${upstream.toString()} server=${response.headers.get('server') ?? '?'} cf-ray=${response.headers.get('cf-ray') ?? '-'} alt-svc=${(response.headers.get('alt-svc') ?? '-').slice(0, 40)}`);
     return NextResponse.json({ message: `YouTube a répondu ${response.status}` }, { status: 502 });
   }
   let payload: {
-    items?: Array<{ id?: { videoId?: unknown }; snippet?: { title?: unknown; description?: unknown; publishedAt?: unknown; thumbnails?: unknown } }>;
+    items?: Array<{ id?: { videoId?: unknown }; snippet?: { title?: unknown; description?: unknown; publishedAt?: unknown; thumbnails?: unknown; resourceId?: { videoId?: unknown } } }>;
     nextPageToken?: unknown;
   };
   try {
@@ -84,7 +90,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
   const items = (Array.isArray(payload?.items) ? payload.items : [])
     .map((entry) => {
-      const videoId = entry?.id?.videoId;
+      const videoId = entry?.id?.videoId ?? entry?.snippet?.resourceId?.videoId;
       if (typeof videoId !== 'string' || !videoId) return null;
       return {
         id: videoId,
