@@ -8,7 +8,7 @@
 import { EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import type { YoutubeVideo } from '@mbolo/contracts';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useMemo } from 'react';
+import { Suspense, useCallback, useEffect, useMemo } from 'react';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { YoutubeListResponse } from '@mbolo/contracts';
 import { useYoutubePlay, useYoutubeVideo } from '../../../../../shared/api/queries';
@@ -103,68 +103,28 @@ function YoutubeDetailContent() {
     ? progress.position
     : 0;
   const playUrls = playQuery.data?.urls ?? [];
+  const playing = playUrls.length > 0;
+
+  // Arrêt : démonte le Player et purge la requête de flux (bouton ⏹ du hero).
+  const stopPlayback = useCallback((): void => {
+    queryClient.removeQueries({ queryKey: ['vod-youtube-play', videoId] });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [queryClient, videoId]);
+
+  // Démarrage : résout le flux puis replie en haut de page (le Player prend
+  // la place du hero).
+  const startPlayback = useCallback((): void => {
+    void playQuery.refetch();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [playQuery.refetch]);
 
   return (
     <div className="pb-10">
-      {/* Hero Netflix : backdrop plein cadre, dégradés, titre + actions. */}
+      {/* Hero Netflix : backdrop + actions. Dès que la lecture démarre, le
+          Player prend SA place (aucun double cadre vidéo à l'écran). */}
       <section className="relative -mt-px h-[340px] sm:h-[400px] md:h-[480px]">
-        {backdropUrl ? (
-          <img src={backdropUrl} alt="" className="absolute inset-0 h-full w-full object-cover object-top opacity-85" />
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0f] via-black/50 to-black/10" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/20 to-transparent" />
-
-        <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-6xl px-4 pb-6 md:pb-8">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
-            <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>
-            <span>Nollywood · Aforevo</span>
-            {item.duration !== null && item.duration > 0 && <span>{formatTime(item.duration)}</span>}
-            {item.publishedAt && <span className="hidden sm:inline">{new Date(item.publishedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>}
-          </div>
-          <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white drop-shadow-lg md:text-5xl">{item.title}</h1>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => playQuery.refetch()}
-              disabled={playQuery.isFetching}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-              {resumePct !== null ? 'Reprendre' : 'Lecture'}
-            </button>
-            <FavoriteButton
-              label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
-              isActive={isFavorite}
-              onToggle={() => toggleFavorite(progressId)}
-            />
-          </div>
-          {resumePct !== null && (
-            <div className="mt-3 max-w-xs">
-              <div className="h-1 overflow-hidden rounded-full bg-white/20">
-                <div className="h-full bg-accent" style={{ width: `${resumePct}%` }} />
-              </div>
-              <p className="mt-1 text-xs text-white/70">{resumePct} % vus · reprise à {formatTime(progress!.position)}</p>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Lecteur maison : monté seulement quand l'utilisateur lance la lecture
-          (autoplay policies) — bouton Lecture du hero déclenche la résolution
-          du flux puis le montage. */}
-      {playQuery.isFetching && playUrls.length === 0 && (
-        <div className="mx-auto mt-8 flex w-full max-w-6xl justify-center px-4 py-12"><Spinner /></div>
-      )}
-      {playQuery.isError && (
-        <div className="mx-auto mt-8 w-full max-w-6xl px-4">
-          <EmptyState title="Lecture indisponible" hint={playQuery.error instanceof Error ? playQuery.error.message : 'Flux introuvable pour cette vidéo.'} />
-        </div>
-      )}
-      {playUrls.length > 0 && (
-        <div className="mx-auto mt-8 w-full max-w-6xl px-4">
-          <div className="aspect-video w-full overflow-hidden rounded-xl bg-black shadow-2xl" data-player-chrome>
+        {playing ? (
+          <div className="absolute inset-0 [&>div]:h-full [&>div]:w-full [&>div>div]:h-full [&>div>div]:w-full bg-black" data-player-chrome>
             <Player
               key={videoId}
               urls={playUrls}
@@ -177,6 +137,63 @@ function YoutubeDetailContent() {
               autoPlay
             />
           </div>
+        ) : (
+          <>
+            {backdropUrl ? (
+              <img src={backdropUrl} alt="" className="absolute inset-0 h-full w-full object-cover object-top opacity-85" />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0f] via-black/50 to-black/10" />
+            <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/20 to-transparent" />
+          </>
+        )}
+
+        <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-6xl px-4 pb-6 md:pb-8">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
+            <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>
+            <span>Nollywood · Aforevo</span>
+            {item.duration !== null && item.duration > 0 && <span>{formatTime(item.duration)}</span>}
+            {item.publishedAt && <span className="hidden sm:inline">{new Date(item.publishedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>}
+          </div>
+          {!playing && <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white drop-shadow-lg md:text-5xl">{item.title}</h1>}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {playQuery.isFetching && !playing ? (
+              <button type="button" className="btn btn-primary" disabled>
+                <Spinner />
+                Résolution du flux…
+              </button>
+            ) : playing ? (
+              <button type="button" className="btn btn-primary" onClick={stopPlayback}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
+                Arrêter
+              </button>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={startPlayback}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                {resumePct !== null ? 'Reprendre' : 'Lecture'}
+              </button>
+            )}
+            <FavoriteButton
+              label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
+              isActive={isFavorite}
+              onToggle={() => toggleFavorite(progressId)}
+            />
+          </div>
+          {!playing && resumePct !== null && (
+            <div className="mt-3 max-w-xs">
+              <div className="h-1 overflow-hidden rounded-full bg-white/20">
+                <div className="h-full bg-accent" style={{ width: `${resumePct}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-white/70">{resumePct} % vus · reprise à {formatTime(progress!.position)}</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {playQuery.isError && !playing && (
+        <div className="mx-auto mt-8 w-full max-w-6xl px-4">
+          <EmptyState title="Lecture indisponible" hint={playQuery.error instanceof Error ? playQuery.error.message : 'Flux introuvable pour cette vidéo.'} />
         </div>
       )}
 
