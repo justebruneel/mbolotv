@@ -91,7 +91,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     } catch {
       continue;
     }
-    if (!response.ok) continue;
+    if (!response.ok) {
+      lastStatus = { client: String((client.context as { client?: { clientName?: unknown } }).client?.clientName ?? '?'), status: `HTTP ${response.status}`, reason: (await response.text().catch(() => '')).slice(0, 140) };
+      continue;
+    }
     let playerResponse: {
       playabilityStatus?: { status?: unknown; reason?: unknown };
       streamingData?: { formats?: Array<{ itag?: unknown; url?: unknown; mimeType?: unknown }>; adaptiveFormats?: Array<{ itag?: unknown; url?: unknown; mimeType?: unknown }>; expiresInSeconds?: unknown };
