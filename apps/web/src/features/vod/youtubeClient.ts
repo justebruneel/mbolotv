@@ -1,6 +1,7 @@
 'use client';
 
 import type { YoutubeListResponse, YoutubeVideo } from '@mbolo/contracts';
+import { proxiedThumbUrl } from './youtubeThumb';
 
 // Accès direct à YouTube Data v3 depuis le navigateur (onglet Nollywood).
 // Pourquoi en direct et pas via nos serveurs ? Les egress serveurs
@@ -52,7 +53,7 @@ function pickThumbnail(thumbnails: unknown): string | null {
   const record = thumbnails as Record<string, { url?: unknown }>;
   for (const quality of ['maxres', 'standard', 'high', 'medium', 'default']) {
     const url = record[quality]?.url;
-    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return url;
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return proxiedThumbUrl(url);
   }
   return null;
 }

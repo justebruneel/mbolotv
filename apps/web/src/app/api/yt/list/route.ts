@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { proxiedThumbUrl } from '@/features/vod/youtubeThumb';
 
 // Proxy YouTube Data v3 côté Vercel (onglet Nollywood) : même contrat que la
 // route Worker /api/vod/youtube (mise en place car l'egress du Worker vers
@@ -23,7 +24,7 @@ function pickThumbnail(thumbnails: unknown): string | null {
   const record = thumbnails as Record<string, { url?: unknown }>;
   for (const quality of ['maxres', 'standard', 'high', 'medium', 'default']) {
     const url = record[quality]?.url;
-    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return url;
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return proxiedThumbUrl(url);
   }
   return null;
 }

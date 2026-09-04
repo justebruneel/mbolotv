@@ -37,11 +37,18 @@ function channelAllowlist(env) {
     .filter(Boolean);
 }
 
+// Miniatures servies via le proxy Vercel /api/yt/img : les FAI qui filtrent
+// les SNI i.ytimg.com/youtube.com (handshake TLS tué) empêchent le chargement
+// direct côté navigateur. Voir apps/web/src/features/vod/youtubeThumb.ts.
+const YTIMG_PROXY = (videoId, file) => `/api/yt/img?id=${videoId}&q=${file.startsWith('maxres') ? 'maxres' : file.startsWith('sd') ? 'sd' : file.startsWith('mq') ? 'mq' : 'hq'}`;
+
 function pickThumbnail(thumbnails) {
   if (!thumbnails || typeof thumbnails !== 'object') return null;
   for (const quality of ['maxres', 'standard', 'high', 'medium', 'default']) {
     const url = thumbnails[quality]?.url;
-    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return url;
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) continue;
+    const match = /i\.ytimg\.com\/vi\/([A-Za-z0-9_-]{11})\/([a-z]+default)\.jpg/i.exec(url);
+    return match ? YTIMG_PROXY(match[1], match[2]) : url;
   }
   return null;
 }

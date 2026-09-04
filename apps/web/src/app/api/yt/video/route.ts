@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { proxiedThumbUrl } from '@/features/vod/youtubeThumb';
 
 // Fiche vidéo YouTube Data v3 côté Vercel (même motif que /api/yt/list) :
 // l'egress Worker vers googleapis répond 404 vide. Clé via YOUTUBE_API_KEY
@@ -15,7 +16,7 @@ function pickThumbnail(thumbnails: unknown): string | null {
   const record = thumbnails as Record<string, { url?: unknown }>;
   for (const quality of ['maxres', 'standard', 'high', 'medium', 'default']) {
     const url = record[quality]?.url;
-    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return url;
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return proxiedThumbUrl(url);
   }
   return null;
 }
