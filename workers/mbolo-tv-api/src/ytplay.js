@@ -17,18 +17,18 @@ const INNERTUBE_CLIENTS = [
     key: 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
     context: { client: { clientName: 'ANDROID', clientVersion: '19.09.37', androidSdkVersion: 30, osName: 'Android', osVersion: '11', hl: 'fr', gl: 'GA' } },
     headers: {
-      'user-agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+      'user-agent': 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
       'x-youtube-client-name': '3',
-      'x-youtube-client-version': '19.09.37',
+      'x-youtube-client-version': '21.26.364',
     },
   },
   {
     key: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
     context: { client: { clientName: 'IOS', clientVersion: '19.29.1', deviceMake: 'Apple', deviceModel: 'iPhone16,2', osName: 'iPhone', osVersion: '17.5.1.21F90', hl: 'fr', gl: 'GA' } },
     headers: {
-      'user-agent': 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)',
+      'user-agent': 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
       'x-youtube-client-name': '5',
-      'x-youtube-client-version': '19.29.1',
+      'x-youtube-client-version': '21.26.4',
     },
   },
 ];
