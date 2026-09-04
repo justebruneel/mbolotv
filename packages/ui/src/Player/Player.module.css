@@ -110,10 +110,26 @@
   left: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 10px 12px;
   background: linear-gradient(transparent, oklch(0.10 0.018 260 / 0.72));
   z-index: 10;
+}
+
+/* Piste fixe pleine largeur (le temps est sorti du flux de la piste —
+   auparavant il « chevauchait » le remplissage). Hauteur 5px -> 7px au
+   survol pour une meilleure précision de seek. */
+.seekTrack {
+  position: relative;
+  flex: 1 1 auto;
+  height: 5px;
+  border-radius: 999px;
+  background: oklch(1 0 0 / 0.16);
+  transition: height var(--mbolo-duration-fast) var(--mbolo-ease-out);
+}
+
+.seekBar:hover .seekTrack {
+  height: 7px;
 }
 
 .seekSlider {
@@ -127,14 +143,67 @@
   z-index: 2;
 }
 
+/* Zone déjà téléchargée (buffered) : gris clair derrière le remplissage. */
+.seekBuffered {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 999px;
+  background: oklch(1 0 0 / 0.25);
+  pointer-events: none;
+}
+
 .seekFill {
-  height: 3px;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 100%;
   border-radius: 999px;
   background: var(--mbolo-accent);
   pointer-events: none;
 }
 
+/* Pouce de progression : visible uniquement au survol de la barre. */
+.seekThumb {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--mbolo-accent);
+  border: 2px solid oklch(1 0 0 / 0.9);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity var(--mbolo-duration-fast) var(--mbolo-ease-out);
+  pointer-events: none;
+  box-shadow: 0 1px 4px oklch(0.02 0.01 260 / 0.55);
+}
+
+.seekBar:hover .seekThumb {
+  opacity: 1;
+}
+
+/* Bulle de prévisualisation du temps cible au survol. */
+.seekHover {
+  position: absolute;
+  bottom: 14px;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border: 1px solid var(--mbolo-border);
+  border-radius: 8px;
+  background: oklch(0.10 0.018 260 / 0.95);
+  color: var(--mbolo-text);
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .seekTime {
+  flex: 0 0 auto;
   font-size: 0.72rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -827,6 +896,9 @@
 /* Seekbar indéterminée (durée inconnue) : pointillés animés discrets. */
 .seekBarIndeterminate {
   background: linear-gradient(transparent, oklch(0.10 0.018 260 / 0.85));
+}
+.seekBarIndeterminate .seekTrack {
+  background: oklch(1 0 0 / 0.10);
 }
 .seekBarIndeterminate .seekFill {
   background: repeating-linear-gradient(90deg, var(--mbolo-accent) 0 14px, transparent 14px 22px);
