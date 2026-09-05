@@ -98,6 +98,24 @@ function YoutubeDetailContent() {
     };
   }, [item?.title, item?.posterUrl, progressId, recordVodProgress, lastWriteRef]);
 
+  // Actions Lecture/Arrêt : déclarées AVANT les early-returns — les
+  // useCallback sont des hooks, la même règle que startAt ci-dessus s'applique
+  // (depuis « Reprendre », cache vide : render 1 = spinner, render 2 = fiche ;
+  // un hook après un return ferait varier le nombre de hooks -> React #310).
+  const startPlayback = useCallback((): void => {
+    const entry = useSettingsStore.getState().vodProgress[progressId];
+    const pos = entry && entry.duration > 0 && entry.position > 30 && entry.position < entry.duration - 30 ? entry.position : 0;
+    setStartAt(pos);
+    void playQuery.refetch();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [playQuery.refetch, progressId]);
+
+  // Arrêt : démonte le Player et purge la requête de flux (bouton ⏹ du hero).
+  const stopPlayback = useCallback((): void => {
+    queryClient.removeQueries({ queryKey: ['vod-youtube-play', videoId] });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [queryClient, videoId]);
+
   if (!videoId) return <EmptyState title="Contenu introuvable" />;
   if (itemQuery.isLoading && !item) return <div className="flex justify-center py-24"><Spinner /></div>;
   if (!item) return <EmptyState title="Contenu introuvable" hint="Cette vidéo n'est plus disponible." />;
@@ -110,21 +128,6 @@ function YoutubeDetailContent() {
     : null;
   const playUrls = playQuery.data?.urls ?? [];
   const playing = playUrls.length > 0;
-
-  const refetchPlay = playQuery.refetch;
-  const startPlayback = useCallback((): void => {
-    const entry = useSettingsStore.getState().vodProgress[progressId];
-    const pos = entry && entry.duration > 0 && entry.position > 30 && entry.position < entry.duration - 30 ? entry.position : 0;
-    setStartAt(pos);
-    void refetchPlay();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [refetchPlay, progressId]);
-
-  // Arrêt : démonte le Player et purge la requête de flux (bouton ⏹ du hero).
-  const stopPlayback = useCallback((): void => {
-    queryClient.removeQueries({ queryKey: ['vod-youtube-play', videoId] });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [queryClient, videoId]);
 
   return (
     <div className="pb-10">
