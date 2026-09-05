@@ -16,6 +16,7 @@ import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
 import { useYoutubeFavoritesStore, youtubeProgressId } from '../../../../../shared/stores/youtubeFavorites';
 import { FavoriteButton } from '@mbolo/ui';
+import { formatPublishedRelative } from '../../../../../shared/utils/formatPublishedRelative';
 
 function formatTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -126,6 +127,7 @@ function YoutubeDetailContent() {
   const resumePct = progress && progress.duration > 0 && progress.position > 30
     ? Math.min(100, Math.round((progress.position / progress.duration) * 100))
     : null;
+  const publishedLabel = item.publishedAt ? formatPublishedRelative(item.publishedAt) : null;
   const playUrls = playQuery.data?.urls ?? [];
   const playing = playUrls.length > 0;
 
@@ -135,7 +137,7 @@ function YoutubeDetailContent() {
           Player prend SA place SEUL dans un cadre 16:9 natif (pas de hack de
           taille : forcer h-full sur les enfants du lecteur étire la .seekBar
           et son dégradé sombre sur toute l'image => rendu sombre). */}
-      <section className={playing ? 'relative z-0 -mt-px aspect-video w-full bg-black' : 'relative z-0 -mt-px h-[340px] sm:h-[400px] md:h-[480px]'}>
+      <section className={playing ? 'relative z-0 -mt-px aspect-video w-full bg-black' : 'relative z-0 -mt-px h-[240px] sm:h-[340px] md:h-[400px] lg:h-[480px]'}>
         {playing ? (
           <div className="absolute inset-0 bg-black" data-player-chrome>
             <Player
@@ -160,7 +162,10 @@ function YoutubeDetailContent() {
             <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0f] via-black/50 to-black/10" />
             <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/20 to-transparent" />
 
-            <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-6xl px-4 pb-6 md:pb-8">
+            {/* Sur mobile le hero ne garde que l'image : le titre + méta sont
+                répétés en section détail dessous (lisible, jamais écrasé). Sur
+                ≥ md le titre reste incrusté en bas du hero, façon Netflix. */}
+            <div className="absolute inset-x-0 bottom-0 mx-auto hidden w-full max-w-6xl px-4 pb-6 md:block md:pb-8">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
                 <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>
                 <span>Nollywood · Aforevo</span>
@@ -199,14 +204,15 @@ function YoutubeDetailContent() {
         )}
       </section>
 
-      {/* Barre de page pendant la lecture : Arrêter + Favori, SOUS le lecteur
-          (le Player garde ses propres contrôles intacts). z-10 au-dessus du
-          lecteur (z-0) : aucun chevauchement flottant possible, et marges
-          généreuses pour empiler proprement la section détail dessous. */}
+      {/* Barre de page pendant la lecture : Arrêter + Favori, SOUS le lecteur.
+          sticky top-[56px] : le header de l'app est fixe (56 px mobile) — au
+          scroll, la barre se cale dessous au lieu de défiler hors écran ; le
+          lecteur (plus haut dans la page) reste visible en scrollant.
+          z-30 : sous le header (z-50), au-dessus du contenu. */}
       {playing && (
-        <div className="relative z-10 mx-auto mt-4 flex w-full max-w-6xl flex-wrap items-center gap-3 px-4">
-          <button type="button" className="btn btn-primary" onClick={stopPlayback}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
+        <div className="sticky top-[56px] z-30 mx-auto mt-4 flex w-full max-w-6xl flex-wrap items-center gap-3 bg-[var(--mbolo-bg)] px-4 py-2 shadow-sm">
+          <button type="button" className="btn btn-primary btn-sm" onClick={stopPlayback}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
             Arrêter
           </button>
           <FavoriteButton
@@ -214,7 +220,7 @@ function YoutubeDetailContent() {
             isActive={isFavorite}
             onToggle={() => toggleFavorite(progressId)}
           />
-          <span className="text-xs text-muted">Nollywood · Aforevo{item.duration !== null && item.duration > 0 ? ` · ${formatTime(item.duration)}` : ''}</span>
+          <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">{item.title}</span>
         </div>
       )}
 
@@ -224,23 +230,62 @@ function YoutubeDetailContent() {
         </div>
       )}
 
-      {/* Détail : affiche + synopsis, même langage que la fiche VOD Xtream.
-         relative z-0 : reste sous la barre d'actions (z-10), empilement net. */}
-      <div className="relative z-0 mx-auto w-full max-w-6xl px-4">
-        <div className="mt-8 flex flex-col gap-6 border-t border-border/60 pt-6 md:flex-row">
-          <div className="w-36 shrink-0 md:w-48">
-            <div className="aspect-video overflow-hidden rounded-xl border border-border bg-surface shadow-lg">
-              {item.posterUrl ? (
-                <img src={item.posterUrl} alt={`Affiche de ${item.title}`} className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full items-center justify-center text-muted/40"><Icon.Film size={40} /></div>
-              )}
+      {/* Détail : sur mobile le titre + méta + actions passent SOUS le hero
+          (le hero ne garde que l'image — un titre long y est écrasé et
+          déborde), puis affiche + synopsis côte à côte sur desktop, empilés
+          sur mobile. */}
+      <div className="mx-auto w-full max-w-6xl px-4">
+        <div className="mt-4 md:hidden">
+          <p className="text-lg font-bold leading-snug">{item.title}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+            <span>Nollywood · Aforevo</span>
+            {item.duration !== null && item.duration > 0 && <span>{formatTime(item.duration)}</span>}
+            {publishedLabel && <span>{publishedLabel}</span>}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {playQuery.isFetching ? (
+              <button type="button" className="btn btn-primary" disabled>
+                <Spinner />
+                Résolution du flux…
+              </button>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={startPlayback}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                {resumePct !== null ? 'Reprendre' : 'Lecture'}
+              </button>
+            )}
+            <FavoriteButton
+              label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
+              isActive={isFavorite}
+              onToggle={() => toggleFavorite(progressId)}
+            />
+          </div>
+          {resumePct !== null && (
+            <div className="mt-3 max-w-xs">
+              <div className="h-1 overflow-hidden rounded-full bg-white/20">
+                <div className="h-full bg-accent" style={{ width: `${resumePct}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-muted">{resumePct} % vus · reprise à {formatTime(progress!.position)}</p>
             </div>
+          )}
+        </div>
+
+        <div className="mt-4 flex flex-col gap-4 border-t border-border/60 pt-4 md:mt-8 md:flex-row md:gap-6 md:pt-6">
+          <div className="aspect-video w-full shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-lg sm:w-64 md:w-48">
+            {item.posterUrl ? (
+              <img src={item.posterUrl} alt={`Affiche de ${item.title}`} className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full items-center justify-center text-muted/40"><Icon.Film size={40} /></div>
+            )}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="whitespace-pre-line text-sm leading-relaxed text-muted">
-              {item.description ? `${item.description.slice(0, 800)}${item.description.length > 800 ? '…' : ''}` : 'Synopsis non disponible pour ce film.'}
-            </p>
+            {item.description ? (
+              <p className="whitespace-pre-line text-sm leading-relaxed text-muted">
+                {`${item.description.slice(0, 800)}${item.description.length > 800 ? '…' : ''}`}
+              </p>
+            ) : (
+              <p className="text-sm leading-relaxed text-muted">Synopsis non disponible pour ce film.</p>
+            )}
           </div>
         </div>
       </div>

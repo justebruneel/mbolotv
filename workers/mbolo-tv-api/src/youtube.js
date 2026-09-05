@@ -23,6 +23,16 @@ const LIST_CACHE_TTL_S = 3600;
 const VIDEO_CACHE_TTL_S = 24 * 3600;
 const YT_TIMEOUT_MS = 15_000;
 
+// L'API Data v3 colle parfois l'identifiant de la vidéo en toute fin de
+// description (artefact des uploads Aforevo). On le retire avant exposition.
+function stripTrailingVideoId(description, videoId) {
+  if (!description) return description;
+  const trimmed = description.replace(/\s+$/, '');
+  if (!videoId || !trimmed.endsWith(videoId)) return description;
+  const rest = trimmed.slice(0, -videoId.length).replace(/\s+$/, '');
+  return rest.length > 0 ? rest : description;
+}
+
 function jsonError(message, status, cors = {}) {
   return new Response(JSON.stringify({ message }), {
     status,
@@ -162,7 +172,10 @@ function normalizeListItem(entry) {
   return {
     id: videoId,
     title: typeof entry.snippet?.title === 'string' ? entry.snippet.title : 'Sans titre',
-    description: typeof entry.snippet?.description === 'string' ? entry.snippet.description : null,
+    description: stripTrailingVideoId(
+      typeof entry.snippet?.description === 'string' ? entry.snippet.description : null,
+      videoId,
+    ),
     posterUrl: pickThumbnail(entry.snippet?.thumbnails),
     publishedAt: typeof entry.snippet?.publishedAt === 'string' ? entry.snippet.publishedAt : null,
     duration: null,
@@ -225,7 +238,10 @@ export async function serveYoutubeVideo(env, videoId, cors = {}) {
   const normalized = {
     id: videoId,
     title: typeof item.snippet?.title === 'string' ? item.snippet.title : 'Sans titre',
-    description: typeof item.snippet?.description === 'string' ? item.snippet.description : null,
+    description: stripTrailingVideoId(
+      typeof item.snippet?.description === 'string' ? item.snippet.description : null,
+      videoId,
+    ),
     posterUrl: pickThumbnail(item.snippet?.thumbnails),
     publishedAt: typeof item.snippet?.publishedAt === 'string' ? item.snippet.publishedAt : null,
     duration: parseDuration(item.contentDetails?.duration),

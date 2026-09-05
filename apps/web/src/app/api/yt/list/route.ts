@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxiedThumbUrl } from '@/features/vod/youtubeThumb';
+import { stripTrailingVideoId } from '@/features/vod/youtubeDescription';
 
 // Proxy YouTube Data v3 côté Vercel (onglet Nollywood) : même contrat que la
 // route Worker /api/vod/youtube (mise en place car l'egress du Worker vers
@@ -95,7 +96,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return {
         id: videoId,
         title: typeof entry.snippet?.title === 'string' ? entry.snippet.title : 'Sans titre',
-        description: typeof entry.snippet?.description === 'string' ? entry.snippet.description : null,
+        description: stripTrailingVideoId(
+          typeof entry.snippet?.description === 'string' ? entry.snippet.description : null,
+          videoId,
+        ),
         posterUrl: pickThumbnail(entry.snippet?.thumbnails),
         publishedAt: typeof entry.snippet?.publishedAt === 'string' ? entry.snippet.publishedAt : null,
         duration: null,

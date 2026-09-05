@@ -2,6 +2,7 @@
 
 import type { YoutubeListResponse, YoutubeVideo } from '@mbolo/contracts';
 import { proxiedThumbUrl } from './youtubeThumb';
+import { stripTrailingVideoId } from './youtubeDescription';
 
 // Accès direct à YouTube Data v3 depuis le navigateur (onglet Nollywood).
 // Pourquoi en direct et pas via nos serveurs ? Les egress serveurs
@@ -72,7 +73,10 @@ function normalizeListPayload(payload: RawListPayload): YoutubeListResponse {
       return {
         id: videoId,
         title: typeof entry.snippet?.title === 'string' ? entry.snippet.title : 'Sans titre',
-        description: typeof entry.snippet?.description === 'string' ? entry.snippet.description : null,
+        description: stripTrailingVideoId(
+          typeof entry.snippet?.description === 'string' ? entry.snippet.description : null,
+          videoId,
+        ),
         posterUrl: pickThumbnail(entry.snippet?.thumbnails),
         publishedAt: typeof entry.snippet?.publishedAt === 'string' ? entry.snippet.publishedAt : null,
         duration: null,
@@ -159,7 +163,10 @@ async function directVideo(videoId: string): Promise<YoutubeVideo> {
   return {
     id: videoId,
     title: typeof item.snippet?.title === 'string' ? item.snippet.title : 'Sans titre',
-    description: typeof item.snippet?.description === 'string' ? item.snippet.description : null,
+    description: stripTrailingVideoId(
+      typeof item.snippet?.description === 'string' ? item.snippet.description : null,
+      videoId,
+    ),
     posterUrl: pickThumbnail(item.snippet?.thumbnails),
     publishedAt: typeof item.snippet?.publishedAt === 'string' ? item.snippet.publishedAt : null,
     duration: match ? Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0) : null,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxiedThumbUrl } from '@/features/vod/youtubeThumb';
+import { stripTrailingVideoId } from '@/features/vod/youtubeDescription';
 
 // Fiche vidéo YouTube Data v3 côté Vercel (même motif que /api/yt/list) :
 // l'egress Worker vers googleapis répond 404 vide. Clé via YOUTUBE_API_KEY
@@ -69,7 +70,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json({
     id: videoId,
     title: typeof item.snippet?.title === 'string' ? item.snippet.title : 'Sans titre',
-    description: typeof item.snippet?.description === 'string' ? item.snippet.description : null,
+    description: stripTrailingVideoId(
+      typeof item.snippet?.description === 'string' ? item.snippet.description : null,
+      videoId,
+    ),
     posterUrl: pickThumbnail(item.snippet?.thumbnails),
     publishedAt: typeof item.snippet?.publishedAt === 'string' ? item.snippet.publishedAt : null,
     duration: match ? Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0) : null,
