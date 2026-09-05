@@ -15,6 +15,8 @@ Le navigateur ne touche jamais le CDN tiers (403 sans `Referer`, CORS, SNI).
 |---|---|---|---|
 | Mixdrop | `/e/{id}` → `MDCore.wurl` → `mxcontent.net` signé | id nu, `/e/`, `/f/` | ✅ validé live |
 | DoodStream | embed → `/pass_md5/…` → préfixe CDN + `?token=&expiry=` | URL complète (dood.*, wrappers kakaflix/kokoflix) ou code nu | ✅ pipeline validé en mock (403 datacenter depuis le sandbox — le relais résidentiel de prod contourne) |
+| Voe | `/e/{id}` → JSON `application/json` → ROT13 → séparateurs → atob → −3 → reverse → atob → JSON (`source` HLS préféré) | URL complète (miroir quelconque) ou code nu | ✅ validé live (master HLS + probe + titre) |
+| Uqload | `/embed-{id}.html` → packer Dean Edwards → `file:[{file}]` (HLS) | URL complète ou code nu | ⚠️ extraction validée live, probe 403 nginx (IP datacenter — à confirmer via relais) |
 
 ## Ajouter un host (Voe, Uptostream, …)
 
@@ -63,5 +65,43 @@ Helpers partagés : `http.js` (`fetchEmbedText` cascade relais→direct,
   Séries refusées (`INVALID`, films d'abord).
 - Sonde : `node scripts/probe-fiche.mjs "<url-fiche>"`.
 - Tests : `node --test workers/mbolo-tv-api/test/scrapers.test.mjs`.
+
+## Stockage : ExternalTitle + ExternalSource
+
+Migration `20260906000000_add_external_titles` (Prisma + SQL brut Worker) :
+- `ExternalTitle` (global comme `VodFolder`) : site, siteRef (ex. newsid),
+  titre, année, affiches, trailer — unique(site, siteRef).
+- `ExternalSource` : titleId (cascade), host, embedUrl, finalUrl (wrapper
+  suivi), versions[], sortOrder, isActive, lastStatus
+  (`UNKNOWN|OK|DEAD|ERROR`), lastError, lastCheckedAt.
+- Aucun lien direct éphémère stocké : la lecture repasse toujours par
+  `/api/x/play` (résolution au clic).
+
+## Console : coller fiche → aperçu → publier
+
+Page Catalogue VOD, section « Titres externes » :
+1. Coller l'URL → `GET /api/owner/vod/external/preview` (aperçu métas +
+   lecteurs, cases cochées = hosts extractibles).
+2. Publier → `POST …/external/publish` : re-scrape, **probe chaque lecteur**,
+   crée le titre (dédupe site+siteRef) et les sources saines ; les morts sont
+   rejetés avec motif, jamais stockés.
+3. Gestion : visibilité, activation, réordonnancement, **revérification
+   immédiate**, suppressions (titre = cascade sources). Audit `vod.external_*`.
+4. Public app (futur lecteur) : `GET /api/x/titles`, `GET /api/x/titles/:id`
+   (sources actives OK/UNKNOWN + `playRef` pour `/api/x/play`).
+
+## Santé continue (cron)
+
+Slot `*/10` du Worker : `checkExternalBatch(env, 8)` — les 8 sources actives
+les moins vérifiées, en séquentiel (pas de rafale anti-bot), statut persisté.
+Le lecteur bascule sur les sources saines ; les `DEAD` sortent du catalogue
+public mais restent gérables en console.
+
+## Parité Nest (auto-hébergé)
+
+Modèles Prisma + migration partagés. Nest couvre CRUD/gestion et lectures
+publiques (`ExternalController` `/api/x/titles*`, endpoints owner Prisma).
+Aperçu/publication/revérification (scrape + probe = code Worker) répondent
+**501** explicite : le flux d'import complet tourne sur le Worker.
 - Quand un host casse (player changé) : le symptôme est `DEAD`/`wurl` absent —
   mettre à jour l'adapter seul, kill-switch = retirer du registre.

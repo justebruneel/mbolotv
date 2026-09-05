@@ -1,4 +1,5 @@
 import type {
+  FichePreview,
   AccessCode,
   AccessCodeCreateInput,
   Announcement,
@@ -20,6 +21,11 @@ import type {
   OwnerMe,
   OwnerProfile,
   OwnerProfileUpdateInput,
+  OwnerExternalPublishInput,
+  OwnerExternalPublishResponse,
+  OwnerExternalSourceUpdateInput,
+  OwnerExternalTitle,
+  OwnerExternalTitleUpdateInput,
   OwnerVodAvailableCategory,
   OwnerVodCatalog,
   OwnerVodFolderCreateInput,
@@ -114,6 +120,24 @@ export const ownerApi = {
       create: (folderId: string, input: OwnerVodYoutubeCreateInput): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/folders/${folderId}/youtube`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerVodCatalog>),
       update: (id: string, input: OwnerVodYoutubeUpdateInput): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/youtube/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerVodCatalog>),
       remove: (id: string): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/youtube/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<OwnerVodCatalog>),
+    },
+    // ---- Titres externes (lecteurs tiers) : import depuis fiche + gestion ----
+    external: {
+      preview: (url: string): Promise<FichePreview> => fetch(`${BASE_URL}/owner/vod/external/preview?url=${encodeURIComponent(url)}`, { credentials: 'include' }).then(parseResponse<FichePreview>),
+      publish: (input: OwnerExternalPublishInput): Promise<OwnerExternalPublishResponse> => fetch(`${BASE_URL}/owner/vod/external/publish`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerExternalPublishResponse>),
+      list: (params: { q?: string; limit?: number; offset?: number } = {}): Promise<{ items: OwnerExternalTitle[]; total: number }> => {
+        const search = new URLSearchParams();
+        if (params.q) search.set('q', params.q);
+        if (params.limit != null) search.set('limit', String(params.limit));
+        if (params.offset != null) search.set('offset', String(params.offset));
+        const qs = search.toString();
+        return fetch(`${BASE_URL}/owner/vod/external/titles${qs ? `?${qs}` : ''}`, { credentials: 'include' }).then(parseResponse<{ items: OwnerExternalTitle[]; total: number }>);
+      },
+      updateTitle: (id: string, input: OwnerExternalTitleUpdateInput): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/titles/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<{ ok: true }>),
+      removeTitle: (id: string): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/titles/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<{ ok: true }>),
+      updateSource: (id: string, input: OwnerExternalSourceUpdateInput): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<{ ok: true }>),
+      removeSource: (id: string): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<{ ok: true }>),
+      recheckSource: (id: string): Promise<{ id: string; lastStatus: string; lastError: string | null }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}/recheck`, { method: 'POST', credentials: 'include' }).then(parseResponse<{ id: string; lastStatus: string; lastError: string | null }>),
     },
   },
   profile: (): Promise<OwnerProfile> => fetch(`${BASE_URL}/owner/profile`, { credentials: 'include' }).then(parseResponse<OwnerProfile>),

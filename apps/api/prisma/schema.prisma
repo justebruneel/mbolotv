@@ -256,6 +256,45 @@ model VodYoutubeSource {
   @@unique([folderId, channelId])
   @@index([channelId, isActive])
 }
+// ---- Titres externes (lecteurs tiers Mixdrop/Dood/Voe/Uqload, sans pubs) ----
+// Titre importé depuis une fiche (French Stream, …) : métas + N lecteurs.
+// Catalogue global comme VodFolder (pas d'ownerId) ; la lecture passe par
+// /api/x/play (résolution au clic, jamais de lien direct stocké).
+model ExternalTitle {
+  id String @id @default(cuid())
+  site String
+  siteRef String?
+  title String
+  year Int?
+  posterUrl String?
+  backdropUrl String?
+  trailerYoutubeId String?
+  isVisible Boolean @default(true)
+  sortOrder Int @default(0)
+  createdAt DateTime @default(now())
+  sources ExternalSource[]
+  @@unique([site, siteRef])
+  @@index([isVisible, sortOrder])
+}
+// Un lecteur tiers d'un titre : embed d'origine (+ finale après wrapper).
+// lastStatus : UNKNOWN (jamais vérifié) | OK | DEAD | ERROR.
+model ExternalSource {
+  id String @id @default(cuid())
+  titleId String
+  host String
+  embedUrl String
+  finalUrl String?
+  versions String[] @default([])
+  sortOrder Int @default(0)
+  isActive Boolean @default(true)
+  lastStatus String @default("UNKNOWN")
+  lastError String?
+  lastCheckedAt DateTime?
+  createdAt DateTime @default(now())
+  title ExternalTitle @relation(fields:[titleId], references:[id], onDelete:Cascade)
+  @@unique([titleId, host, embedUrl])
+  @@index([isActive, lastCheckedAt])
+}
 model AuditLog {
   id String @id @default(cuid())
   actorId String?

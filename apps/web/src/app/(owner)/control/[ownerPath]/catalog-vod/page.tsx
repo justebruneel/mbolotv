@@ -3,6 +3,7 @@
 import type { OwnerVodAvailableCategory, OwnerVodCatalog, OwnerVodFolder, OwnerVodItemSummary, VodFolderKind } from '@mbolo/contracts';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ownerApi } from '../../../../../features/owner/api/owner-api';
+import { ExternalTitlesSection } from '../../../../../features/owner/components/external-titles';
 import { ParentPicker } from '../../../../../features/owner/components/parent-picker';
 import { buildChildrenByParent, buildOrderMap, flattenTree, type OrderInfo } from '../../../../../features/owner/components/tree-utils';
 
@@ -619,6 +620,8 @@ export default function VodCatalogControlPage() {
         </select>
         <button className="btn btn-primary" disabled={!rootName.trim() || busy === 'create:root'} onClick={() => { if (rootName.trim()) { void createFolder(null, rootName.trim(), rootKind); setRootName(''); } }}>{busy === 'create:root' ? 'Création…' : 'Créer un dossier'}</button>
       </section>
+
+      <ExternalTitlesSection />
 
       <div className="space-y-4">
         {catalog.folders.map((folder) => (

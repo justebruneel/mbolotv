@@ -1,7 +1,7 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query, Req, UseGuards, HttpException, HttpStatus } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import type { OwnerVodAvailableCategory, OwnerVodCatalog, OwnerVodFolder, OwnerVodFolderCreateInput, OwnerVodFolderUpdateInput, OwnerVodItemAssignInput, OwnerVodItemSummary, OwnerVodRulesPutInput, OwnerVodYoutubeCreateInput, OwnerVodYoutubeSource, OwnerVodYoutubeUpdateInput, VodFolderKind } from '@mbolo/contracts';
-import { ownerVodFolderCreateSchema, ownerVodFolderUpdateSchema, ownerVodItemAssignSchema, ownerVodItemsAddSchema, ownerVodRulesPutSchema, ownerVodYoutubeCreateSchema, ownerVodYoutubeUpdateSchema } from '@mbolo/contracts';
+import type { OwnerExternalSource, OwnerExternalTitle, OwnerVodAvailableCategory, OwnerVodCatalog, OwnerVodFolder, OwnerVodFolderCreateInput, OwnerVodFolderUpdateInput, OwnerVodItemAssignInput, OwnerVodItemSummary, OwnerVodRulesPutInput, OwnerVodYoutubeCreateInput, OwnerVodYoutubeSource, OwnerVodYoutubeUpdateInput, VodFolderKind } from '@mbolo/contracts';
+import { ownerExternalSourceUpdateSchema, ownerExternalTitleUpdateSchema, ownerVodFolderCreateSchema, ownerVodFolderUpdateSchema, ownerVodItemAssignSchema, ownerVodItemsAddSchema, ownerVodRulesPutSchema, ownerVodYoutubeCreateSchema, ownerVodYoutubeUpdateSchema } from '@mbolo/contracts';
 import { z } from 'zod';
 import { getOwnerContext } from '../../common/auth/owner-context';
 import { OwnerAuthGuard } from '../../common/auth/owner-auth.guard';
@@ -349,6 +349,97 @@ export class OwnerVodController {
     await this.prisma.vodYoutubeSource.delete({ where: { id } });
     await this.audit.log(ownerId, 'vod.youtube_delete', 'vod_youtube_source', id, { folderId: source.folderId, channelId: source.channelId });
     return this.catalog(request);
+  }
+
+  // ---- Titres externes (lecteurs tiers) : gestion pure Prisma (miroir du
+  // Worker). Aperçu/publication/revérification exigent les extracteurs
+  // (worker JS) : 501 explicite — la console complète tourne sur le Worker.
+  @Get('external/titles')
+  async listExternalTitles(@Query('q') q?: string, @Query('limit') limit?: string, @Query('offset') offset?: string): Promise<{ items: OwnerExternalTitle[]; total: number }> {
+    const take = Math.min(Math.max(1, Number(limit) || 50), 200);
+    const skip = Math.max(0, Number(offset) || 0);
+    const where = q?.trim() ? { title: { contains: q.trim(), mode: 'insensitive' as const } } : {};
+    const [rows, total] = await Promise.all([
+      this.prisma.externalTitle.findMany({ where, include: { sources: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] } }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }], take, skip }),
+      this.prisma.externalTitle.count({ where }),
+    ]);
+    return {
+      items: rows.map((row) => ({
+        id: row.id, site: row.site, siteRef: row.siteRef, title: row.title, year: row.year, posterUrl: row.posterUrl,
+        isVisible: row.isVisible, sortOrder: row.sortOrder,
+        healthySources: row.sources.filter((source) => source.isActive && (source.lastStatus === 'OK' || source.lastStatus === 'UNKNOWN')).length,
+        deadSources: row.sources.filter((source) => source.lastStatus === 'DEAD').length,
+        sources: row.sources.map((source): OwnerExternalSource => ({
+          id: source.id, titleId: source.titleId, host: source.host, embedUrl: source.embedUrl, finalUrl: source.finalUrl,
+          versions: source.versions, sortOrder: source.sortOrder, isActive: source.isActive,
+          lastStatus: source.lastStatus as OwnerExternalSource['lastStatus'],
+          lastError: source.lastError, lastCheckedAt: source.lastCheckedAt?.toISOString() ?? null,
+        })),
+      })),
+      total,
+    };
+  }
+
+  @Patch('external/titles/:id')
+  async updateExternalTitle(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerExternalTitleUpdateSchema)) input: { title?: string; year?: number | null; posterUrl?: string | null; isVisible?: boolean; sortOrder?: number }): Promise<{ ok: true }> {
+    const ownerId = getOwnerContext(request).userId;
+    const existing = await this.prisma.externalTitle.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Titre introuvable');
+    await this.prisma.externalTitle.update({ where: { id }, data: { ...input } });
+    await this.audit.log(ownerId, 'vod.external_title_update', 'external_title', id, input);
+    return { ok: true };
+  }
+
+  @Delete('external/titles/:id')
+  async deleteExternalTitle(@Req() request: FastifyRequest, @Param('id') id: string): Promise<{ ok: true }> {
+    const ownerId = getOwnerContext(request).userId;
+    const existing = await this.prisma.externalTitle.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Titre introuvable');
+    await this.prisma.externalTitle.delete({ where: { id } });
+    await this.audit.log(ownerId, 'vod.external_title_delete', 'external_title', id);
+    return { ok: true };
+  }
+
+  @Patch('external/sources/:id')
+  async updateExternalSource(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerExternalSourceUpdateSchema)) input: { isActive?: boolean; sortOrder?: number }): Promise<{ ok: true }> {
+    const ownerId = getOwnerContext(request).userId;
+    const existing = await this.prisma.externalSource.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Source introuvable');
+    await this.prisma.externalSource.update({ where: { id }, data: { ...input } });
+    await this.audit.log(ownerId, 'vod.external_source_update', 'external_source', id, input);
+    return { ok: true };
+  }
+
+  @Delete('external/sources/:id')
+  async deleteExternalSource(@Req() request: FastifyRequest, @Param('id') id: string): Promise<{ ok: true }> {
+    const ownerId = getOwnerContext(request).userId;
+    const existing = await this.prisma.externalSource.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Source introuvable');
+    await this.prisma.externalSource.delete({ where: { id } });
+    await this.audit.log(ownerId, 'vod.external_source_delete', 'external_source', id);
+    return { ok: true };
+  }
+
+  private workerOnly(): never {
+    throw new HttpException(
+      'Import/vérification depuis fiche requiert le backend Worker (extracteurs) — voir docs/architecture/external-extractors.md',
+      HttpStatus.NOT_IMPLEMENTED,
+    );
+  }
+
+  @Get('external/preview')
+  previewExternal(): never {
+    return this.workerOnly();
+  }
+
+  @Post('external/publish')
+  publishExternal(): never {
+    return this.workerOnly();
+  }
+
+  @Post('external/sources/:id/recheck')
+  recheckExternal(): never {
+    return this.workerOnly();
   }
 
   private async uniqueSlug(base: string): Promise<string> {

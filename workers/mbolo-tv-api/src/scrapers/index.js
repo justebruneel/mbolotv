@@ -21,22 +21,27 @@ function jsonError(message, status, cors = {}) {
 }
 
 /**
- * GET /api/x/fiche?url=<fiche>
- * Aperçu d'import : métas + lecteurs (wrappers suivis 1 hop), SANS écrire en
- * base. Pas de cache : les fiches changent (ajout/retrait de lecteurs).
+ * Aperçu d'import (niveau données, partagé par la route publique et la
+ * publication owner) : métas + lecteurs, SANS écrire en base.
  */
-export async function serveFichePreview(env, url, cors = {}) {
+export async function previewFiche(env, url) {
   const value = String(url ?? '').trim();
   const adapter = REGISTRY.find((entry) => entry.matchUrl(value) !== null);
   if (!adapter) {
-    return jsonError(
-      `Site non pris en charge (soutenus : ${SUPPORTED_FICHE_SITES.join(', ')})`,
-      400,
-      cors,
-    );
+    const error = new Error(`Site non pris en charge (soutenus : ${SUPPORTED_FICHE_SITES.join(', ')})`);
+    error.status = 400;
+    throw error;
   }
+  return adapter.scrapeFiche(env, value);
+}
+
+/**
+ * GET /api/x/fiche?url=<fiche>
+ * Pas de cache : les fiches changent (ajout/retrait de lecteurs).
+ */
+export async function serveFichePreview(env, url, cors = {}) {
   try {
-    const preview = await adapter.scrapeFiche(env, value);
+    const preview = await previewFiche(env, url);
     return new Response(JSON.stringify(preview), {
       status: 200,
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...cors },

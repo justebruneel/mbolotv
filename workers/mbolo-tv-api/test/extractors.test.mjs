@@ -10,6 +10,13 @@ import { SUPPORTED_HOSTS, serveExternalPlay } from '../src/extractors/index.js';
 import { playResponse } from '../src/play.js';
 import { createHmac } from 'node:crypto';
 import { extractPassMd5, parse as parseDood, resolve as resolveDood } from '../src/extractors/dood.js';
+import { decodePayload, extractPayload, parse as parseVoe, rot13 } from '../src/extractors/voe.js';
+import { extractFileUrl, parse as parseUqload } from '../src/extractors/uqload.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
 describe('errors', () => {
   it('mappe chaque code vers le bon statut HTTP', () => {
@@ -199,10 +206,59 @@ describe('dood resolve (fetch mocké)', () => {
   });
 });
 
+describe('voe', () => {
+  it('parse : URL complète, /e/, code nu, rejets', () => {
+    assert.deepEqual(parseVoe('https://eugenemakedraw.com/e/fah90cksg9ep'), {
+      embedUrl: 'https://eugenemakedraw.com/e/fah90cksg9ep',
+    });
+    assert.deepEqual(parseVoe('https://voe.sx/e/fah90cksg9ep'), { embedUrl: 'https://voe.sx/e/fah90cksg9ep' });
+    assert.deepEqual(parseVoe('fah90cksg9ep'), { code: 'fah90cksg9ep' });
+    for (const bad of ['', 'abc', 'ftp://x.example/e/fah90cksg9ep']) {
+      assert.throws(() => parseVoe(bad), (error) => error instanceof ExtractorError && error.status === 400, JSON.stringify(bad));
+    }
+  });
+  it('rot13 + extractPayload sur HTML réel', () => {
+    assert.equal(rot13('DROH'), 'QEBU');
+    const html = `<script>var source='x';</script><script type="application/json">${JSON.stringify([
+      readFileSync(join(FIXTURES, 'voe-payload.txt'), 'utf8'),
+    ])}</script>`;
+    assert.equal(extractPayload(html).slice(0, 8), 'DROH!!nJ');
+  });
+  it('decodePayload sur vecteur live (Dao/Voe) : source HLS + titre', () => {
+    const payload = readFileSync(join(FIXTURES, 'voe-payload.txt'), 'utf8');
+    const decoded = decodePayload(payload);
+    assert.match(decoded.file, /^https:\/\/.*master\.m3u8\?t=.*&s=\d+&e=\d+/);
+    assert.match(decoded.title, /Dao/);
+  });
+  it('decodePayload illisible → DEAD', () => {
+    assert.throws(() => decodePayload('!!!pas-un-payload!!!'), (error) => error.status === 451);
+  });
+});
+
+describe('uqload', () => {
+  it('parse : URL complète, code nu, rejets', () => {
+    assert.deepEqual(parseUqload('https://uqload.vc/embed-fcr8t4bhlrx1.html'), {
+      embedUrl: 'https://uqload.vc/embed-fcr8t4bhlrx1.html',
+    });
+    assert.deepEqual(parseUqload('fcr8t4bhlrx1'), { code: 'fcr8t4bhlrx1' });
+    for (const bad of ['', 'abc', 'ftp://x.example/embed-fcr8t4bhlrx1.html']) {
+      assert.throws(() => parseUqload(bad), (error) => error instanceof ExtractorError && error.status === 400, JSON.stringify(bad));
+    }
+  });
+  it('extractFileUrl : setup jwplayer file:[{file}] en priorité', () => {
+    assert.equal(
+      extractFileUrl(`jwplayer("v").setup({file:[{file:"https://strm1.uqload.vc/a/b.mp4?t=1"}],image:"https://x/i.jpg"})`),
+      'https://strm1.uqload.vc/a/b.mp4?t=1',
+    );
+    assert.equal(extractFileUrl(`file:"https://strm1.uqload.vc/a.m3u8"`), 'https://strm1.uqload.vc/a.m3u8');
+    assert.equal(extractFileUrl('rien ici'), null);
+  });
+});
+
 describe('registry', () => {
-  it('expose mixdrop et dood', () => {
+  it('expose mixdrop, dood, voe, uqload', () => {
     assert.equal(HOST, 'mixdrop');
-    assert.deepEqual(SUPPORTED_HOSTS, ['mixdrop', 'dood']);
+    assert.deepEqual(SUPPORTED_HOSTS, ['mixdrop', 'dood', 'voe', 'uqload']);
   });
   it('400 sur host inconnu, sans toucher le réseau', async () => {
     const response = await serveExternalPlay({}, 'unknownhost', 'abc123');

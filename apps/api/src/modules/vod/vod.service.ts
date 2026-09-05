@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
+import type { ExternalTitleDetail, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { MetadataService } from '../metadata/metadata.service';
@@ -249,5 +249,45 @@ export class VodService {
       })
       .catch(() => undefined);
     return result;
+  }
+
+  // Titres externes publics (lecteurs tiers) : miroir du Worker (external.js).
+  // La résolution/lecture reste côté Worker (/api/x/play).
+  async listExternalTitles({ q, limit = 48, offset = 0 }: { q?: string; limit?: number; offset?: number }): Promise<ExternalTitlesResponse> {
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 48), 100);
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const where = { isVisible: true, ...(q?.trim() ? { title: { contains: q.trim(), mode: 'insensitive' as const } } : {}) };
+    const [rows, total] = await Promise.all([
+      this.prisma.externalTitle.findMany({
+        where,
+        include: { sources: { where: { isActive: true, lastStatus: { in: ['OK', 'UNKNOWN'] } }, select: { id: true } } },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        take: safeLimit,
+        skip: safeOffset,
+      }),
+      this.prisma.externalTitle.count({ where }),
+    ]);
+    return {
+      items: rows.map((row) => ({ id: row.id, title: row.title, year: row.year, posterUrl: row.posterUrl, healthySources: row.sources.length })),
+      total,
+      hasMore: safeOffset + rows.length < total,
+    };
+  }
+
+  async externalTitleDetail(id: string): Promise<ExternalTitleDetail> {
+    const row = await this.prisma.externalTitle.findFirst({
+      where: { id, isVisible: true },
+      include: { sources: { where: { isActive: true, lastStatus: { in: ['OK', 'UNKNOWN'] } }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] } },
+    });
+    if (!row) throw new NotFoundException('Titre introuvable');
+    return {
+      id: row.id,
+      title: row.title,
+      year: row.year,
+      posterUrl: row.posterUrl,
+      backdropUrl: row.backdropUrl,
+      trailerYoutubeId: row.trailerYoutubeId,
+      sources: row.sources.map((source) => ({ id: source.id, host: source.host, versions: source.versions, playRef: source.finalUrl ?? source.embedUrl })),
+    };
   }
 }

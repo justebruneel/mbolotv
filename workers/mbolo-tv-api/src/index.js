@@ -13,6 +13,7 @@ import * as youtube from "./youtube.js";
 import * as ytplay from "./ytplay.js";
 import * as xplay from "./extractors/index.js";
 import * as xfiche from "./scrapers/index.js";
+import * as external from "./external.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
@@ -582,6 +583,24 @@ async function route(ctx, url) {
     return xfiche.serveFichePreview(env, url.searchParams.get("url") ?? "", ctx.corsHeaders());
   }
 
+  // Titres externes publics (lecteurs tiers) : catalogue visible + détail.
+  // La lecture passe par /api/x/play (résolution au clic).
+  if (path === "/api/x/titles" && method === "GET")
+    return ctx.json(
+      await external.listExternalTitles(env, {
+        q: url.searchParams.get("q") ?? undefined,
+        limit: intParam(url.searchParams.get("limit"), 48, 1, 100),
+        offset: intParam(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER),
+      }),
+    );
+
+  const externalTitleMatch = path.match(/^\/api\/x\/titles\/([^/]+)$/);
+  if (externalTitleMatch && method === "GET") {
+    const item = await external.findExternalTitleById(env, decodeURIComponent(externalTitleMatch[1]));
+    if (!item) return ctx.fail(404, "Titre introuvable");
+    return ctx.json(item);
+  }
+
   const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
 
   if (vodMatch && !vodMatch[3] && method === "GET") {
@@ -730,6 +749,9 @@ export async function scheduled(event, env) {
     } else if (cron === "*/10 * * * *") {
       const key = await importKey(env.ENCRYPTION_KEY);
       console.log("[cron] health:", JSON.stringify(await scanDueVariants(env, key, Number(env.HEALTH_CHECK_BATCH_SIZE ?? 10))));
+      // Santé des lecteurs tiers : 8 sources les moins vérifiées, en
+      // séquentiel (pas de rafale anti-bot). Voir external.checkExternalBatch.
+      console.log("[cron] external:", JSON.stringify(await external.checkExternalBatch(env, 8)));
     } else if (cron === "*/15 * * * *") {
       console.log("[cron] matches:", JSON.stringify(await discoverMatches(env)));
     } else if (cron === "0 5 * * *") {

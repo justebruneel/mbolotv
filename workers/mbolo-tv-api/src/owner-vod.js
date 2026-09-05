@@ -3,6 +3,8 @@
 // réponses). Dossiers en arbre + règles categoryTitle + affectations manuelles
 // + sources YouTube rattachées.
 import { slugify } from './normalize.js';
+import { checkSource, SUPPORTED_HOSTS } from './extractors/index.js';
+import { previewFiche, serveFichePreview } from './scrapers/index.js';
 
 const KINDS = new Set(['MOVIE', 'SERIES', 'BOTH']);
 const CHANNEL_ID_RE = /^UC[A-Za-z0-9_-]{22}$/;
@@ -465,6 +467,185 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     await env.db.query(env, `DELETE FROM "VodYoutubeSource" WHERE id = $1`, [id]);
     await audit(ctx, owner.userId, 'vod.youtube_delete', 'vod_youtube_source', id, { folderId: sourceRows.rows[0].folderId, channelId: sourceRows.rows[0].channelId });
     return ctx.json(await buildOwnerVodCatalog(ctx, owner));
+  }
+
+  // ---- Titres externes (lecteurs tiers) ----
+  // Aperçu d'import depuis une fiche (French Stream, …), sans écriture.
+  if (path === '/api/owner/vod/external/preview' && method === 'GET') {
+    return serveFichePreview(env, url.searchParams.get('url') ?? '', ctx.corsHeaders());
+  }
+
+  // Publication : scrape la fiche, vérifie (probe) chaque lecteur retenu,
+  // crée le titre (dédupe site+siteRef) et ses sources saines. Les lecteurs
+  // morts sont rejetés avec motif — jamais de catalogue pourri.
+  if (path === '/api/owner/vod/external/publish' && method === 'POST') {
+    const body = await ctx.readJson().catch(() => ({}));
+    const ficheUrl = typeof body?.url === 'string' ? body.url.trim() : '';
+    if (!ficheUrl) return ctx.fail(400, 'URL de fiche manquante');
+    let preview;
+    try {
+      preview = await previewFiche(env, ficheUrl);
+    } catch (error) {
+      return ctx.fail(error instanceof Error && typeof error.status === 'number' ? error.status : 502, error instanceof Error ? error.message : 'Fiche illisible');
+    }
+    const wanted = Array.isArray(body?.hosts) && body.hosts.length > 0
+      ? new Set(body.hosts.map((host) => String(host).toLowerCase()))
+      : null;
+    const candidates = preview.players.filter((player) => !wanted || wanted.has(player.host)).slice(0, 20);
+    if (candidates.length === 0) return ctx.fail(400, 'Aucun lecteur retenu sur cette fiche');
+    const title = (typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : preview.title).slice(0, 200);
+    const year = body?.year === null || body?.year === undefined ? preview.year : Number(body.year) || null;
+    const posterUrl = typeof body?.posterUrl === 'string' && body.posterUrl.trim() ? body.posterUrl.trim() : preview.posterUrl;
+    const siteRef = preview.newsid ?? null;
+    let titleId;
+    const existing = siteRef
+      ? await env.db.query(env, `SELECT id FROM "ExternalTitle" WHERE site = $1 AND "siteRef" = $2`, [preview.site, siteRef])
+      : { rows: [] };
+    if (existing.rows.length > 0) {
+      titleId = existing.rows[0].id;
+      await env.db.query(env, `UPDATE "ExternalTitle" SET title = $2, year = $3, "posterUrl" = $4 WHERE id = $1`, [titleId, title, year, posterUrl]);
+    } else {
+      titleId = crypto.randomUUID();
+      await env.db.query(env,
+        `INSERT INTO "ExternalTitle" (id, site, "siteRef", title, year, "posterUrl", "backdropUrl", "trailerYoutubeId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [titleId, preview.site, siteRef, title, year, posterUrl, preview.backdropUrl, preview.trailerYoutubeId],
+      );
+    }
+    const known = await env.db.query(env, `SELECT host, "embedUrl" FROM "ExternalSource" WHERE "titleId" = $1`, [titleId]);
+    const knownKeys = new Set(known.rows.map((row) => `${row.host}|${row.embedUrl}`));
+    let inserted = 0;
+    let skipped = 0;
+    const rejected = [];
+    let order = 0;
+    for (const player of candidates) {
+      order += 1;
+      if (!SUPPORTED_HOSTS.includes(player.host)) {
+        rejected.push({ host: player.host, reason: `Extracteur « ${player.host} » pas encore implémenté (iframe uniquement)` });
+        continue;
+      }
+      if (knownKeys.has(`${player.host}|${player.embedUrl}`)) {
+        skipped += 1;
+        continue;
+      }
+      const check = await checkSource(env, player.host, player.finalUrl ?? player.embedUrl);
+      if (!check.ok) {
+        rejected.push({ host: player.host, reason: check.message });
+        continue;
+      }
+      await env.db.query(env,
+        `INSERT INTO "ExternalSource" (id, "titleId", host, "embedUrl", "finalUrl", versions, "sortOrder", "lastStatus", "lastCheckedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,'OK', now())`,
+        [crypto.randomUUID(), titleId, player.host, player.embedUrl, player.finalUrl, player.versions, order],
+      );
+      inserted += 1;
+    }
+    await audit(ctx, owner.userId, 'vod.external_publish', 'external_title', titleId, { site: preview.site, siteRef, inserted, rejected: rejected.length });
+    return ctx.json({ titleId, title, inserted, skipped, rejected });
+  }
+
+  // Liste des titres externes + statut de leurs sources.
+  if (path === '/api/owner/vod/external/titles' && method === 'GET') {
+    const q = (url.searchParams.get('q') ?? '').trim();
+    const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 50), 200);
+    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+    const params = [];
+    const conditions = [];
+    if (q) {
+      params.push(`%${q}%`);
+      conditions.push(`t.title ILIKE $${params.length}`);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const [titles, total] = await Promise.all([
+      env.db.query(env, `SELECT t.id, t.site, t."siteRef", t.title, t.year, t."posterUrl", t."isVisible", t."sortOrder" FROM "ExternalTitle" t ${where} ORDER BY t."sortOrder" ASC, t."createdAt" DESC LIMIT ${limit} OFFSET ${offset}`, params),
+      env.db.query(env, `SELECT COUNT(*)::int AS count FROM "ExternalTitle" t ${where}`, params),
+    ]);
+    const ids = titles.rows.map((row) => row.id);
+    const sources = ids.length > 0
+      ? await env.db.query(env, `SELECT id, "titleId", host, "embedUrl", "finalUrl", versions, "sortOrder", "isActive", "lastStatus", "lastError", "lastCheckedAt" FROM "ExternalSource" WHERE "titleId" = ANY($1::text[]) ORDER BY "sortOrder" ASC, "createdAt" ASC`, [ids])
+      : { rows: [] };
+    const byTitle = new Map();
+    for (const source of sources.rows) {
+      const list = byTitle.get(source.titleId) ?? [];
+      list.push({ ...source, finalUrl: source.finalUrl ?? null, lastError: source.lastError ?? null, lastCheckedAt: source.lastCheckedAt ? new Date(source.lastCheckedAt).toISOString() : null });
+      byTitle.set(source.titleId, list);
+    }
+    return ctx.json({
+      items: titles.rows.map((row) => {
+        const list = byTitle.get(row.id) ?? [];
+        return {
+          ...row, siteRef: row.siteRef ?? null, year: row.year ?? null, posterUrl: row.posterUrl ?? null,
+          healthySources: list.filter((source) => source.isActive && (source.lastStatus === 'OK' || source.lastStatus === 'UNKNOWN')).length,
+          deadSources: list.filter((source) => source.lastStatus === 'DEAD').length,
+          sources: list,
+        };
+      }),
+      total: total.rows[0]?.count ?? 0,
+    });
+  }
+
+  const externalTitleMatch = path.match(/^\/api\/owner\/vod\/external\/titles\/([^/]+)$/);
+  if (externalTitleMatch && method === 'PATCH') {
+    const id = dec(externalTitleMatch[1]);
+    const body = await ctx.readJson().catch(() => ({}));
+    const updates = {};
+    if (body.title !== undefined && typeof body.title === 'string' && body.title.trim()) updates.title = body.title.trim().slice(0, 200);
+    if (body.year !== undefined) updates.year = body.year === null ? null : Number(body.year) || null;
+    if (body.posterUrl !== undefined) updates.posterUrl = typeof body.posterUrl === 'string' && body.posterUrl.trim() ? body.posterUrl.trim() : null;
+    if (body.isVisible !== undefined) updates.isVisible = Boolean(body.isVisible);
+    if (body.sortOrder !== undefined) updates.sortOrder = Math.max(0, Number(body.sortOrder) || 0);
+    if (Object.keys(updates).length === 0) return ctx.fail(400, 'Aucune modification');
+    const rows = await env.db.query(env, `SELECT id FROM "ExternalTitle" WHERE id = $1`, [id]);
+    if (rows.rows.length === 0) return ctx.fail(404, 'Titre introuvable');
+    const assignments = Object.keys(updates).map((key, position) => `"${key}" = $${position + 2}`).join(', ');
+    await env.db.query(env, `UPDATE "ExternalTitle" SET ${assignments} WHERE id = $1`, [id, ...Object.values(updates)]);
+    await audit(ctx, owner.userId, 'vod.external_title_update', 'external_title', id, updates);
+    return ctx.json({ ok: true });
+  }
+
+  if (externalTitleMatch && method === 'DELETE') {
+    const id = dec(externalTitleMatch[1]);
+    const done = await env.db.query(env, `DELETE FROM "ExternalTitle" WHERE id = $1 RETURNING id`, [id]);
+    if (done.rows.length === 0) return ctx.fail(404, 'Titre introuvable');
+    await audit(ctx, owner.userId, 'vod.external_title_delete', 'external_title', id);
+    return ctx.json({ ok: true });
+  }
+
+  const externalSourceMatch = path.match(/^\/api\/owner\/vod\/external\/sources\/([^/]+)$/);
+  if (externalSourceMatch && method === 'PATCH') {
+    const id = dec(externalSourceMatch[1]);
+    const body = await ctx.readJson().catch(() => ({}));
+    const updates = {};
+    if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);
+    if (body.sortOrder !== undefined) updates.sortOrder = Math.max(0, Number(body.sortOrder) || 0);
+    if (Object.keys(updates).length === 0) return ctx.fail(400, 'Aucune modification');
+    const rows = await env.db.query(env, `SELECT id FROM "ExternalSource" WHERE id = $1`, [id]);
+    if (rows.rows.length === 0) return ctx.fail(404, 'Source introuvable');
+    const assignments = Object.keys(updates).map((key, position) => `"${key}" = $${position + 2}`).join(', ');
+    await env.db.query(env, `UPDATE "ExternalSource" SET ${assignments} WHERE id = $1`, [id, ...Object.values(updates)]);
+    await audit(ctx, owner.userId, 'vod.external_source_update', 'external_source', id, updates);
+    return ctx.json({ ok: true });
+  }
+
+  if (externalSourceMatch && method === 'DELETE') {
+    const id = dec(externalSourceMatch[1]);
+    const done = await env.db.query(env, `DELETE FROM "ExternalSource" WHERE id = $1 RETURNING id`, [id]);
+    if (done.rows.length === 0) return ctx.fail(404, 'Source introuvable');
+    await audit(ctx, owner.userId, 'vod.external_source_delete', 'external_source', id);
+    return ctx.json({ ok: true });
+  }
+
+  // Re-vérification immédiate d'une source (probe via l'extracteur).
+  const recheckMatch = path.match(/^\/api\/owner\/vod\/external\/sources\/([^/]+)\/recheck$/);
+  if (recheckMatch && method === 'POST') {
+    const id = dec(recheckMatch[1]);
+    const rows = await env.db.query(env, `SELECT id, host, "embedUrl", "finalUrl" FROM "ExternalSource" WHERE id = $1`, [id]);
+    if (rows.rows.length === 0) return ctx.fail(404, 'Source introuvable');
+    const source = rows.rows[0];
+    const check = await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+    const status = check.ok ? 'OK' : check.code === 'DEAD' ? 'DEAD' : 'ERROR';
+    await env.db.query(env, `UPDATE "ExternalSource" SET "lastStatus" = $2, "lastError" = $3, "lastCheckedAt" = now() WHERE id = $1`,
+      [id, status, check.ok ? null : String(check.message ?? '').slice(0, 200)]);
+    await audit(ctx, owner.userId, 'vod.external_source_recheck', 'external_source', id, { status });
+    return ctx.json({ id, lastStatus: status, lastError: check.ok ? null : check.message });
   }
 
   return ctx.fail(404, 'Route owner VOD inconnue');

@@ -9,11 +9,13 @@
 //   resolve(env, ref: string | { id }) ->
 //     { urls: string[], referer: string, title: string | null }
 import { playResponse } from '../play.js';
-import { extractorError, ExtractorErrorCode } from './errors.js';
+import { ExtractorError, extractorError, ExtractorErrorCode } from './errors.js';
 import * as mixdrop from './mixdrop.js';
 import * as dood from './dood.js';
+import * as voe from './voe.js';
+import * as uqload from './uqload.js';
 
-const REGISTRY = { [mixdrop.HOST]: mixdrop, [dood.HOST]: dood };
+const REGISTRY = { [mixdrop.HOST]: mixdrop, [dood.HOST]: dood, [voe.HOST]: voe, [uqload.HOST]: uqload };
 
 export const SUPPORTED_HOSTS = Object.keys(REGISTRY);
 
@@ -93,5 +95,27 @@ function canonicalId(ref) {
   return embedded?.[1] ?? value;
 }
 
+/**
+ * Vérification légère d'une source (publish, recheck console, cron santé) :
+ * résout SANS signer (pas de VIDEO_PROXY_URL requis) et ne garde que le
+ * statut. Retourne { ok: true } ou { ok: false, code, status, message }.
+ */
+export async function checkSource(env, host, embedUrl) {
+  const name = String(host ?? '').trim().toLowerCase();
+  const adapter = REGISTRY[name];
+  if (!adapter) return { ok: false, code: 'UNKNOWN_HOST', status: 400, message: `Hôte non pris en charge : ${name}` };
+  try {
+    await adapter.resolve(env, String(embedUrl ?? ''));
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error instanceof ExtractorError ? error.code : 'RETRYABLE',
+      status: error instanceof Error && typeof error.status === 'number' ? error.status : 502,
+      message: error instanceof Error ? error.message : 'Vérification impossible',
+    };
+  }
+}
+
 export const _internal = { REGISTRY };
-export { extractorError, ExtractorErrorCode };
+export { ExtractorError, extractorError, ExtractorErrorCode };

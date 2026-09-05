@@ -6,15 +6,19 @@
 // par probe Range. MIXDROP_MIRRORS / DOOD_MIRRORS surchargent comme en prod.
 import { resolve as resolveMixdrop, mirrorsFromEnv as mixdropMirrors } from '../workers/mbolo-tv-api/src/extractors/mixdrop.js';
 import { resolve as resolveDood, mirrorsFromEnv as doodMirrors } from '../workers/mbolo-tv-api/src/extractors/dood.js';
+import { resolve as resolveVoe, mirrorsFromEnv as voeMirrors } from '../workers/mbolo-tv-api/src/extractors/voe.js';
+import { resolve as resolveUqload, mirrorsFromEnv as uqloadMirrors } from '../workers/mbolo-tv-api/src/extractors/uqload.js';
 
 const [, , host, ref] = process.argv;
 const RESOLVERS = {
   mixdrop: { resolve: resolveMixdrop, mirrors: mixdropMirrors, envKey: 'MIXDROP_MIRRORS' },
   dood: { resolve: resolveDood, mirrors: doodMirrors, envKey: 'DOOD_MIRRORS' },
+  voe: { resolve: resolveVoe, mirrors: voeMirrors, envKey: 'VOE_MIRRORS' },
+  uqload: { resolve: resolveUqload, mirrors: uqloadMirrors, envKey: 'UQLOAD_MIRRORS' },
 };
 const selected = RESOLVERS[host];
 if (!selected || !ref) {
-  console.error('Usage : node scripts/probe-extractors.mjs (mixdrop|dood) <id|embedUrl>');
+  console.error('Usage : node scripts/probe-extractors.mjs (mixdrop|dood|voe|uqload) <id|embedUrl>');
   process.exit(2);
 }
 

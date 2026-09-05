@@ -102,6 +102,8 @@ export async function probeDirectUrl(env, url, referer) {
       // 206 + content-range = un vrai serveur de fichier répond au Range,
       // même sans content-type vidéo explicite.
       if (/video\//.test(contentType) || /octet-stream/.test(contentType)) return true;
+      // Playlists HLS (Voe…) : content-type mpegurl, corps texte court.
+      if (/mpegurl/.test(contentType)) return true;
       if (response.status === 206 && hasContentRange) return true;
     } catch {
       continue;

@@ -167,7 +167,7 @@ export type VodYoutubeChannelsResponse = z.infer<typeof vodYoutubeChannelsSchema
 // ---- Extracteurs tiers (Mixdrop, Doodstream, … : lecture sans pubs ni iframe) ----
 // GET /api/x/play?host=<host>&id=<fileId|embedUrl> — même contrat que
 // /api/yt/play : URLs du proxy vidéo signé (Referer injecté côté proxy).
-export const externalHostSchema = z.enum(['mixdrop', 'dood']);
+export const externalHostSchema = z.enum(['mixdrop', 'dood', 'voe', 'uqload']);
 export type ExternalHost = z.infer<typeof externalHostSchema>;
 export const externalPlayResponseSchema = z.object({
   id: z.string(),
@@ -199,6 +199,102 @@ export const fichePreviewSchema = z.object({
   players: z.array(fichePlayerSchema),
 });
 export type FichePreview = z.infer<typeof fichePreviewSchema>;
+// ---- Titres externes publics (lecteurs tiers, lecture via /api/x/play) ----
+// GET /api/x/titles : catalogue visible ; GET /api/x/titles/:id : lecteurs actifs.
+export const externalTitlePublicSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  year: z.number().nullable(),
+  posterUrl: z.string().nullable(),
+  healthySources: z.number(),
+});
+export type ExternalTitlePublic = z.infer<typeof externalTitlePublicSchema>;
+export const externalTitlesResponseSchema = z.object({
+  items: z.array(externalTitlePublicSchema),
+  total: z.number(),
+  hasMore: z.boolean(),
+});
+export type ExternalTitlesResponse = z.infer<typeof externalTitlesResponseSchema>;
+export const externalSourcePublicSchema = z.object({
+  id: z.string(),
+  host: z.string(),
+  versions: z.array(z.string()),
+  // Référence de lecture pour /api/x/play (finalUrl si wrapper suivi, sinon embed).
+  playRef: z.string(),
+});
+export type ExternalSourcePublic = z.infer<typeof externalSourcePublicSchema>;
+export const externalTitleDetailSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  year: z.number().nullable(),
+  posterUrl: z.string().nullable(),
+  backdropUrl: z.string().nullable(),
+  trailerYoutubeId: z.string().nullable(),
+  sources: z.array(externalSourcePublicSchema),
+});
+export type ExternalTitleDetail = z.infer<typeof externalTitleDetailSchema>;
+// ---- Titres externes (console propriétaire) ----
+export const externalSourceStatusSchema = z.enum(['UNKNOWN', 'OK', 'DEAD', 'ERROR']);
+export type ExternalSourceStatus = z.infer<typeof externalSourceStatusSchema>;
+export const ownerExternalSourceSchema = z.object({
+  id: z.string(),
+  titleId: z.string(),
+  host: z.string(),
+  embedUrl: z.string(),
+  finalUrl: z.string().nullable(),
+  versions: z.array(z.string()),
+  sortOrder: z.number(),
+  isActive: z.boolean(),
+  lastStatus: externalSourceStatusSchema,
+  lastError: z.string().nullable(),
+  lastCheckedAt: z.string().nullable(),
+});
+export type OwnerExternalSource = z.infer<typeof ownerExternalSourceSchema>;
+export const ownerExternalTitleSchema = z.object({
+  id: z.string(),
+  site: z.string(),
+  siteRef: z.string().nullable(),
+  title: z.string(),
+  year: z.number().nullable(),
+  posterUrl: z.string().nullable(),
+  isVisible: z.boolean(),
+  sortOrder: z.number(),
+  healthySources: z.number(),
+  deadSources: z.number(),
+  sources: z.array(ownerExternalSourceSchema),
+});
+export type OwnerExternalTitle = z.infer<typeof ownerExternalTitleSchema>;
+// POST /api/owner/vod/external/publish : importe une fiche (players présélectionnés).
+export const ownerExternalPublishSchema = z.object({
+  url: z.string().min(1).max(500),
+  title: z.string().min(1).max(200).optional(),
+  year: z.number().int().min(1900).max(2100).nullable().optional(),
+  posterUrl: z.string().url().nullable().optional(),
+  // Hosts à publier (défaut : tous ceux de l'aperçu).
+  hosts: z.array(z.string().min(1).max(30)).max(20).optional(),
+});
+export type OwnerExternalPublishInput = z.infer<typeof ownerExternalPublishSchema>;
+export const ownerExternalPublishResponseSchema = z.object({
+  titleId: z.string(),
+  title: z.string(),
+  inserted: z.number(),
+  skipped: z.number(),
+  rejected: z.array(z.object({ host: z.string(), reason: z.string() })),
+});
+export type OwnerExternalPublishResponse = z.infer<typeof ownerExternalPublishResponseSchema>;
+export const ownerExternalTitleUpdateSchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+  year: z.number().int().min(1900).max(2100).nullable().optional(),
+  posterUrl: z.string().url().nullable().optional(),
+  isVisible: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+}).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export type OwnerExternalTitleUpdateInput = z.infer<typeof ownerExternalTitleUpdateSchema>;
+export const ownerExternalSourceUpdateSchema = z.object({
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+}).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export type OwnerExternalSourceUpdateInput = z.infer<typeof ownerExternalSourceUpdateSchema>;
 
 export const ownerLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;
