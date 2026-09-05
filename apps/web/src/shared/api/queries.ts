@@ -396,6 +396,66 @@ export function useInfiniteYoutube(channelId: string, pageSize = 25, q = '') {
   });
 }
 
+// ---- YouTube multi-chaînes (dossier) : fusion progressive --------------------
+// Un dossier = N chaînes. Chaque « round » interroge les N chaînes en parallèle
+// (1 pageToken par chaîne), fusionne les items du round, dédupe et trie
+// publishedAt croissant AVANT affichage. Le round suivant se charge au scroll
+// (défilement infini) et s'ajoute en dessous : l'ordre asc est donc progressif,
+// sans pré-chargement global (quota : N × 1 unité/round hors recherche,
+// N × 100 en recherche `q`).
+export interface MergedYoutubePage {
+  items: import('@mbolo/contracts').YoutubeVideo[];
+  /** Prochains tokens alignés sur les channelIds triés (null = chaîne épuisée). */
+  nextTokens: Array<string | null>;
+  hasMore: boolean;
+}
+
+export function useInfiniteMergedYoutube(channelIds: string[], pageSize = 25, q = '') {
+  const sortedIds = [...new Set(channelIds.filter(Boolean))].sort();
+  const trimmedQ = q.trim();
+  return useInfiniteQuery({
+    queryKey: ['vod-youtube-merged', sortedIds.join(','), pageSize, trimmedQ],
+    queryFn: async ({ pageParam }): Promise<MergedYoutubePage> => {
+      const { fetchYoutubeList, dedupeYoutubeVideos, sortYoutubeByPublishedAsc } = await import(
+        '../../features/vod/youtubeClient'
+      );
+      const tokens = (pageParam ?? []) as Array<string | null | undefined>;
+      const results = await Promise.all(
+        sortedIds.map((channelId, index) => {
+          const token = tokens[index];
+          // null = chaîne déjà épuisée : on ne la re-frappe plus.
+          if (token === null) return Promise.resolve({ items: [], nextPageToken: null as string | null });
+          return fetchYoutubeList(channelId, {
+            ...(trimmedQ ? { q: trimmedQ } : {}),
+            ...(token ? { pageToken: token } : {}),
+            maxResults: pageSize,
+          });
+        }),
+      );
+      const merged = sortYoutubeByPublishedAsc(dedupeYoutubeVideos(results.flatMap((page) => page.items)));
+      // Garde page vide : YouTube renvoie parfois items:[] AVEC un token —
+      // suivre ce token bouclerait indéfiniment sur des pages vides.
+      const nextTokens = results.map((page) =>
+        page.nextPageToken && page.items.length > 0 ? page.nextPageToken : null,
+      );
+      const hasMore = nextTokens.some((token) => token !== null);
+      return { items: merged, nextTokens, hasMore };
+    },
+    initialPageParam: [] as Array<string | null>,
+    getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextTokens : undefined),
+    placeholderData: keepPreviousData,
+    enabled: sortedIds.length > 0,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    // Comme useInfiniteYoutube : jamais de retry sur quota (429/403/451).
+    retry: (failureCount, error) => {
+      const status = error instanceof Error && 'status' in error ? Number((error as { status?: unknown }).status) : 0;
+      if (status === 429 || status === 403 || status === 451) return false;
+      return failureCount < 1;
+    },
+  });
+}
+
 export function useYoutubeVideo(videoId: string, enabled = true) {
   return useQuery({
     queryKey: ['vod-youtube-video', videoId],

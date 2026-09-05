@@ -236,6 +236,28 @@ export async function fetchYoutubeList(channelId: string, opts: { q?: string; pa
   }
 }
 
+/** Dédupe par id vidéo (un décalage playlistItems peut dupliquer un item). */
+export function dedupeYoutubeVideos(items: YoutubeVideo[]): YoutubeVideo[] {
+  return [...new Map(items.map((item) => [item.id, item])).values()];
+}
+
+/**
+ * Tri progressif « plus ancien d'abord » : publishedAt croissant, `null` en
+ * fin, id en départage pour la stabilité. Appliqué par « round » (vague) :
+ * chaque page/round des chaînes est trié avant affichage, puis le round
+ * suivant (vidéos plus anciennes ou plus récentes selon l'API) s'ajoute en
+ * dessous au scroll — pas de pré-chargement global.
+ */
+export function sortYoutubeByPublishedAsc(items: YoutubeVideo[]): YoutubeVideo[] {
+  return [...items].sort((a, b) => {
+    if (a.publishedAt == null && b.publishedAt == null) return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    if (a.publishedAt == null) return 1;
+    if (b.publishedAt == null) return -1;
+    if (a.publishedAt === b.publishedAt) return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    return a.publishedAt < b.publishedAt ? -1 : 1;
+  });
+}
+
 /** Fiche vidéo : direct navigateur d'abord, proxy serveur en repli. */
 export async function fetchYoutubeVideo(videoId: string): Promise<YoutubeVideo> {
   const cacheKey = `video:${videoId}`;

@@ -4,7 +4,7 @@ import { EmptyState, Icon, Spinner } from '@mbolo/ui';
 import type { VodFolderSummary, VodKind, YoutubeVideo } from '@mbolo/contracts';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteVod, useInfiniteVodFolderItems, useInfiniteYoutube, useVodCategories, useVodFolderRows, useVodFolders, useVodHero, useVodRows } from '../../../shared/api/queries';
+import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteMergedYoutube, useInfiniteVod, useInfiniteVodFolderItems, useInfiniteYoutube, useVodCategories, useVodFolderRows, useVodFolders, useVodHero, useVodRows } from '../../../shared/api/queries';
 import { VodTile } from '../../../features/vod/components/VodTile';
 import { VodHero } from '../../../features/vod/components/VodHero';
 import { VodRow } from '../../../features/vod/components/VodRow';
@@ -90,22 +90,35 @@ function NollywoodRail() {
   return <FolderYoutubeRail channelId={YOUTUBE_AFOREVO_CHANNEL_ID} title="Nollywood" href={NOLLYWOOD_DOSSIER_HREF} />;
 }
 
-// Rails d'un dossier sur l'accueil : rangée VOD (règles ∪ manuel) + une
-// rangée par chaîne YouTube active. Rail silencieux si tout est vide/en erreur.
+// Aperçu d'un dossier sur l'accueil : UN seul rail fusionné (toutes les
+// chaînes YouTube du dossier mélangées, tri publishedAt croissant par round,
+// affichage progressif). Titre = nom du dossier, sans nom de chaîne.
+// Dossiers extensibles : chaque dossier console donne un rail générique.
+function FolderMergedRail({ folder, href, previewCount = 25 }: { folder: VodFolderSummary; href: string; previewCount?: number }) {
+  const channelIds = useMemo(() => folder.youtubeSources.map((source) => source.channelId), [folder]);
+  const query = useInfiniteMergedYoutube(channelIds, 25, '');
+  if (query.isLoading || query.isError) return null;
+  const items = dedupeYoutubeItems(query.data?.pages[0]?.items ?? []).slice(0, previewCount);
+  if (items.length === 0) return null;
+  return <YoutubeRow title={folder.name} items={items} seeAllHref={href} />;
+}
+
+// Rails d'un dossier sur l'accueil : un seul rail fusionné si le dossier a des
+// chaînes YouTube, sinon repli rangée VOD (règles ∪ manuel). Rail silencieux
+// si tout est vide/en erreur.
 function FolderRail({ folder, tab }: { folder: VodFolderSummary; tab: Tab }) {
-  const rowsQuery = useVodFolderRows(folder.slug, 12);
+  const href = dossierHref(tab, folder.slug);
+  const hasYoutube = folder.youtubeSources.length > 0;
+  // Hook appelé sans condition (slug null = requête désactivée) pour garder
+  // un ordre de hooks stable — le rail fusionné n'en a pas besoin.
+  const rowsQuery = useVodFolderRows(hasYoutube ? null : folder.slug, 12);
+  if (hasYoutube) {
+    return <FolderMergedRail folder={folder} href={href} />;
+  }
   const data = rowsQuery.data;
   if (rowsQuery.isLoading || rowsQuery.isError || !data) return null;
-  const href = dossierHref(tab, folder.slug);
-  if (data.items.length === 0 && data.youtubeSources.length === 0) return null;
-  return (
-    <>
-      {data.items.length > 0 && <VodRow title={folder.name} count={data.total} items={data.items} seeAllHref={href} />}
-      {data.youtubeSources.map((source) => (
-        <FolderYoutubeRail key={source.id} channelId={source.channelId} title={source.label ?? folder.name} href={href} />
-      ))}
-    </>
-  );
+  if (data.items.length === 0) return null;
+  return <VodRow title={folder.name} count={data.total} items={data.items} seeAllHref={href} />;
 }
 
 // Catalogue VOD vide sur l'onglet : les dossiers (et leurs chaînes YouTube)
@@ -305,10 +318,51 @@ function YoutubeBrowse({ channelId, q, hideWhenEmpty = false }: { channelId: str
   );
 }
 
-// Vue « dossier » : titre + grille VOD du dossier, puis une grille YouTube
-// par chaîne rattachée. `folder` vient de la liste publique ; si le backend
-// à dossiers est mort (repli), slug 'nollywood' retrouve exactement l'ancienne
-// page mono-Nollywood.
+// Grille fusionnée d'un dossier : toutes les chaînes mélangées, sans nom de
+// chaîne, ordre progressif (chaque round trié publishedAt croissant, les
+// rounds suivants s'ajoutent en dessous au scroll — pas de tri global qui
+// ferait sauter la grille à chaque page). Dédupe globale par id.
+function MergedYoutubeBrowse({ channelIds, q, hideWhenEmpty = false }: { channelIds: string[]; q: string; hideWhenEmpty?: boolean }) {
+  const query = useInfiniteMergedYoutube(channelIds, 25, q);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && query.hasNextPage && !query.isFetchingNextPage && !loadingMore) {
+        setLoadingMore(true);
+        void query.fetchNextPage().finally(() => setLoadingMore(false));
+      }
+    }, { rootMargin: '600px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage, loadingMore]);
+
+  if (query.isLoading) return hideWhenEmpty ? null : <div className="flex justify-center py-16"><Spinner /></div>;
+  if (query.isError) return hideWhenEmpty ? null : <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
+  const items = dedupeYoutubeItems(query.data?.pages.flatMap((page) => page.items) ?? []);
+  if (items.length === 0) {
+    if (hideWhenEmpty) return null;
+    return <EmptyState title="Aucun résultat" hint={q ? `Aucun titre ne correspond à « ${q} ».` : 'Ce catalogue est vide pour le moment.'} />;
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        {items.map((item) => <YoutubeTile key={item.id} item={item} />)}
+      </div>
+      <div ref={sentinelRef} className="h-10" />
+      {query.isFetchingNextPage && <div className="flex justify-center py-4"><Spinner /></div>}
+    </>
+  );
+}
+
+// Vue « dossier » : titre + grille YouTube fusionnée (sans nom de chaîne).
+// Dossiers sans YouTube : repli grille VOD règles ∪ manuel. `folder` vient de
+// la liste publique ; si le backend à dossiers est mort (repli), slug
+// 'nollywood' retrouve exactement l'ancienne page mono-Nollywood.
 function DossierView({ slug, q, folder }: { slug: string; q: string; folder: VodFolderSummary | null | undefined }) {
   if (folder === undefined) return <div className="flex justify-center py-16"><Spinner /></div>;
 
@@ -325,16 +379,20 @@ function DossierView({ slug, q, folder }: { slug: string; q: string; folder: Vod
     );
   }
 
+  const channelIds = folder.youtubeSources.map((source) => source.channelId);
+  if (channelIds.length === 0) {
+    return (
+      <section aria-label={`Dossier ${folder.name}`}>
+        <h2 className="mb-4 text-xl font-bold">{folder.name}</h2>
+        <FolderVodBrowse slug={folder.slug} q={q} />
+      </section>
+    );
+  }
+
   return (
     <section aria-label={`Dossier ${folder.name}`}>
       <h2 className="mb-4 text-xl font-bold">{folder.name}</h2>
-      <FolderVodBrowse slug={folder.slug} q={q} hideWhenEmpty={folder.youtubeSources.length > 0} />
-      {folder.youtubeSources.map((source, index) => (
-        <div key={source.id} className={index === 0 && q ? '' : 'mt-10'}>
-          <h3 className="mb-3 text-lg font-bold">{source.label ?? folder.name}</h3>
-          <YoutubeBrowse channelId={source.channelId} q={q} hideWhenEmpty={Boolean(q)} />
-        </div>
-      ))}
+      <MergedYoutubeBrowse channelIds={channelIds} q={q} />
     </section>
   );
 }
@@ -406,20 +464,20 @@ function VodPageContent() {
   };
 
   const dossierFolder = dossier ? folders.find((folder) => folder.slug === dossier) : undefined;
-  // Chaînes YouTube actives des dossiers visibles (recherche : une section
-  // par chaîne, dédupées — la même chaîne peut alimenter deux dossiers).
-  const searchSources = useMemo(() => {
-    const seen = new Set<string>();
-    const sources: Array<{ id: string; channelId: string; title: string }> = [];
-    for (const folder of folders) {
-      for (const source of folder.youtubeSources) {
-        if (seen.has(source.channelId)) continue;
-        seen.add(source.channelId);
-        sources.push({ id: source.id, channelId: source.channelId, title: source.label ?? folder.name });
-      }
-    }
-    return sources;
-  }, [folders]);
+  // Recherche fusionnée : UNE section par dossier (toutes ses chaînes
+  // mélangées, sans nom de chaîne). Dossiers extensibles : chaque nouveau
+  // dossier console apparaît comme une section générique.
+  const searchFolders = useMemo(
+    () =>
+      folders
+        .filter((folder) => folder.youtubeSources.length > 0)
+        .map((folder) => ({
+          id: folder.id,
+          name: folder.name,
+          channelIds: folder.youtubeSources.map((source) => source.channelId),
+        })),
+    [folders],
+  );
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6">
@@ -473,11 +531,11 @@ function VodPageContent() {
                 // collections des dossiers (recherche serveur YouTube).
                 <>
                   <VodBrowse kind={tab} category={category} q={q} />
-                  {folders.length > 0
-                    ? searchSources.map((source) => (
-                        <section key={source.id} className="mt-10" aria-label={`Résultats ${source.title}`}>
-                          <h2 className="mb-3 text-lg font-bold">{source.title}</h2>
-                          <YoutubeBrowse channelId={source.channelId} q={q} hideWhenEmpty />
+                  {searchFolders.length > 0
+                    ? searchFolders.map((section) => (
+                        <section key={section.id} className="mt-10" aria-label={`Résultats ${section.name}`}>
+                          <h2 className="mb-3 text-lg font-bold">{section.name}</h2>
+                          <MergedYoutubeBrowse channelIds={section.channelIds} q={q} hideWhenEmpty />
                         </section>
                       ))
                     : (
