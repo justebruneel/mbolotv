@@ -16,6 +16,13 @@ https://<proxy>/?url=<fournisseur encodé>&x-exp=<expiry ms>&x-sig=<hex 64>
 ```
 
 - **Payload signé** : `<url>|<expiry>` — l'URL cible ET l'expiry sont couverts.
+- **Referer signé optionnel** (`x-ref`, extracteurs tiers) : quand présent,
+  le payload devient `<url>|<expiry>|<referer>` et le proxy transmet
+  `Referer: <x-ref>` au fournisseur (les CDN Mixdrop/Dood répondent 403
+  sans le Referer de leur miroir). `x-ref` n'accepte que des origines
+  `https://…/` (refus `403` sinon) et fait partie de la clé de cache ;
+  les URL enfants des playlists réécrites en héritent. Les URL historiques
+  sans `x-ref` gardent l'ancien schéma et restent valides.
 - **Secret partagé** : `PROXY_URL_SECRET`, identique sur le worker API et le
   proxy. Jamais commité (voir « Déploiement »).
 - **Expiry par créneau horaire** : `floor(now / 1h) * 1h + 24h`. Deux effets :

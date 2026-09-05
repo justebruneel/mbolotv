@@ -68,11 +68,13 @@ async function request<T>(path: string, init: RequestInit, retryGet: boolean): P
   throw lastError instanceof Error ? lastError : new Error(`Échec API sur ${path}`);
 }
 
-export async function apiGet<T>(path: string, params?: QueryParams): Promise<T> {
+// retryGet=false : pour les appels déjà coûteux côté serveur (extracteurs
+// tiers multi-miroirs) — un retry HTTP 3× multiplierait les fetches embed.
+export async function apiGet<T>(path: string, params?: QueryParams, retryGet = true): Promise<T> {
   const search = params
     ? new URLSearchParams(Object.entries(params).filter((entry): entry is [string, string | number] => entry[1] !== undefined).map(([key, value]) => [key, String(value)])).toString()
     : '';
-  return request<T>(`${path}${search ? `?${search}` : ''}`, { method: 'GET' }, true);
+  return request<T>(`${path}${search ? `?${search}` : ''}`, { method: 'GET' }, retryGet);
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {

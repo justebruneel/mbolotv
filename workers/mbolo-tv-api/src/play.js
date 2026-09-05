@@ -18,13 +18,22 @@ const SIGN_TTL_MS = 24 * 3_600_000;
 const SIGN_BUCKET_MS = 3_600_000;
 const nextExpiry = (now = Date.now()) => Math.floor(now / SIGN_BUCKET_MS) * SIGN_BUCKET_MS + SIGN_TTL_MS;
 async function hmacHex(secret, payload) { const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']); const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload)); return [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, '0')).join(''); }
-export async function playResponse(env, providerUrl, maxHeight, { qualityCap, direct } = {}) {
+export async function playResponse(env, providerUrl, maxHeight, { qualityCap, direct, referer } = {}) {
   const proxyUrl = String(env.VIDEO_PROXY_URL ?? '').trim().replace(/\/+$/, '');
   const secret = String(env.PROXY_URL_SECRET ?? '').trim();
   if (!proxyUrl || !secret) throw new Error('Proxy vidéo non configuré');
   const expiry = nextExpiry();
-  const signature = await hmacHex(secret, `${providerUrl}|${expiry}`);
+  // Referer signé (extracteurs tiers : les CDN Mixdrop/Dood répondent 403
+  // sans le Referer du miroir). Payload élargi UNIQUEMENT quand présent :
+  // les URL historiques (sans x-ref) restent valides. Normalisé avec slash
+  // final — le proxy n'accepte que `https://hôte/` (403 sinon).
+  let ref = typeof referer === 'string' ? referer.trim() : '';
+  if (ref && !ref.endsWith('/')) ref += '/';
+  const signature = ref
+    ? await hmacHex(secret, `${providerUrl}|${expiry}|${ref}`)
+    : await hmacHex(secret, `${providerUrl}|${expiry}`);
   let url = `${proxyUrl}/?url=${encodeURIComponent(providerUrl)}&x-exp=${expiry}&x-sig=${signature}`;
+  if (ref) url += `&x-ref=${encodeURIComponent(ref)}`;
   if (direct) url += '&direct=1';
   if (maxHeight) url += `&maxh=${maxHeight}`;
   return { url, expiresAt: new Date(expiry).toISOString(), ...(qualityCap ? { qualityCap } : {}) };

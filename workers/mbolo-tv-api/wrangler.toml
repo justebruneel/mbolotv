@@ -37,6 +37,10 @@ XTREAM_API_VIA_RELAY = "1"
 ECO_AUTO_THRESHOLD = "3"
 ECO_AUTO_MAXH = "480"
 ECO_SATURATED_THRESHOLD = "8"
+# Extracteurs tiers (voir docs/architecture/external-extractors.md) : miroirs
+# Mixdrop modifiables sans redéploiement quand les domaines tournent.
+# JSON (["https://…"]) ou CSV ("https://a,https://b"). Vide = défauts du code.
+# MIXDROP_MIRRORS = '["https://miixdrop.net"]'
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"

@@ -8,6 +8,8 @@ import type {
   ChannelViewersResponse,
   CountryOption,
   EpgRangeResponse,
+  ExternalHost,
+  ExternalPlayResponse,
   MatchListResponse,
   PlayResponse,
   Programme,
@@ -481,6 +483,21 @@ export function useYoutubePlay(videoId: string, enabled = true) {
     },
     enabled: enabled && Boolean(videoId),
     staleTime: 30 * 60_000,
+    retry: false,
+  });
+}
+
+// Extracteurs tiers (Mixdrop, …) : résolution au clic, jamais en masse
+// (liens signés à expiry courte). ZÉRO retry, à tous les niveaux : le serveur
+// essaie déjà les miroirs en interne, et chaque tentative coûte des fetches
+// embed + expose au anti-bot. L'utilisateur relance via le lecteur (refetch).
+export function useExternalPlay(host: ExternalHost, id: string, enabled = true) {
+  return useQuery({
+    queryKey: ['x-play', host, id],
+    queryFn: () => apiGet<ExternalPlayResponse>('/x/play', { host, id }, false),
+    enabled: enabled && Boolean(id),
+    staleTime: 30 * 60_000,
+    gcTime: 60 * 60_000,
     retry: false,
   });
 }

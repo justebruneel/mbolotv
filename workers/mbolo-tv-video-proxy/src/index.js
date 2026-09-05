@@ -3,7 +3,9 @@
 // Accès signé : seules les URL munies d'une signature HMAC valide (x-exp +
 // x-sig, voir SIGN_TTL_MS) sont servies. Le secret PROXY_URL_SECRET est
 // partagé avec l'API worker (réponse /play) ; les playlists réécrites
-// re-signent chaque URL enfant. Sans cela, le proxy serait un relais ouvert.
+// re-signent chaque URL enfant. Un Referer optionnel peut être joint
+// (x-ref, signé lui aussi) pour les CDN tiers qui l'exigent (Mixdrop…).
+// Sans cela, le proxy serait un relais ouvert.
 //
 // Certains fournisseurs IPTV bloquent les IP datacenter (anti-restream) :
 // pour ces hôtes seulement, les requêtes sont réinjectées vers un tunnel
@@ -248,10 +250,19 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
     const target = url.searchParams.get("url");
     const expiry = Number(url.searchParams.get("x-exp"));
     const signature = url.searchParams.get("x-sig");
+    // Referer signé (extracteurs tiers : CDN Mixdrop/Dood 403 sans lui).
+    // Seules les URL http(s) de miroirs sont acceptées — jamais de saisie libre.
+    const referer = url.searchParams.get("x-ref") ?? "";
+    if (referer && !/^https:\/\/[^/]+\/$/.test(referer))
+      return jsonResponse({ error: "Referer invalide" }, 403);
     if (!target || !signature || !Number.isInteger(expiry))
       return jsonResponse({ error: "Requête non signée" }, 403);
     if (Date.now() >= expiry) return jsonResponse({ error: "Signature expirée" }, 403);
-    const expected = await hmacHex(secret, `${target}|${expiry}`);
+    // Payload élargi quand x-ref est présent (émis par playResponse avec
+    // referer) ; les URL historiques sans x-ref gardent l'ancien schéma.
+    const expected = referer
+      ? await hmacHex(secret, `${target}|${expiry}|${referer}`)
+      : await hmacHex(secret, `${target}|${expiry}`);
     if (!timingSafeEqual(expected, signature)) return jsonResponse({ error: "Signature invalide" }, 403);
 
     let targetUrl;
@@ -281,7 +292,7 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
     // Clé de cache STABLE : l'URL du fournisseur + le plafond (sans x-exp/x-sig,
     // qui tournent chaque heure) — deux viewers d'une même chaîne partagent le
     // même cache quel que soit l'heure de leur signature.
-    const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}&maxh=${maxHeightParam ?? ""}${directParam ? "&direct=1" : ""}`;
+    const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}&maxh=${maxHeightParam ?? ""}${directParam ? "&direct=1" : ""}${referer ? `&x-ref=${encodeURIComponent(referer)}` : ""}`;
     const cacheKey = new Request(stableKey, { method: "GET" });
 
     const cached = await cache.match(cacheKey);
@@ -292,6 +303,7 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
 
     const headers = {
       "User-Agent": "Mozilla/5.0",
+      ...(referer ? { Referer: referer } : {}),
       ...(request.headers.get("Range") ? { Range: request.headers.get("Range") } : {}),
     };
 
@@ -366,8 +378,14 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
         const base = new URL(outcome.finalUrl || target);
         const proxyBase = `${url.origin}${url.pathname}`;
         const childExpiry = nextExpiry();
-        const signChild = async (absolute) =>
-          `${proxyBase}?url=${encodeURIComponent(absolute)}&x-exp=${childExpiry}&x-sig=${await hmacHex(secret, `${absolute}|${childExpiry}`)}&d=${targetDuration ?? ""}`;
+        // Les enfants héritent du Referer signé (hosts type Voe en HLS : les
+        // segments du même CDN l'exigent aussi).
+        const signChild = async (absolute) => {
+          const childSig = referer
+            ? await hmacHex(secret, `${absolute}|${childExpiry}|${referer}`)
+            : await hmacHex(secret, `${absolute}|${childExpiry}`);
+          return `${proxyBase}?url=${encodeURIComponent(absolute)}&x-exp=${childExpiry}&x-sig=${childSig}${referer ? `&x-ref=${encodeURIComponent(referer)}` : ""}&d=${targetDuration ?? ""}`;
+        };
         const rewrittenLines = [];
         for (const line of text.split("\n")) {
           if (line.trim() === "") { rewrittenLines.push(line); continue; }

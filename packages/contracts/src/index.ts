@@ -164,6 +164,41 @@ export type VodFolderRowsResponse = z.infer<typeof vodFolderRowsResponseSchema>;
 // Allowlist dynamique des chaînes YouTube (sert au proxy /api/yt/*).
 export const vodYoutubeChannelsSchema = z.object({ channelIds: z.array(z.string()) });
 export type VodYoutubeChannelsResponse = z.infer<typeof vodYoutubeChannelsSchema>;
+// ---- Extracteurs tiers (Mixdrop, Doodstream, … : lecture sans pubs ni iframe) ----
+// GET /api/x/play?host=<host>&id=<fileId|embedUrl> — même contrat que
+// /api/yt/play : URLs du proxy vidéo signé (Referer injecté côté proxy).
+export const externalHostSchema = z.enum(['mixdrop', 'dood']);
+export type ExternalHost = z.infer<typeof externalHostSchema>;
+export const externalPlayResponseSchema = z.object({
+  id: z.string(),
+  host: externalHostSchema,
+  title: z.string().nullable().optional(),
+  urls: z.array(z.string().url()),
+  expiresInSeconds: z.number(),
+});
+export type ExternalPlayResponse = z.infer<typeof externalPlayResponseSchema>;
+// ---- Scraper de fiches (French Stream, … : aperçu d'import, sans écriture) ----
+// GET /api/x/fiche?url=<fiche> — métas + lecteurs (wrappers suivis 1 hop).
+export const fichePlayerSchema = z.object({
+  host: z.string(),
+  versions: z.array(z.string()),
+  embedUrl: z.string().url(),
+  wrapped: z.boolean(),
+  finalUrl: z.string().url().nullable(),
+});
+export type FichePlayer = z.infer<typeof fichePlayerSchema>;
+export const fichePreviewSchema = z.object({
+  site: z.string(),
+  newsid: z.string().nullable().optional(),
+  ficheUrl: z.string(),
+  title: z.string(),
+  year: z.number().nullable(),
+  posterUrl: z.string().nullable(),
+  backdropUrl: z.string().nullable(),
+  trailerYoutubeId: z.string().nullable(),
+  players: z.array(fichePlayerSchema),
+});
+export type FichePreview = z.infer<typeof fichePreviewSchema>;
 
 export const ownerLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;

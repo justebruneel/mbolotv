@@ -11,6 +11,8 @@ import * as logo from "./logo.js";
 import * as vod from "./vod.js";
 import * as youtube from "./youtube.js";
 import * as ytplay from "./ytplay.js";
+import * as xplay from "./extractors/index.js";
+import * as xfiche from "./scrapers/index.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
@@ -555,6 +557,30 @@ async function route(ctx, url) {
   // Flux direct pour le lecteur maison (fiche Nollywood /vod/yt/<id>).
   if (path === "/api/yt/play" && method === "GET")
     return ytplay.serveYoutubePlay(env, url.searchParams.get("id") ?? "", ctx.corsHeaders());
+
+  // Extracteurs tiers (Mixdrop, …) : résolution au clic, sans pubs ni iframe.
+  // ?host=mixdrop&id=<fileId|/e/…|/f/…> — même garde que la lecture VOD.
+  if (path === "/api/x/play" && method === "GET") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    return xplay.serveExternalPlay(
+      env,
+      url.searchParams.get("host") ?? "",
+      // `id` vide (ex. ?id=&url=…) doit retomber sur `url` : ?? ne suffit pas.
+      url.searchParams.get("id") || url.searchParams.get("url") || "",
+      ctx.corsHeaders(),
+    );
+  }
+
+  // Scraper de fiches (French Stream, …) : aperçu d'import SANS écriture.
+  // ?url=<fiche> — même garde que la lecture VOD.
+  if (path === "/api/x/fiche" && method === "GET") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!(await assertGrantActive(env, deviceId)))
+      return ctx.fail(403, "Un code d’accès actif est requis");
+    return xfiche.serveFichePreview(env, url.searchParams.get("url") ?? "", ctx.corsHeaders());
+  }
 
   const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
 
