@@ -242,42 +242,53 @@ function YoutubeDetailContent() {
             {item.duration !== null && item.duration > 0 && <span>{formatTime(item.duration)}</span>}
             {publishedLabel && <span>{publishedLabel}</span>}
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            {playQuery.isFetching ? (
-              <button type="button" className="btn btn-primary" disabled>
-                <Spinner />
-                Résolution du flux…
-              </button>
-            ) : (
-              <button type="button" className="btn btn-primary" onClick={startPlayback}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                {resumePct !== null ? 'Reprendre' : 'Lecture'}
-              </button>
-            )}
-            <FavoriteButton
-              label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
-              isActive={isFavorite}
-              onToggle={() => toggleFavorite(progressId)}
-            />
-          </div>
-          {resumePct !== null && (
-            <div className="mt-3 max-w-xs">
-              <div className="h-1 overflow-hidden rounded-full bg-white/20">
-                <div className="h-full bg-accent" style={{ width: `${resumePct}%` }} />
+          {/* Pendant la lecture, les actions lives (Lecture/Reprendre, Favori,
+              barre de reprise) sont redondantes avec la barre sticky sous le
+              lecteur — elles se masquent, il ne reste que titre + méta. */}
+          {!playing && (
+            <>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                {playQuery.isFetching ? (
+                  <button type="button" className="btn btn-primary" disabled>
+                    <Spinner />
+                    Résolution du flux…
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-primary" onClick={startPlayback}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                    {resumePct !== null ? 'Reprendre' : 'Lecture'}
+                  </button>
+                )}
+                <FavoriteButton
+                  label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
+                  isActive={isFavorite}
+                  onToggle={() => toggleFavorite(progressId)}
+                />
               </div>
-              <p className="mt-1 text-xs text-muted">{resumePct} % vus · reprise à {formatTime(progress!.position)}</p>
-            </div>
+              {resumePct !== null && (
+                <div className="mt-3 max-w-xs">
+                  <div className="h-1 overflow-hidden rounded-full bg-white/20">
+                    <div className="h-full bg-accent" style={{ width: `${resumePct}%` }} />
+                  </div>
+                  <p className="mt-1 text-xs text-muted">{resumePct} % vus · reprise à {formatTime(progress!.position)}</p>
+                </div>
+              )}
+            </>
           )}
         </div>
 
         <div className="mt-4 flex flex-col gap-4 border-t border-border/60 pt-4 md:mt-8 md:flex-row md:gap-6 md:pt-6">
-          <div className="aspect-video w-full shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-lg sm:w-64 md:w-48">
-            {item.posterUrl ? (
-              <img src={item.posterUrl} alt={`Affiche de ${item.title}`} className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full items-center justify-center text-muted/40"><Icon.Film size={40} /></div>
-            )}
-          </div>
+          {/* Miniature masquée pendant la lecture : le lecteur occupe déjà le
+              haut de la page, l'affiche en dessous est une redondance. */}
+          {!playing && (
+            <div className="aspect-video w-full shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-lg sm:w-64 md:w-48">
+              {item.posterUrl ? (
+                <img src={item.posterUrl} alt={`Affiche de ${item.title}`} className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full items-center justify-center text-muted/40"><Icon.Film size={40} /></div>
+              )}
+            </div>
+          )}
           <div className="min-w-0 flex-1">
             {item.description ? (
               <p className="whitespace-pre-line text-sm leading-relaxed text-muted">
