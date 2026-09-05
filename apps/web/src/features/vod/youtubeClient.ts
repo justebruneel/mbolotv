@@ -207,18 +207,23 @@ export async function fetchYoutubeList(channelId: string, opts: { q?: string; pa
   const cacheKey = `list:${channelId}:${opts.q ?? ''}:${opts.pageToken ?? ''}:${opts.maxResults}`;
   const cached = cacheGet(cacheKey);
   if (cached && 'items' in cached) return cached as YoutubeListResponse;
+  // Une liste VIDE n'est cachable que pour la recherche (q, 100 unités —
+  // pas la peine de repayer) : sur le catalogue sans q (1 unité), elle est
+  // le symptôme d'une panne transitoire de la cascade, et la cacher masque
+  // le rail Nollywood jusqu'à expiration du TTL.
+  const cachable = (result: YoutubeListResponse): boolean => Boolean(opts.q) || result.items.length > 0;
   try {
     const fresh = opts.q
       ? await directSearch(channelId, { q: opts.q, pageToken: opts.pageToken, maxResults: opts.maxResults })
       : await directUploads(channelId, opts);
-    cacheSet(cacheKey, fresh, LIST_TTL_MS);
+    if (cachable(fresh)) cacheSet(cacheKey, fresh, LIST_TTL_MS);
     return fresh;
   } catch (directError) {
     // Le repli proxy (et son message d'erreur) est mis en cache comme le
     // direct : sinon chaque navigation refrappe Vercel + Worker alors que la
     // réponse (souvent « quota épuisé ») est la même à quelques minutes près.
     const result = await proxySearch(channelId, opts);
-    cacheSet(cacheKey, result, Math.floor(LIST_TTL_MS / 2));
+    if (cachable(result)) cacheSet(cacheKey, result, Math.floor(LIST_TTL_MS / 2));
     void directError;
     return result;
   }
