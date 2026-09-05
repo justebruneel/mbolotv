@@ -68,6 +68,15 @@ function YoutubeDetailContent() {
   // ne pas superposer deux lectures (GlobalPlayer ne connaît pas les ids yt:).
   useEffect(() => { clearVod(); }, [clearVod]);
 
+  // Reprise : figée à l'INSTANT du clic Lecture (state, pas render-derived).
+  // Lire vodProgress au render est non fiable : le store persist s'hydrate
+  // après le premier render -> startAt aurait pu valoir 0 (reprise perdue).
+  // Déclaré AVANT les early-returns : un hook après un return conditionnel
+  // fait varier le nombre de hooks entre renders (React error #310) dès que
+  // la fiche arrive sans item au premier render (ex. tuile « Reprendre »,
+  // cache vide) puis en trouve un au second.
+  const [startAt, setStartAt] = useState(0);
+
   // Progression : même persistance que le VOD Xtream (throttle 5 s) pour
   // « Reprendre », la barre % et la tuile « continuer à regarder ».
   const lastWriteRef = useMemo(() => ({ at: 0 }), []);
@@ -102,10 +111,6 @@ function YoutubeDetailContent() {
   const playUrls = playQuery.data?.urls ?? [];
   const playing = playUrls.length > 0;
 
-  // Reprise : figée à l'INSTANT du clic Lecture (state, pas render-derived).
-  // Lire vodProgress au render est non fiable : le store persist s'hydrate
-  // après le premier render -> startAt aurait pu valoir 0 (reprise perdue).
-  const [startAt, setStartAt] = useState(0);
   const refetchPlay = playQuery.refetch;
   const startPlayback = useCallback((): void => {
     const entry = useSettingsStore.getState().vodProgress[progressId];
