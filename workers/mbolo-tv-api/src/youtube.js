@@ -15,8 +15,12 @@ import { resolveRelay } from './relay.js';
 // Réseau : repli via le relais résidentiel si le direct échoue (même motif
 // que xtream.js — les egress datacenter sont parfois refusés).
 // Cache edge : 1 h sur les listes, 24 h sur les fiches.
-// Allowlist : seules les chaînes configurées (YOUTUBE_CHANNEL_ALLOWLIST,
-// défaut Aforevo Galerie) sont interrogeables — pas de scraping arbitraire.
+// Allowlist : source de vérité = table "VodYoutubeSource" (dossiers VOD de la
+// console), lue via Hyperdrive avec un cache isolate de 60 s ; repli sur
+// l'env YOUTUBE_CHANNEL_ALLOWLIST (défaut Aforevo) si la base est injoignable
+// — jamais de scraping arbitraire dans un cas comme dans l'autre.
+import { vodYoutubeChannelIds } from './vod.js';
+
 const YT_API = 'https://www.googleapis.com/youtube/v3';
 const AFOREVO_CHANNEL_ID = 'UCyd79F-lNLCbGPQrf_L7KiA';
 const LIST_CACHE_TTL_S = 3600;
@@ -40,11 +44,31 @@ function jsonError(message, status, cors = {}) {
   });
 }
 
-function channelAllowlist(env) {
+function envAllowlist(env) {
   return String(env.YOUTUBE_CHANNEL_ALLOWLIST ?? AFOREVO_CHANNEL_ID)
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+// Base → source de vérité ; un échec Hyperdrive retombe sur l'env (comportement
+// historique), jamais sur une liste vide. Cache isolate 60 s (l'allowlist change
+// rarement et la console tolerate ~1 min de latence).
+let allowlistCache = { ids: null, at: 0 };
+const ALLOWLIST_TTL_MS = 60_000;
+async function channelAllowlist(env) {
+  const now = Date.now();
+  if (allowlistCache.ids && now - allowlistCache.at < ALLOWLIST_TTL_MS) return allowlistCache.ids;
+  try {
+    const { channelIds } = await vodYoutubeChannelIds(env);
+    if (channelIds.length > 0) {
+      allowlistCache = { ids: channelIds, at: now };
+      return channelIds;
+    }
+  } catch {
+    // Hyperdrive injoignable : repli env ci-dessous (sans mémoriser).
+  }
+  return envAllowlist(env);
 }
 
 // Miniatures servies via le proxy Vercel /api/yt/img : les FAI qui filtrent
@@ -183,7 +207,7 @@ function normalizeListItem(entry) {
 }
 
 export async function serveYoutubeList(env, channelId, pageToken, limit, q, cors = {}) {
-  if (!channelAllowlist(env).includes(channelId)) return jsonError('Chaîne non autorisée', 403, cors);
+  if (!(await channelAllowlist(env)).includes(channelId)) return jsonError('Chaîne non autorisée', 403, cors);
   if (!String(env.YOUTUBE_API_KEY ?? '').trim()) return jsonError('Clé YouTube non configurée', 503, cors);
   const maxResults = Math.min(Math.max(Number(limit) || 25, 1), 50);
   const query = typeof q === 'string' ? q.trim().slice(0, 80) : '';

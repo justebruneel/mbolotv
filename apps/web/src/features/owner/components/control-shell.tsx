@@ -3,7 +3,7 @@
 import { AppShell, Logo } from '@mbolo/ui';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { IconAudit, IconBell, IconImports, IconKey, IconLayers, IconOverview, IconSources, IconUsers } from './ui/icons';
+import { IconAudit, IconBell, IconClapperboard, IconImports, IconKey, IconLayers, IconOverview, IconSources, IconUsers } from './ui/icons';
 
 export function ControlShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
@@ -23,6 +23,7 @@ export function ControlShell({ children }: { children: ReactNode }) {
   const NAV = [
     { href: ownerBase, label: 'Vue d’ensemble', icon: <IconOverview className="h-[18px] w-[18px]" /> },
     { href: `${ownerBase}/catalog`, label: 'Catalogue public', icon: <IconLayers className="h-[18px] w-[18px]" /> },
+    { href: `${ownerBase}/catalog-vod`, label: 'Catalogue VOD', icon: <IconClapperboard className="h-[18px] w-[18px]" /> },
     { href: `${ownerBase}/access`, label: 'Codes d’accès', icon: <IconKey className="h-[18px] w-[18px]" /> },
     { href: `${ownerBase}/profile`, label: 'Profil', icon: <IconUsers className="h-[18px] w-[18px]" /> },
     { href: `${ownerBase}/notifications`, label: 'Notifications', icon: <IconBell className="h-[18px] w-[18px]" /> },

@@ -476,6 +476,32 @@ async function route(ctx, url) {
   if (path === "/api/vod/categories" && method === "GET")
     return ctx.json(await vod.vodCategories(env, url.searchParams.get("kind") ?? undefined));
 
+  // Dossiers administrés (console VOD) + allowlist YouTube dynamique. Placés
+  // avant vodMatch qui capterait /api/vod/folders comme un id d'item.
+  const FOLDER_CACHE_HEADERS = { "cache-control": "public, max-age=60, stale-while-revalidate=300" };
+  if (path === "/api/vod/folders" && method === "GET")
+    return ctx.json(await vod.vodFolders(env, url.searchParams.get("kind") ?? undefined), 200, FOLDER_CACHE_HEADERS);
+
+  const folderMatch = path.match(/^\/api\/vod\/folders\/([^/]+)\/(rows|items)$/);
+  if (folderMatch && method === "GET") {
+    const slug = decodeURIComponent(folderMatch[1]);
+    if (folderMatch[2] === "rows") {
+      const payload = await vod.vodFolderRows(env, slug, intParam(url.searchParams.get("perRow"), 20, 1, 50));
+      if (!payload) return ctx.fail(404, "Dossier introuvable");
+      return ctx.json(payload, 200, FOLDER_CACHE_HEADERS);
+    }
+    const payload = await vod.vodFolderItems(env, slug, {
+      limit: intParam(url.searchParams.get("limit"), 48, 1, 100),
+      offset: intParam(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER),
+      q: url.searchParams.get("q") ?? undefined,
+    });
+    if (!payload) return ctx.fail(404, "Dossier introuvable");
+    return ctx.json(payload, 200, FOLDER_CACHE_HEADERS);
+  }
+
+  if (path === "/api/vod/youtube/channels" && method === "GET")
+    return ctx.json(await vod.vodYoutubeChannelIds(env), 200, FOLDER_CACHE_HEADERS);
+
   // Accueil façon Netflix : rangées horizontales par catégorie + héros.
   // Placées avant vodMatch qui capterait /api/vod/rows comme un id.
   if (path === "/api/vod/rows" && method === "GET")

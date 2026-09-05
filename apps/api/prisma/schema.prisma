@@ -176,6 +176,9 @@ model VodItem {
   description String?
   rating Float?
   categoryTitle String?
+  // Clé normalisée (trim+lowercase) du categoryTitle fournisseur : c'est elle
+  // que matchent les règles de dossiers VOD (les libellés bruts varient en casse/espaces).
+  categoryKey String?
   containerExt String?
   addedAt DateTime?
   sourceId String
@@ -185,7 +188,9 @@ model VodItem {
   createdAt DateTime @default(now())
   source Source @relation(fields:[sourceId], references:[id], onDelete:Cascade)
   favorites VodFavorite[]
+  folders VodFolderItem[]
   @@index([kind, categoryTitle, isActive])
+  @@index([kind, categoryKey, isActive])
   @@index([sourceId, isActive])
 }
 model VodFavorite {
@@ -196,6 +201,60 @@ model VodFavorite {
 
   @@id([deviceId, vodItemId])
   @@index([deviceId, createdAt])
+}
+// ---- Catalogue VOD administrable (console propriétaire) ----
+// Dossiers vidéo en arbre — miroir de Category mais indépendant du live.
+// kind : MOVIE | SERIES | BOTH (un dossier mixte apparaît dans les deux onglets).
+model VodFolder {
+  id String @id @default(cuid())
+  slug String @unique
+  name String
+  kind String @default("BOTH")
+  sortOrder Int @default(0)
+  isVisible Boolean @default(true)
+  parentId String?
+  parent VodFolder? @relation("VodFolderTree", fields:[parentId], references:[id])
+  children VodFolder[] @relation("VodFolderTree")
+  rules VodFolderRule[]
+  items VodFolderItem[]
+  youtubeSources VodYoutubeSource[]
+  @@index([parentId, isVisible])
+  @@index([kind, isVisible])
+}
+// Règle automatique : un categoryTitle fournisseur (clé normalisée) alimente ce dossier.
+// La même clé peut nourrir plusieurs dossiers (un item dans 2 rails) — voulu.
+model VodFolderRule {
+  id String @id @default(cuid())
+  folderId String
+  categoryKey String
+  // Libellé d'origine, rien que pour l'affichage en console.
+  categoryTitle String
+  folder VodFolder @relation(fields:[folderId], references:[id], onDelete:Cascade)
+  @@unique([folderId, categoryKey])
+  @@index([categoryKey])
+}
+// Affectation manuelle item ↔ dossier (N-N ; beaucoup d'items).
+model VodFolderItem {
+  folderId String
+  vodItemId String
+  createdAt DateTime @default(now())
+  folder VodFolder @relation(fields:[folderId], references:[id], onDelete:Cascade)
+  vodItem VodItem @relation(fields:[vodItemId], references:[id], onDelete:Cascade)
+  @@id([folderId, vodItemId])
+  @@index([vodItemId])
+}
+// Chaîne YouTube rattachée à un dossier — remplace l'allowlist statique en env.
+model VodYoutubeSource {
+  id String @id @default(cuid())
+  folderId String
+  channelId String
+  label String?
+  isActive Boolean @default(true)
+  sortOrder Int @default(0)
+  createdAt DateTime @default(now())
+  folder VodFolder @relation(fields:[folderId], references:[id], onDelete:Cascade)
+  @@unique([folderId, channelId])
+  @@index([channelId, isActive])
 }
 model AuditLog {
   id String @id @default(cuid())

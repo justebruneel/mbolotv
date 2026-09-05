@@ -6,6 +6,7 @@ import { runSourceImport, ACTIVE_IMPORT_STATES } from './importer.js';
 import { runEpgImportForSource } from './epgimport.js';
 import { checkVariant } from './healthcheck.js';
 import { featuredList, featuredSet, featuredRemove } from './featured.js';
+import { handleOwnerVodRoute } from './owner-vod.js';
 import * as notifications from './notifications.js';
 
 function chunks(values, size) {
@@ -81,6 +82,10 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   // Toutes les routes suivantes exigent une session owner valide.
   const owner = await requireOwner(ctx);
   if (!owner) return ctx.fail(401, 'Session invalide');
+
+  // Catalogue VOD (dossiers, règles, sources YouTube) : miroir du controller
+  // Nest owner-vod — dispatch délégué à son propre module.
+  if (path.startsWith('/api/owner/vod/')) return handleOwnerVodRoute(ctx, url, path, method, owner, audit);
 
   if (path === '/api/owner/auth/session' && method === 'GET') {
     const rows = await env.db.query(env, `SELECT s."expiresAt" FROM "OwnerSession" s WHERE s.id = $1`, [owner.sessionId]);

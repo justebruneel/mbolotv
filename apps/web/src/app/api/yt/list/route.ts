@@ -13,11 +13,39 @@ const YT_API = 'https://www.googleapis.com/youtube/v3';
 const AFOREVO_CHANNEL_ID = 'UCyd79F-lNLCbGPQrf_L7KiA';
 const REVALIDATE_S = 3600;
 
-function allowlist(): string[] {
+// Allowlist : la table VodYoutubeSource (console VOD) exposée par le endpoint
+// public /api/vod/youtube/channels du backend est la source de vérité ; repli
+// sur l'env (comportement historique) si le backend ne répond pas. Jamais une
+// liste vide par erreur de réseau. Mémo module 60 s (indépendant du cache
+// fetch des listes, qui reste à 1 h).
+const ALLOWLIST_TTL_MS = 60_000;
+let allowlistMemo: { ids: string[]; at: number } = { ids: [], at: 0 };
+
+function envAllowlist(): string[] {
   return String(process.env.YOUTUBE_CHANNEL_ALLOWLIST ?? AFOREVO_CHANNEL_ID)
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+async function allowlist(): Promise<string[]> {
+  const now = Date.now();
+  if (allowlistMemo.ids.length > 0 && now - allowlistMemo.at < ALLOWLIST_TTL_MS) return allowlistMemo.ids;
+  const apiBase = (process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? '').trim().replace(/\/+$/, '');
+  if (apiBase) {
+    try {
+      const response = await fetch(`${apiBase}/api/vod/youtube/channels`, { signal: AbortSignal.timeout(6_000), cache: 'no-store' });
+      if (response.ok) {
+        const payload = (await response.json()) as { channelIds?: unknown };
+        const ids = Array.isArray(payload?.channelIds) ? payload.channelIds.filter((value): value is string => typeof value === 'string') : [];
+        if (ids.length > 0) {
+          allowlistMemo = { ids, at: now };
+          return ids;
+        }
+      }
+    } catch { /* backend injoignable : repli env */ }
+  }
+  return envAllowlist();
 }
 
 function pickThumbnail(thumbnails: unknown): string | null {
@@ -33,7 +61,7 @@ function pickThumbnail(thumbnails: unknown): string | null {
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const params = new URL(request.url).searchParams;
   const channelId = params.get('channel') ?? '';
-  if (!allowlist().includes(channelId)) {
+  if (!(await allowlist()).includes(channelId)) {
     return NextResponse.json({ message: 'Chaîne non autorisée' }, { status: 403 });
   }
   const key = (process.env.YOUTUBE_API_KEY ?? '').trim();

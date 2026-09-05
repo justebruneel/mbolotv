@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { VodCategory, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse } from '@mbolo/contracts';
+import type { VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { MetadataService } from '../metadata/metadata.service';
@@ -110,6 +110,92 @@ export class VodService {
     });
     const metas = await Promise.all(rows.map((row) => this.enrich(row.title, row.description)));
     return { items: rows.map((row, index) => ({ ...serializeVodItem(row), ...metas[index] })) };
+  }
+
+  // ---- Dossiers administrés (console propriétaire → app) ----
+  // Miroir de workers/mbolo-tv-api/src/vod.js : folders/rows/items + allowlist
+  // YouTube dynamique. Un parent masqué exclut ses descendants (filtrage
+  // serveur, jamais client).
+  private async visibleFolders(kind?: VodKind): Promise<Array<{ id: string; slug: string; name: string; kind: string; parentId: string | null; sortOrder: number }>> {
+    const rows = await this.prisma.vodFolder.findMany({ select: { id: true, slug: true, name: true, kind: true, parentId: true, isVisible: true, sortOrder: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] });
+    const byId = new Map(rows.map((row) => [row.id, row] as const));
+    const effective = new Map<string, boolean>();
+    const visiting = new Set<string>();
+    const compute = (id: string): boolean => {
+      const cached = effective.get(id);
+      if (cached !== undefined) return cached;
+      if (visiting.has(id)) { effective.set(id, false); return false; }
+      visiting.add(id);
+      const node = byId.get(id);
+      const result = !!node && node.isVisible && (node.parentId == null || !byId.has(node.parentId) || compute(node.parentId));
+      visiting.delete(id);
+      effective.set(id, result);
+      return result;
+    };
+    rows.forEach((row) => compute(row.id));
+    return rows.filter((row) => effective.get(row.id) && (!kind || row.kind === 'BOTH' || row.kind === kind));
+  }
+
+  async folders(kind?: VodKind): Promise<{ folders: VodFolderSummary[] }> {
+    const visible = await this.visibleFolders(kind);
+    const sources = await this.prisma.vodYoutubeSource.findMany({ where: { isActive: true, folderId: { in: visible.map((row) => row.id) } }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] });
+    const byFolder = new Map<string, VodYoutubeSourcePublic[]>();
+    for (const source of sources) { const list = byFolder.get(source.folderId) ?? []; list.push({ id: source.id, channelId: source.channelId, label: source.label }); byFolder.set(source.folderId, list); }
+    return { folders: visible.map((row) => ({ id: row.id, slug: row.slug, name: row.name, kind: row.kind as VodFolderKind, parentId: row.parentId, youtubeSources: byFolder.get(row.id) ?? [] })) };
+  }
+
+  // Contenu d'un dossier : items apportés par les règles ∪ affectations
+  // manuelles (dédupés), les plus récents d'abord. Les vidéos YouTube ne
+  // transitent pas par ici — l'app les tire de YouTube comme avant.
+  async folderRows(slug: string, perRow = 20): Promise<VodFolderRowsResponse> {
+    const safePerRow = Math.min(Math.max(1, Number(perRow) || 20), 50);
+    const { folder, where } = await this.folderItemWhere(slug);
+    const [rows, total] = await Promise.all([
+      this.prisma.vodItem.findMany({ where, orderBy: [{ addedAt: 'desc' }, { title: 'asc' }], take: safePerRow }),
+      this.prisma.vodItem.count({ where }),
+    ]);
+    const sources = await this.prisma.vodYoutubeSource.findMany({ where: { folderId: folder.id, isActive: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] });
+    return {
+      folder: { id: folder.id, slug: folder.slug, name: folder.name, kind: folder.kind as VodFolderKind },
+      youtubeSources: sources.map((source) => ({ id: source.id, channelId: source.channelId, label: source.label })),
+      items: rows.map(serializeVodItem),
+      total,
+      hasMore: rows.length < total,
+    };
+  }
+
+  // « Parcourir tout » d'un dossier (pagination pleine).
+  async folderItems(slug: string, { limit = 48, offset = 0, q }: { limit?: number; offset?: number; q?: string } = {}): Promise<VodListResponse> {
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 48), 100);
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const { where: base } = await this.folderItemWhere(slug);
+    const where = { ...base, ...(q ? { title: { contains: q } } : {}) };
+    const [rows, total] = await Promise.all([
+      this.prisma.vodItem.findMany({ where, orderBy: [{ addedAt: 'desc' }, { title: 'asc' }], take: safeLimit, skip: safeOffset }),
+      this.prisma.vodItem.count({ where }),
+    ]);
+    return { items: rows.map(serializeVodItem), total, hasMore: safeOffset + rows.length < total };
+  }
+
+  // Allowlist dynamique des chaînes YouTube (proxy /api/yt/*) : seules les
+  // sources actives d'un dossier effectivement visible sont interrogées.
+  async youtubeChannels(): Promise<{ channelIds: string[] }> {
+    const visible = await this.visibleFolders();
+    const rows = await this.prisma.vodYoutubeSource.findMany({ where: { isActive: true, folderId: { in: visible.map((row) => row.id) } }, select: { channelId: true }, distinct: ['channelId'] });
+    return { channelIds: rows.map((row) => row.channelId) };
+  }
+
+  private async folderItemWhere(slug: string): Promise<{ folder: { id: string; slug: string; name: string; kind: string }; where: Record<string, unknown> }> {
+    const folders = await this.visibleFolders();
+    const folder = folders.find((row) => row.slug === slug);
+    if (!folder) throw new NotFoundException('Dossier introuvable');
+    const keys = (await this.prisma.vodFolderRule.findMany({ where: { folderId: folder.id }, select: { categoryKey: true } })).map((rule) => rule.categoryKey);
+    const or: unknown[] = [{ folders: { some: { folderId: folder.id } } }];
+    if (keys.length > 0) or.push({ categoryKey: { in: keys } });
+    return {
+      folder,
+      where: { ...VISIBLE, OR: or, ...(folder.kind === 'BOTH' ? {} : { kind: folder.kind }) },
+    };
   }
 
   async detail(id: string): Promise<VodItem & { containerExt: string | null }> {

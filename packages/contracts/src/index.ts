@@ -147,6 +147,23 @@ export const youtubeVideoSchema = z.object({ id: z.string(), title: z.string(), 
 export type YoutubeVideo = z.infer<typeof youtubeVideoSchema>;
 export const youtubeListResponseSchema = z.object({ items: z.array(youtubeVideoSchema), nextPageToken: z.string().nullable() });
 export type YoutubeListResponse = z.infer<typeof youtubeListResponseSchema>;
+// ---- Dossiers VOD publics (console → app) ----
+// Kind d'un dossier : un dossier peut être mixte (BOTH) ; les items eux sont MOVIE|SERIES.
+export const vodFolderKindSchema = z.enum(['MOVIE', 'SERIES', 'BOTH']);
+export type VodFolderKind = z.infer<typeof vodFolderKindSchema>;
+export const vodYoutubeSourcePublicSchema = z.object({ id: z.string(), channelId: z.string(), label: z.string().nullable() });
+export type VodYoutubeSourcePublic = z.infer<typeof vodYoutubeSourcePublicSchema>;
+// GET /vod/folders : arbre aplati (effectiveVisible uniquement), trié par sortOrder.
+export const vodFolderSummarySchema = z.object({ id: z.string(), slug: z.string(), name: z.string(), kind: vodFolderKindSchema, parentId: z.string().nullable(), youtubeSources: z.array(vodYoutubeSourcePublicSchema) });
+export type VodFolderSummary = z.infer<typeof vodFolderSummarySchema>;
+export const vodFoldersResponseSchema = z.object({ folders: z.array(vodFolderSummarySchema) });
+export type VodFoldersResponse = z.infer<typeof vodFoldersResponseSchema>;
+// GET /vod/folders/:slug/rows : items règles ∪ manuel (dédupés), + sources YouTube du dossier.
+export const vodFolderRowsResponseSchema = z.object({ folder: vodFolderSummarySchema.omit({ parentId: true, youtubeSources: true }), youtubeSources: z.array(vodYoutubeSourcePublicSchema), items: z.array(vodItemSchema), total: z.number(), hasMore: z.boolean() });
+export type VodFolderRowsResponse = z.infer<typeof vodFolderRowsResponseSchema>;
+// Allowlist dynamique des chaînes YouTube (sert au proxy /api/yt/*).
+export const vodYoutubeChannelsSchema = z.object({ channelIds: z.array(z.string()) });
+export type VodYoutubeChannelsResponse = z.infer<typeof vodYoutubeChannelsSchema>;
 
 export const ownerLoginSchema = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });
 export type OwnerLoginInput = z.infer<typeof ownerLoginSchema>;
@@ -223,6 +240,67 @@ export const ownerCatalogSchema = z.object({ categories: z.array(ownerCategorySc
 export type OwnerCatalog = z.infer<typeof ownerCatalogSchema>;
 export const channelTestResponseSchema = z.object({ ok: z.boolean(), status: z.enum(['OK', 'DOWN']), checked: z.number() });
 export type ChannelTestResponse = z.infer<typeof channelTestResponseSchema>;
+
+// ---- Catalogue VOD (console propriétaire) ----
+export const ownerVodYoutubeSourceSchema = z.object({ id: z.string(), folderId: z.string(), channelId: z.string(), label: z.string().nullable(), isActive: z.boolean(), sortOrder: z.number() });
+export type OwnerVodYoutubeSource = z.infer<typeof ownerVodYoutubeSourceSchema>;
+export interface OwnerVodFolder {
+  id: string;
+  slug: string;
+  name: string;
+  kind: VodFolderKind;
+  parentId: string | null;
+  isVisible: boolean;
+  effectiveVisible: boolean;
+  sortOrder: number;
+  // Items apportés par les règles ∪ affectations manuelles, dédupés.
+  itemCount: number;
+  rules: Array<{ categoryKey: string; categoryTitle: string }>;
+  youtubeSources: OwnerVodYoutubeSource[];
+  children: OwnerVodFolder[];
+}
+export const ownerVodFolderSchema: z.ZodType<OwnerVodFolder> = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  kind: vodFolderKindSchema,
+  parentId: z.string().nullable(),
+  isVisible: z.boolean(),
+  effectiveVisible: z.boolean(),
+  sortOrder: z.number(),
+  itemCount: z.number(),
+  rules: z.array(z.object({ categoryKey: z.string(), categoryTitle: z.string() })),
+  youtubeSources: z.array(ownerVodYoutubeSourceSchema),
+  children: z.array(z.lazy(() => ownerVodFolderSchema)),
+});
+// Miroir de ownerCatalogSchema : l'arbre + le solde « sans dossier ».
+export const ownerVodCatalogSchema = z.object({ folders: z.array(ownerVodFolderSchema), unsortedCount: z.number() });
+export type OwnerVodCatalog = z.infer<typeof ownerVodCatalogSchema>;
+// Ligne d'item dans la liste d'un dossier (console) : matchedBy signale si une
+// règle apporte déjà cet item (l'affectation manuelle est alors redondante).
+export const ownerVodItemSummarySchema = z.object({ id: z.string(), kind: vodKindSchema, title: z.string(), posterUrl: z.string().nullable(), categoryTitle: z.string().nullable(), isVisible: z.boolean(), folderIds: z.array(z.string()), matchedBy: z.enum(['RULE', 'MANUAL', 'BOTH']) });
+export type OwnerVodItemSummary = z.infer<typeof ownerVodItemSummarySchema>;
+// Libellés categoryTitle distincts encore libres (picker des règles).
+export const ownerVodAvailableCategorySchema = z.object({ key: z.string(), title: z.string(), count: z.number() });
+export type OwnerVodAvailableCategory = z.infer<typeof ownerVodAvailableCategorySchema>;
+
+export const ownerVodFolderCreateSchema = z.object({ name: z.string().min(1).max(120), kind: vodFolderKindSchema.optional(), parentId: z.string().nullable().optional() });
+export type OwnerVodFolderCreateInput = z.infer<typeof ownerVodFolderCreateSchema>;
+export const ownerVodFolderUpdateSchema = z.object({ name: z.string().min(1).max(120).optional(), kind: vodFolderKindSchema.optional(), isVisible: z.boolean().optional(), parentId: z.string().nullable().optional(), sortOrder: z.number().int().min(0).optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export type OwnerVodFolderUpdateInput = z.infer<typeof ownerVodFolderUpdateSchema>;
+// Remplacement intégral des règles d'un dossier (PUT) : libellés fournisseur, normalisés côté serveur.
+export const ownerVodRulesPutSchema = z.object({ categoryTitles: z.array(z.string().min(1).max(160)).max(200) });
+export type OwnerVodRulesPutInput = z.infer<typeof ownerVodRulesPutSchema>;
+export const ownerVodItemsAddSchema = z.object({ itemIds: z.array(z.string().min(1)).min(1).max(200) });
+export type OwnerVodItemsAddInput = z.infer<typeof ownerVodItemsAddSchema>;
+// Réaffectation N-N d'un item (PATCH item) : la liste fait foi.
+export const ownerVodItemAssignSchema = z.object({ folderIds: z.array(z.string()).max(20), isVisible: z.boolean().optional() });
+export type OwnerVodItemAssignInput = z.infer<typeof ownerVodItemAssignSchema>;
+// Un channelId YouTube est strictement un ID de chaîne ("UC" + 22 chars base64url).
+export const ownerVodYoutubeCreateSchema = z.object({ channelId: z.string().regex(/^UC[A-Za-z0-9_-]{22}$/, 'Identifiant de chaîne YouTube invalide (UC…)'), label: z.string().min(1).max(80).optional() });
+export type OwnerVodYoutubeCreateInput = z.infer<typeof ownerVodYoutubeCreateSchema>;
+export const ownerVodYoutubeUpdateSchema = z.object({ label: z.string().min(1).max(80).nullable().optional(), isActive: z.boolean().optional(), sortOrder: z.number().int().min(0).optional() }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
+export type OwnerVodYoutubeUpdateInput = z.infer<typeof ownerVodYoutubeUpdateSchema>;
 
 export const accessCodeCreateSchema = z.object({ kind: z.enum(['STANDARD', 'PROMO']).default('STANDARD'), durationDays: z.union([z.literal(7), z.literal(14), z.literal(30)]).optional() });
 export type AccessCodeCreateInput = z.infer<typeof accessCodeCreateSchema>;

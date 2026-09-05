@@ -170,6 +170,129 @@ export async function findVodItemById(env, id) {
   return rows.rows[0] ?? null;
 }
 
+// ---- Dossiers administrés (console VOD → app) : miroir de vod.service.ts ---
+// Un parent masqué exclut ses descendants (filtrage serveur, jamais client).
+
+export async function visibleVodFolders(env, kind) {
+  const folders = await env.db.query(
+    env,
+    `SELECT id, slug, name, kind, "parentId", "isVisible", "sortOrder" FROM "VodFolder" ORDER BY "sortOrder" ASC, name ASC`,
+  );
+  const byId = new Map(folders.rows.map((row) => [row.id, row]));
+  const effective = new Map();
+  const visiting = new Set();
+  const compute = (id) => {
+    const cached = effective.get(id);
+    if (cached !== undefined) return cached;
+    if (visiting.has(id)) { effective.set(id, false); return false; }
+    visiting.add(id);
+    const node = byId.get(id);
+    const result = !!node && node.isVisible && (node.parentId == null || !byId.has(node.parentId) || compute(node.parentId));
+    visiting.delete(id);
+    effective.set(id, result);
+    return result;
+  };
+  folders.rows.forEach((row) => compute(row.id));
+  return folders.rows.filter((row) => effective.get(row.id) && (!kind || row.kind === 'BOTH' || row.kind === kind));
+}
+
+async function folderItemWhere(env, slug, kind) {
+  const folders = await visibleVodFolders(env);
+  const folder = folders.find((row) => row.slug === slug);
+  if (!folder) return null;
+  const rules = await env.db.query(env, `SELECT "categoryKey" FROM "VodFolderRule" WHERE "folderId" = $1`, [folder.id]);
+  const keys = rules.rows.map((row) => row.categoryKey);
+  const params = [keys, folder.id];
+  let filterKind = '';
+  if (folder.kind !== 'BOTH') { params.push(folder.kind); filterKind = `AND kind = $${params.length}`; }
+  else if (kind === 'MOVIE' || kind === 'SERIES') { params.push(kind); filterKind = `AND kind = $${params.length}`; }
+  return { folder, sql: `("categoryKey" = ANY($1::text[]) OR EXISTS (SELECT 1 FROM "VodFolderItem" fi WHERE fi."vodItemId" = "VodItem".id AND fi."folderId" = $2)) ${filterKind}`, params };
+}
+
+export async function vodFolders(env, kind) {
+  const visible = await visibleVodFolders(env, kind === 'MOVIE' || kind === 'SERIES' ? kind : undefined);
+  const sources = visible.length > 0
+    ? await env.db.query(
+        env,
+        `SELECT id, "folderId", "channelId", label FROM "VodYoutubeSource" WHERE "isActive" = true AND "folderId" = ANY($1::text[]) ORDER BY "sortOrder" ASC, "createdAt" ASC`,
+        [visible.map((row) => row.id)],
+      )
+    : { rows: [] };
+  const byFolder = new Map();
+  for (const source of sources.rows) {
+    const list = byFolder.get(source.folderId) ?? [];
+    list.push({ id: source.id, channelId: source.channelId, label: source.label ?? null });
+    byFolder.set(source.folderId, list);
+  }
+  return { folders: visible.map((row) => ({ id: row.id, slug: row.slug, name: row.name, kind: row.kind, parentId: row.parentId ?? null, youtubeSources: byFolder.get(row.id) ?? [] })) };
+}
+
+// Contenu d'un dossier : règles ∪ manuel (dédupé), les plus récents d'abord.
+export async function vodFolderRows(env, slug, perRow = 20) {
+  const scoped = await folderItemWhere(env, slug);
+  if (!scoped) return null;
+  const limit = Math.min(Math.max(1, Number(perRow) || 20), 50);
+  const [rows, counts] = await Promise.all([
+    env.db.query(
+      env,
+      `SELECT id, kind, title, "posterUrl", rating, "categoryTitle", "addedAt" FROM "VodItem"
+       WHERE ${VISIBLE_VOD_ITEMS} AND ${scoped.sql}
+       ORDER BY "addedAt" DESC NULLS LAST, title ASC LIMIT ${limit}`,
+      scoped.params,
+    ),
+    env.db.query(env, `SELECT COUNT(*)::int AS count FROM "VodItem" WHERE ${VISIBLE_VOD_ITEMS} AND ${scoped.sql}`, scoped.params),
+  ]);
+  const sources = await env.db.query(
+    env,
+    `SELECT id, "channelId", label FROM "VodYoutubeSource" WHERE "folderId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" ASC`,
+    [scoped.folder.id],
+  );
+  const total = counts.rows[0]?.count ?? 0;
+  return {
+    folder: { id: scoped.folder.id, slug: scoped.folder.slug, name: scoped.folder.name, kind: scoped.folder.kind },
+    youtubeSources: sources.rows.map((source) => ({ id: source.id, channelId: source.channelId, label: source.label ?? null })),
+    items: rows.rows.map(serializeVodItem),
+    total,
+    hasMore: rows.rows.length < total,
+  };
+}
+
+// « Parcourir tout » d'un dossier (pagination pleine).
+export async function vodFolderItems(env, slug, { limit = 48, offset = 0, q } = {}) {
+  const scoped = await folderItemWhere(env, slug);
+  if (!scoped) return null;
+  const params = [...scoped.params];
+  let search = scoped.sql;
+  if (q) { params.push(`%${q}%`); search += ` AND title ILIKE $${params.length}`; }
+  const limitParam = Math.min(Math.max(1, Number(limit) || 48), 100);
+  const offsetParam = Math.max(0, Number(offset) || 0);
+  const [rows, counts] = await Promise.all([
+    env.db.query(
+      env,
+      `SELECT id, kind, title, "posterUrl", rating, "categoryTitle", "addedAt" FROM "VodItem"
+       WHERE ${VISIBLE_VOD_ITEMS} AND ${search}
+       ORDER BY "addedAt" DESC NULLS LAST, title ASC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+      params,
+    ),
+    env.db.query(env, `SELECT COUNT(*)::int AS count FROM "VodItem" WHERE ${VISIBLE_VOD_ITEMS} AND ${search}`, params),
+  ]);
+  const total = counts.rows[0]?.count ?? 0;
+  return { items: rows.rows.map(serializeVodItem), total, hasMore: offsetParam + rows.rows.length < total };
+}
+
+// Allowlist dynamique des chaînes YouTube (proxy /api/yt/*) : sources actives
+// de dossiers effectivement visibles.
+export async function vodYoutubeChannelIds(env) {
+  const visible = await visibleVodFolders(env);
+  if (visible.length === 0) return { channelIds: [] };
+  const rows = await env.db.query(
+    env,
+    `SELECT DISTINCT "channelId" FROM "VodYoutubeSource" WHERE "isActive" = true AND "folderId" = ANY($1::text[])`,
+    [visible.map((row) => row.id)],
+  );
+  return { channelIds: rows.rows.map((row) => row.channelId) };
+}
+
 // Favoris VOD : deviceId du header x-device-id, miroir de favorites.js.
 export async function listVodFavorites(env, deviceId) {
   const rows = await env.db.query(

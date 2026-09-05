@@ -14,6 +14,8 @@ import type {
   ProgrammeSearchResponse,
   ReminderList,
   VodCategory,
+  VodFolderRowsResponse,
+  VodFoldersResponse,
   VodItem,
   VodKind,
   VodHeroResponse,
@@ -312,6 +314,47 @@ export function useVodItem(id: string, enabled = true) {
     queryFn: () => apiGet<VodItem>(`/vod/${id}`),
     enabled: enabled && Boolean(id),
     staleTime: 5 * 60_000,
+  });
+}
+
+// ---- Dossiers VOD (gérés dans la console « Catalogue VOD ») ----
+// staleTime 5 min côté front + max-age 60 s côté edge : latence console→app
+// ≈ 6 min, acceptable pour un catalogue. Erreur ou liste vide = l'app retombe
+// sur son comportement historique (rangs categoryTitle + rail Aforevo env).
+
+export function useVodFolders(kind?: VodKind) {
+  return useQuery({
+    queryKey: ['vod-folders', kind ?? 'all'],
+    queryFn: () => apiGet<VodFoldersResponse>('/vod/folders', { kind }),
+    staleTime: 5 * 60_000,
+  });
+}
+
+// Rail d'accueil : les premiers titres d'un dossier + ses chaînes YouTube.
+export function useVodFolderRows(slug: string | null, perRow = 12) {
+  return useQuery({
+    queryKey: ['vod-folder-rows', slug ?? '', perRow],
+    queryFn: () => apiGet<VodFolderRowsResponse>(`/vod/folders/${encodeURIComponent(slug ?? '')}/rows`, { perRow }),
+    enabled: Boolean(slug),
+    staleTime: 5 * 60_000,
+  });
+}
+
+// « Parcourir tout » d'un dossier — pagination par offset, q transmis au
+// serveur (comme useInfiniteVod).
+export function useInfiniteVodFolderItems(slug: string, q = '', pageSize = 48) {
+  return useInfiniteQuery({
+    queryKey: ['vod-folder-items', slug, q],
+    queryFn: ({ pageParam }) =>
+      apiGet<VodListResponse>(`/vod/folders/${encodeURIComponent(slug)}/items`, {
+        limit: pageSize,
+        offset: pageParam,
+        ...(q.trim() ? { q: q.trim() } : {}),
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.reduce((count, page) => count + page.items.length, 0) : undefined,
+    placeholderData: keepPreviousData,
   });
 }
 

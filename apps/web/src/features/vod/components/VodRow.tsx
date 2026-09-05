@@ -45,12 +45,15 @@ export function useRowPager() {
   return { scrollerRef, atStart, atEnd, scrollByPage, updateArrows };
 }
 
-export function VodRow({ title, count, items, seeAllKind, seeAllCategory }: {
+export function VodRow({ title, count, items, seeAllKind, seeAllCategory, seeAllHref }: {
   title: string;
   count?: number | null;
   items: VodItem[];
-  seeAllKind: 'MOVIE' | 'SERIES';
-  seeAllCategory: string;
+  seeAllKind?: 'MOVIE' | 'SERIES';
+  seeAllCategory?: string;
+  // Prioritaire sur le couple kind/category : les rails « dossier » pointent
+  // vers /vod?dossier=<slug> (les catégories sont réservées au catalogue brut).
+  seeAllHref?: string;
 }) {
   const { scrollerRef, atStart, atEnd, scrollByPage, updateArrows } = useRowPager();
 
@@ -59,8 +62,9 @@ export function VodRow({ title, count, items, seeAllKind, seeAllCategory }: {
   }, [updateArrows, items.length]);
 
   if (items.length === 0) return null;
-  const params = new URLSearchParams({ kind: seeAllKind });
+  const params = new URLSearchParams({ kind: seeAllKind ?? 'MOVIE' });
   if (seeAllCategory) params.set('category', seeAllCategory);
+  const href = seeAllHref ?? `/vod?${params.toString()}`;
 
   return (
     <section className="group/row mb-7">
@@ -69,7 +73,7 @@ export function VodRow({ title, count, items, seeAllKind, seeAllCategory }: {
           {title}
           {typeof count === 'number' && count > 0 && <span className="ml-2 text-xs font-medium text-muted">{count} titres</span>}
         </h2>
-        <Link href={`/vod?${params.toString()}`} className="flex items-center gap-1 text-xs font-semibold text-muted opacity-0 transition-opacity hover:text-accent group-hover/row:opacity-100 max-md:opacity-100">
+        <Link href={href} className="flex items-center gap-1 text-xs font-semibold text-muted opacity-0 transition-opacity hover:text-accent group-hover/row:opacity-100 max-md:opacity-100">
           Voir tout <Icon.ChevronRight size={14} />
         </Link>
       </div>

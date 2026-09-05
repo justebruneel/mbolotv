@@ -4,10 +4,10 @@ import type { OwnerCatalog, OwnerCategory, OwnerChannel } from '@mbolo/contracts
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ownerApi } from '../../../../../features/owner/api/owner-api';
 import { FeaturedByCountryCard } from '../../../../../features/owner/components/featured-by-country';
+import { ParentPicker } from '../../../../../features/owner/components/parent-picker';
+import { buildChildrenByParent, buildOrderMap, flattenTree, type OrderInfo } from '../../../../../features/owner/components/tree-utils';
 
 type Tests = Record<string, string>;
-
-type OrderInfo = { siblings: OwnerCategory[]; index: number };
 
 type ChannelPage = { items: OwnerChannel[]; total: number };
 
@@ -19,34 +19,6 @@ const AUTO_OPEN_MAX_CHANNELS = 100;
 
 function pageKey(categoryId: string | null): string {
   return categoryId ?? 'none';
-}
-
-function flattenCategories(nodes: OwnerCategory[], acc: OwnerCategory[] = []): OwnerCategory[] {
-  for (const node of nodes) { acc.push(node); flattenCategories(node.children ?? [], acc); }
-  return acc;
-}
-
-function buildOrderMap(nodes: OwnerCategory[]): Map<string, OrderInfo> {
-  const map = new Map<string, OrderInfo>();
-  const walk = (list: OwnerCategory[]): void => {
-    list.forEach((node, index) => { map.set(node.id, { siblings: list, index }); walk(node.children ?? []); });
-  };
-  walk(nodes);
-  return map;
-}
-
-function buildChildrenByParent(nodes: OwnerCategory[]): Map<string | null, OwnerCategory[]> {
-  const map = new Map<string | null, OwnerCategory[]>();
-  const walk = (list: OwnerCategory[]): void => {
-    for (const node of list) {
-      const bucket = map.get(node.parentId) ?? [];
-      bucket.push(node);
-      map.set(node.parentId, bucket);
-      walk(node.children ?? []);
-    }
-  };
-  walk(nodes);
-  return map;
 }
 
 const ChannelRow = memo(function ChannelRow({ channel, onToggle, onTest, tests, busy, selectable, selected, onSelect }: { channel: OwnerChannel; onToggle: (id: string, visible: boolean) => void; onTest: (id: string) => void; tests: Tests; busy: string | null; selectable?: boolean; selected?: boolean; onSelect?: (id: string) => void }) {
@@ -89,40 +61,6 @@ function ChannelList({ page, onToggle, onTest, tests, busy, onLoadMore, selectab
   );
 }
 
-function ParentPicker({ allFlat, childrenByParent, nodeId, currentParentId, onMove }: { allFlat: OwnerCategory[]; childrenByParent: Map<string | null, OwnerCategory[]>; nodeId: string; currentParentId: string | null; onMove: (parentId: string | null) => void }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const exclude = useMemo(() => {
-    const set = new Set<string>([nodeId]);
-    const stack = [nodeId];
-    while (stack.length) { const current = stack.pop() as string; for (const child of childrenByParent.get(current) ?? []) { set.add(child.id); stack.push(child.id); } }
-    return set;
-  }, [nodeId, childrenByParent]);
-  const options = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return allFlat.filter((category) => !exclude.has(category.id) && (!q || category.name.toLowerCase().includes(q))).slice(0, 20);
-  }, [query, allFlat, exclude]);
-  if (!open) return <button type="button" className="btn" onClick={() => setOpen(true)}>Déplacer…</button>;
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <input
-        value={query}
-        autoFocus
-        placeholder="Dossier parent…"
-        onChange={(event) => setQuery(event.target.value)}
-        className="min-w-[180px] flex-1 rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-sm"
-      />
-      <div className="flex max-h-40 w-full flex-wrap gap-1 overflow-y-auto">
-        <button type="button" className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium hover:bg-surface-3" onClick={() => { onMove(null); setOpen(false); setQuery(''); }}>Racine</button>
-        {options.map((option) => (
-          <button key={option.id} type="button" className="rounded-md bg-surface-2 px-2 py-1 text-xs font-medium hover:bg-surface-3" onClick={() => { onMove(option.id); setOpen(false); setQuery(''); }}>{option.name}{option.id === currentParentId ? ' (actuel)' : ''}</button>
-        ))}
-      </div>
-      <button type="button" className="btn" onClick={() => { setOpen(false); setQuery(''); }}>Annuler</button>
-    </div>
-  );
-}
-
 function CategoryNode({ node, depth, onUpdate, onCreateSub, onDelete, onToggleChannel, onTest, onReorder, onMoveParent, tests, busy, orderMap, allFlat, childrenByParent, getChannels, isChannelsLoading, ensureChannels, loadMoreChannels }: {
   node: OwnerCategory;
   depth: number;
@@ -135,7 +73,7 @@ function CategoryNode({ node, depth, onUpdate, onCreateSub, onDelete, onToggleCh
   onMoveParent: (id: string, parentId: string | null) => void;
   tests: Tests;
   busy: string | null;
-  orderMap: Map<string, OrderInfo>;
+  orderMap: Map<string, OrderInfo<OwnerCategory>>;
   allFlat: OwnerCategory[];
   childrenByParent: Map<string | null, OwnerCategory[]>;
   getChannels: (categoryId: string) => ChannelPage | undefined;
@@ -256,8 +194,8 @@ export default function CatalogControlPage() {
   const [uncatSelected, setUncatSelected] = useState<Set<string>>(new Set());
   const [deletingChannels, setDeletingChannels] = useState(false);
 
-  const orderMap = useMemo(() => (catalog ? buildOrderMap(catalog.categories) : new Map<string, OrderInfo>()), [catalog]);
-  const allFlat = useMemo(() => (catalog ? flattenCategories(catalog.categories) : []), [catalog]);
+  const orderMap = useMemo(() => (catalog ? buildOrderMap(catalog.categories) : new Map<string, OrderInfo<OwnerCategory>>()), [catalog]);
+  const allFlat = useMemo(() => (catalog ? flattenTree(catalog.categories) : []), [catalog]);
   const childrenByParent = useMemo(() => (catalog ? buildChildrenByParent(catalog.categories) : new Map<string | null, OwnerCategory[]>()), [catalog]);
 
   useEffect(() => { void reload(); }, []);

@@ -20,6 +20,15 @@ import type {
   OwnerMe,
   OwnerProfile,
   OwnerProfileUpdateInput,
+  OwnerVodAvailableCategory,
+  OwnerVodCatalog,
+  OwnerVodFolderCreateInput,
+  OwnerVodFolderUpdateInput,
+  OwnerVodItemAssignInput,
+  OwnerVodItemSummary,
+  OwnerVodYoutubeCreateInput,
+  OwnerVodYoutubeSource,
+  OwnerVodYoutubeUpdateInput,
   SourceCreateInput,
   SourceCredentials,
   SourceDetail,
@@ -72,6 +81,40 @@ export const ownerApi = {
     update: (id: string, input: OwnerCategoryUpdateInput): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerCatalog>),
     remove: (id: string): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<OwnerCatalog>),
     removeBatch: (ids: string[]): Promise<OwnerCatalog> => fetch(`${BASE_URL}/owner/categories/delete-batch`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ ids }) }).then(parseResponse<OwnerCatalog>),
+  },
+  // ---- Catalogue VOD : dossiers, règles, affectations, sources YouTube ----
+  vod: {
+    catalog: (): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/catalog`, { credentials: 'include' }).then(parseResponse<OwnerVodCatalog>),
+    items: (params: { folderId?: string | null; q?: string; kind?: 'MOVIE' | 'SERIES'; limit?: number; offset?: number } = {}): Promise<{ items: OwnerVodItemSummary[]; total: number }> => {
+      const search = new URLSearchParams();
+      if (params.folderId != null) search.set('folderId', params.folderId);
+      if (params.q) search.set('q', params.q);
+      if (params.kind) search.set('kind', params.kind);
+      if (params.limit != null) search.set('limit', String(params.limit));
+      if (params.offset != null) search.set('offset', String(params.offset));
+      const qs = search.toString();
+      return fetch(`${BASE_URL}/owner/vod/catalog/items${qs ? `?${qs}` : ''}`, { credentials: 'include' }).then(parseResponse<{ items: OwnerVodItemSummary[]; total: number }>);
+    },
+    availableCategories: (kind?: 'MOVIE' | 'SERIES'): Promise<OwnerVodAvailableCategory[]> => fetch(`${BASE_URL}/owner/vod/categories/available${kind ? `?kind=${kind}` : ''}`, { credentials: 'include' }).then(parseResponse<OwnerVodAvailableCategory[]>),
+    folders: {
+      create: (input: OwnerVodFolderCreateInput): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/folders`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerVodCatalog>),
+      update: (id: string, input: OwnerVodFolderUpdateInput): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/folders/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerVodCatalog>),
+      remove: (id: string): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/folders/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<OwnerVodCatalog>),
+    },
+    rules: {
+      set: (folderId: string, categoryTitles: string[]): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/folders/${folderId}/rules`, { method: 'PUT', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ categoryTitles }) }).then(parseResponse<OwnerVodCatalog>),
+    },
+    assign: {
+      addToFolder: (folderId: string, itemIds: string[]): Promise<{ added: number }> => fetch(`${BASE_URL}/owner/vod/folders/${folderId}/items`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ itemIds }) }).then(parseResponse<{ added: number }>),
+      removeFromFolder: (folderId: string, itemId: string): Promise<void> => fetch(`${BASE_URL}/owner/vod/folders/${folderId}/items/${itemId}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
+      setItemFolders: (itemId: string, input: OwnerVodItemAssignInput): Promise<OwnerVodItemSummary> => fetch(`${BASE_URL}/owner/vod/items/${itemId}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerVodItemSummary>),
+    },
+    youtube: {
+      list: (folderId: string): Promise<{ items: OwnerVodYoutubeSource[] }> => fetch(`${BASE_URL}/owner/vod/folders/${folderId}/youtube`, { credentials: 'include' }).then(parseResponse<{ items: OwnerVodYoutubeSource[] }>),
+      create: (folderId: string, input: OwnerVodYoutubeCreateInput): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/folders/${folderId}/youtube`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerVodCatalog>),
+      update: (id: string, input: OwnerVodYoutubeUpdateInput): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/youtube/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerVodCatalog>),
+      remove: (id: string): Promise<OwnerVodCatalog> => fetch(`${BASE_URL}/owner/vod/youtube/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<OwnerVodCatalog>),
+    },
   },
   profile: (): Promise<OwnerProfile> => fetch(`${BASE_URL}/owner/profile`, { credentials: 'include' }).then(parseResponse<OwnerProfile>),
   profileUpdate: (input: OwnerProfileUpdateInput): Promise<OwnerProfile> => fetch(`${BASE_URL}/owner/profile`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<OwnerProfile>),
