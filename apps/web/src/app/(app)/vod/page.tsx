@@ -1,7 +1,7 @@
 'use client';
 
 import { EmptyState, Icon, Spinner } from '@mbolo/ui';
-import type { VodKind } from '@mbolo/contracts';
+import type { VodKind, YoutubeVideo } from '@mbolo/contracts';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteVod, useInfiniteYoutube, useVodCategories, useVodHero, useVodRows } from '../../../shared/api/queries';
@@ -60,6 +60,12 @@ function ResumeRow() {
   );
 }
 
+// Dédupe par id : un décalage playlistItems (nouvelle vidéo publiée entre
+// deux pages) duplique un item — collision de key React + visuel doublé.
+function dedupeYoutubeItems(items: YoutubeVideo[]): YoutubeVideo[] {
+  return [...new Map(items.map((item) => [item.id, item])).values()];
+}
+
 // Rail Nollywood de l'accueil Films : première page du catalogue YouTube
 // (playlistItems = 1 unité de quota, cache sessionStorage 30 min). Se masque
 // silencieusement si la source est vide ou en erreur (quota épuisé…) —
@@ -67,11 +73,35 @@ function ResumeRow() {
 function NollywoodRail() {
   const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25, '');
   if (query.isLoading || query.isError) return null;
-  // Dédupe par id : un décalage playlistItems (nouvelle vidéo publiée entre
-  // deux pages) duplique un item — collision de key React + visuel doublé.
-  const items = [...new Map((query.data?.pages[0]?.items ?? []).map((item) => [item.id, item])).values()];
+  const items = dedupeYoutubeItems(query.data?.pages[0]?.items ?? []);
   if (items.length === 0) return null;
   return <YoutubeRow title="Nollywood" items={items} seeAllHref={NOLLYWOOD_DOSSIER_HREF} />;
+}
+
+// Catalogue VOD vide sur l'onglet Films : la collection Nollywood (YouTube)
+// porte la page seule au lieu d'un « Aucun résultat » — une panne du
+// fournisseur VOD (purge d'import, 0 film actif…) ne doit pas masquer une
+// source YouTube qui, elle, répond. Si YouTube est vide/en erreur aussi,
+// l'état vide honnête revient.
+function NollywoodOnly({ onBrowseAll }: { onBrowseAll: () => void }) {
+  const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25, '');
+  const items = dedupeYoutubeItems(query.data?.pages[0]?.items ?? []);
+  // YouTube en cours : on attend — il reste la dernière source vivante.
+  if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  // YouTube vide ou en erreur : plus aucune source disponible -> état vide.
+  if (items.length === 0) {
+    return <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
+  }
+  return (
+    <>
+      {items.length > 0 && <YoutubeRow title="Nollywood" items={items} seeAllHref={NOLLYWOOD_DOSSIER_HREF} />}
+      <div className="mt-2 flex justify-center">
+        <button type="button" onClick={onBrowseAll} className="btn">
+          Parcourir tout le catalogue <Icon.ChevronRight size={14} />
+        </button>
+      </div>
+    </>
+  );
 }
 
 // Accueil façon Netflix : héros plein écran (derniers ajouts), collection
@@ -86,7 +116,10 @@ function VodHome({ kind, onBrowseAll }: { kind: 'MOVIE' | 'SERIES'; onBrowseAll:
 
   const hero = heroQuery.data?.items ?? [];
   const rows = rowsQuery.data?.rows ?? [];
-  if (rows.length === 0 && hero.length === 0) return <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
+  if (rows.length === 0 && hero.length === 0) {
+    // Sur Séries (pas de collection YouTube), état vide comme avant.
+    return kind === 'MOVIE' ? <NollywoodOnly onBrowseAll={onBrowseAll} /> : <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
+  }
 
   return (
     <>
