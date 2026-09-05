@@ -62,6 +62,8 @@ export default function PreferencesPage() {
   const setMiniPlayerOnBrowse = useSettingsStore((state) => state.setMiniPlayerOnBrowse);
   const lastWatched = useSettingsStore((state) => state.lastWatched);
   const clearLastWatched = useSettingsStore((state) => state.clearLastWatched);
+  const vodProgressCount = useSettingsStore((state) => Object.keys(state.vodProgress).length);
+  const clearAllVodProgress = useSettingsStore((state) => state.clearAllVodProgress);
   const [clearing, setClearing] = useState(false);
   const push = usePush();
   const [pushBusy, setPushBusy] = useState(false);
@@ -230,12 +232,19 @@ export default function PreferencesPage() {
         <h2 className="text-xs font-bold uppercase tracking-widest text-muted">Données</h2>
         <Row
           title="Historique de lecture"
-          hint={lastWatched.length > 0 ? `${lastWatched.length} chaîne${lastWatched.length > 1 ? 's' : ''} mémorisée${lastWatched.length > 1 ? 's' : ''} pour « Reprendre ».` : 'Aucune chaîne mémorisée.'}
+          hint={
+            lastWatched.length > 0 || vodProgressCount > 0
+              ? `${lastWatched.length} chaîne${lastWatched.length > 1 ? 's' : ''} et ${vodProgressCount} titre${vodProgressCount > 1 ? 's' : ''} VOD mémorisé${vodProgressCount > 1 ? 's' : ''} pour « Reprendre ».`
+              : 'Aucun historique mémorisé.'
+          }
         >
           <button
             type="button"
-            onClick={clearLastWatched}
-            disabled={lastWatched.length === 0}
+            onClick={() => {
+              clearLastWatched();
+              clearAllVodProgress();
+            }}
+            disabled={lastWatched.length === 0 && vodProgressCount === 0}
             className="shrink-0 rounded-xl border border-border px-3.5 py-2 text-xs font-bold text-muted transition hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >
             Effacer

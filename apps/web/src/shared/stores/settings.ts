@@ -47,6 +47,7 @@ interface SettingsState {
   setBrowseViewMode: (mode: 'grid' | 'list') => void;
   recordVodProgress: (entry: VodProgressEntry) => void;
   clearVodProgress: (id: string) => void;
+  clearAllVodProgress: () => void;
 }
 
 const MAX_LAST_WATCHED = 5;
@@ -102,6 +103,7 @@ export const useSettingsStore = create<SettingsState>()(
           delete next[id];
           return { vodProgress: next };
         }),
+      clearAllVodProgress: () => set({ vodProgress: {} }),
     }),
     { name: 'mbolo-settings', partialize: (state) => ({ ...state, lastNonWatchPath: undefined, lastWatchedChannelId: undefined }) },
   ),
