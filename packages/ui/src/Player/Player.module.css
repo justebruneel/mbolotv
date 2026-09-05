@@ -640,20 +640,26 @@
 }
 
 /* VOD mobile : une SEULE barre de contrôles (la barre générique est réservée
-   au direct côté JS) et la seekbar ne passe plus SOUS cette barre — la rangée
-   d'icônes garde le bas du cadre, la barre de progression s'empile au-dessus.
-   La variable reprend la hauteur réelle de la barre : 10 px de padding haut
-   + boutons 44 px + padding bas suivant la zone de sécurité. */
+   au direct côté JS). La seekbar reste COLLÉE en bas du cadre — au-dessus de
+   la rangée d'icônes, elle « flottait » au milieu de l'image quand les
+   contrôles s'auto-masquent ; ici la rangée d'icônes est empilée AU-DESSUS de
+   la seekbar. La variable = hauteur réelle de la seekbar (padding haut 6 px +
+   ~20 px de contenu + padding bas suivant la zone de sécurité). */
 .vod {
-  --vod-bottom-bar-h: calc(54px + max(10px, env(safe-area-inset-bottom)));
+  --vod-seek-h: calc(26px + max(10px, env(safe-area-inset-bottom)));
 }
 .vod .seekBar {
-  bottom: var(--vod-bottom-bar-h);
+  bottom: 0;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
-/* Pseudo-plein écran : la barre est rehaussée de max(16 px, safe-area), la
-   seekbar suit d'autant pour ne pas la chevaucher. */
-.pseudoFullscreen.vod .seekBar {
-  bottom: calc(var(--vod-bottom-bar-h) + max(16px, env(safe-area-inset-bottom)));
+.vod .mobileBottomBar {
+  bottom: calc(var(--vod-seek-h) + 4px);
+  padding-bottom: 10px;
+}
+/* Pseudo-plein écran : la rangée est rehaussée de max(16 px, safe-area), la
+   seekbar (collée au bord) n'en tient pas compte -> on empile par-dessus. */
+.pseudoFullscreen.vod .mobileBottomBar {
+  bottom: calc(var(--vod-seek-h) + 4px + max(16px, env(safe-area-inset-bottom)));
 }
 
 .mobileIconBtn {
