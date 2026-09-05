@@ -639,6 +639,23 @@
   pointer-events: auto;
 }
 
+/* VOD mobile : une SEULE barre de contrôles (la barre générique est réservée
+   au direct côté JS) et la seekbar ne passe plus SOUS cette barre — la rangée
+   d'icônes garde le bas du cadre, la barre de progression s'empile au-dessus.
+   La variable reprend la hauteur réelle de la barre : 10 px de padding haut
+   + boutons 44 px + padding bas suivant la zone de sécurité. */
+.vod {
+  --vod-bottom-bar-h: calc(54px + max(10px, env(safe-area-inset-bottom)));
+}
+.vod .seekBar {
+  bottom: var(--vod-bottom-bar-h);
+}
+/* Pseudo-plein écran : la barre est rehaussée de max(16 px, safe-area), la
+   seekbar suit d'autant pour ne pas la chevaucher. */
+.pseudoFullscreen.vod .seekBar {
+  bottom: calc(var(--vod-bottom-bar-h) + max(16px, env(safe-area-inset-bottom)));
+}
+
 .mobileIconBtn {
   display: inline-flex;
   align-items: center;
