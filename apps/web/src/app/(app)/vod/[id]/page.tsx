@@ -9,6 +9,7 @@ import { useVodPlayerStore } from '../../../../shared/stores/player';
 import { useVodFavoritesStore } from '../../../../shared/stores/vodFavorites';
 import { useSettingsStore } from '../../../../shared/stores/settings';
 import { FavoriteButton } from '@mbolo/ui';
+import { ApiError } from '../../../../shared/api/client';
 
 function formatTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -16,6 +17,28 @@ function formatTime(seconds: number): string {
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// Item parti du catalogue fournisseur (purge d'import, retrait du flux) :
+// la tuile « Reprendre » mène ici — page sans sortie. Un bouton rend le
+// retour possible, et si une reprise locale existe (item probablement
+// éliminé par une purge), elle est retirée du rail pour nettoyer la liste.
+function Unavailable({ gone, onRetire }: { gone: boolean; onRetire?: () => void }) {
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-16">
+      <EmptyState title="Contenu introuvable" hint={gone ? 'Ce titre n\'est plus disponible dans le catalogue.' : 'Impossible de charger ce titre pour le moment.'} />
+      <div className="mt-6 flex justify-center gap-3">
+        {onRetire && (
+          <button type="button" onClick={onRetire} className="btn">
+            <Icon.Trash2 size={14} /> Retirer de « Reprendre »
+          </button>
+        )}
+        <Link href="/vod" className="btn btn-primary">
+          <Icon.ChevronLeft size={14} /> Catalogue
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 // Fiche façon Netflix : backdrop 16:9 plein cadre (affiche TMDB haute
@@ -37,6 +60,7 @@ function VodDetailContent() {
   const isFavorite = useVodFavoritesStore((state) => state.ids.includes(id));
   const toggleFavorite = useVodFavoritesStore((state) => state.toggle);
   const progress = useSettingsStore((state) => state.vodProgress[id]);
+  const clearVodProgress = useSettingsStore((state) => state.clearVodProgress);
 
   // Saisons avec épisodes réellement listés (certains panels déclarent une
   // saison vide) ; défaut : saison/épisode 1 jouables, sinon les premiers.
@@ -70,7 +94,14 @@ function VodDetailContent() {
 
   if (!id) return <EmptyState title="Contenu introuvable" />;
   if (itemQuery.isLoading) return <div className="flex justify-center py-24"><Spinner /></div>;
-  if (itemQuery.isError || !itemQuery.data) return <EmptyState title="Contenu introuvable" hint="Ce film ou cette série n'est plus disponible." />;
+  if (itemQuery.isError || !itemQuery.data) {
+    return (
+      <Unavailable
+        gone={itemQuery.error instanceof ApiError && itemQuery.error.status === 404}
+        onRetire={progress ? () => clearVodProgress(id) : undefined}
+      />
+    );
+  }
 
   const item = itemQuery.data;
   // Backdrop réel si l'enrichissement TVmaze en fournit un, sinon fallback

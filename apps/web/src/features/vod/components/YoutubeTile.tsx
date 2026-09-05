@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useYoutubeFavoritesStore, youtubeProgressId } from '../../../shared/stores/youtubeFavorites';
 import { useSettingsStore } from '../../../shared/stores/settings';
+import { formatPublishedRelative } from '../../../shared/utils/formatPublishedRelative';
 
 // Fiche joignable même si l'API détail est injoignable : la tuile embarque
 // titre/affiche/date en params (repli n°3 après API puis cache React Query).
@@ -25,6 +26,7 @@ export function YoutubeTile({ item }: { item: YoutubeVideo }) {
   const toggle = useYoutubeFavoritesStore((state) => state.toggle);
   const [posterError, setPosterError] = useState(false);
   const progress = useSettingsStore((state) => state.vodProgress[progressId]);
+  const publishedLabel = item.publishedAt ? formatPublishedRelative(item.publishedAt) : null;
 
   return (
     <article className="group relative min-w-0">
@@ -59,7 +61,7 @@ export function YoutubeTile({ item }: { item: YoutubeVideo }) {
       </div>
       <div className="mt-2 px-0.5">
         <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-foreground transition-colors duration-200 group-hover:text-accent">{item.title}</p>
-        {item.publishedAt && <p className="mt-0.5 truncate text-[11px] text-muted">{new Date(item.publishedAt).toLocaleDateString('fr-FR')}</p>}
+        {item.publishedAt && publishedLabel && <p className="mt-0.5 truncate text-[11px] text-muted">{publishedLabel}</p>}
       </div>
     </article>
   );
