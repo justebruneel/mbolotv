@@ -646,20 +646,36 @@
    la seekbar. La variable = hauteur réelle de la seekbar (padding haut 6 px +
    ~20 px de contenu + padding bas suivant la zone de sécurité). */
 .vod {
-  --vod-seek-h: calc(26px + max(10px, env(safe-area-inset-bottom)));
+  /* Hauteur visible de la seekbar mobile = piste centrée dans ~14 px de
+     contenu + padding bas (zone de sécurité) : la rangée d'icônes se cale
+     juste au-dessus, sans trou. */
+  --vod-seek-h: calc(13px + max(10px, env(safe-area-inset-bottom)));
 }
 .vod .seekBar {
   bottom: 0;
   padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
 .vod .mobileBottomBar {
-  bottom: calc(var(--vod-seek-h) + 4px);
+  bottom: var(--vod-seek-h);
   padding-bottom: 10px;
 }
 /* Pseudo-plein écran : la rangée est rehaussée de max(16 px, safe-area), la
    seekbar (collée au bord) n'en tient pas compte -> on empile par-dessus. */
 .pseudoFullscreen.vod .mobileBottomBar {
-  bottom: calc(var(--vod-seek-h) + 4px + max(16px, env(safe-area-inset-bottom)));
+  bottom: calc(var(--vod-seek-h) + max(16px, env(safe-area-inset-bottom)));
+}
+/* VOD mobile : la seekbar s'estompe EN MÊME TEMPS que la rangée d'icônes
+   (elle était toujours redevable du « en bas, visible en permanence » du
+   desktop ; ici les contrôles auto-masqués laissaient la piste seule sur
+   l'image). Desktop inchangé : piste visible en continu. */
+.mobile.vod .seekBar {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--mbolo-duration-base) var(--mbolo-ease-out);
+}
+.controlsVisible.mobile.vod .seekBar {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .mobileIconBtn {
