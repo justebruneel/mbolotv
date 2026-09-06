@@ -162,6 +162,23 @@ function ExternalDetailContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [queryClient, selected]);
 
+  // Valeurs dérivées calculées AVANT les early-returns : playing et trailer
+  // dépendent de requêtes, pas de `item` — et tout hook doit être appelé sur
+  // CHAQUE render (React #310 : l'appeler après un return conditionnel fait
+  // varier le nombre de hooks entre le render « chargement » et le render
+  // « fiche », exactement le crash minifié #310).
+  const directUrls = selected?.mode === 'direct' && requestedRef === selected.playRef ? playQuery.data?.urls ?? [] : [];
+  // Repli intelligent : la résolution directe a échoué (extracteur périmé,
+  // CDN indisponible…) — on monte l'embed du lecteur en iframe pour que le
+  // film joue quand même, le Player Mbolo restant la voie préférée.
+  const directFailed = selected?.mode === 'direct' && requestedRef !== null && playQuery.isError && directUrls.length === 0;
+  const iframePlaying = (selected?.mode === 'iframe' && iframeStarted) || directFailed;
+  const playing = directUrls.length > 0 || iframePlaying;
+  // Bande-annonce façon Netflix : iframe YouTube muette en boucle derrière le
+  // hero (différée 2,5 s), son sur geste explicite (bouton / clic image).
+  // Coupée dès que le film joue (videoId vide = pas d'iframe montée).
+  const trailer = useTrailerEmbed(playing ? '' : (detailQuery.data?.trailerYoutubeId ?? ''));
+
   // Enchaînement automatique : la résolution du lecteur courant a échoué
   // (extracteur périmé, CDN indisponible…) → on tente le lecteur DIRECT
   // suivant de la liste (VF prioritaire), l'iframe n'étant que le dernier
@@ -202,16 +219,6 @@ function ExternalDetailContent() {
 
   const item = detailQuery.data;
   const backdropUrl = item.backdropUrl ?? item.posterUrl;
-  const directUrls = selected?.mode === 'direct' && requestedRef === selected.playRef ? playQuery.data?.urls ?? [] : [];
-  // Repli intelligent : la résolution directe a échoué (extracteur périmé,
-  // CDN indisponible…) — on monte l'embed du lecteur en iframe pour que le
-  // film joue quand même, le Player Mbolo restant la voie préférée.
-  const directFailed = selected?.mode === 'direct' && requestedRef !== null && playQuery.isError && directUrls.length === 0;
-  const iframePlaying = (selected?.mode === 'iframe' && iframeStarted) || directFailed;
-  const playing = directUrls.length > 0 || iframePlaying;
-  // Bande-annonce façon Netflix : iframe YouTube muette en boucle derrière le
-  // hero (différée 2,5 s), son sur geste explicite (bouton / clic image).
-  const trailer = useTrailerEmbed(playing ? '' : (item?.trailerYoutubeId ?? ''));
 
   return (
     <div className="pb-10">
