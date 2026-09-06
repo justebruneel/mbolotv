@@ -43,6 +43,23 @@ Helpers partagés : `http.js` (`fetchEmbedText` cascade relais→direct,
 - **Garde anti-exfiltration** : chaque adapter allowliste son CDN
   (ex. `mxcontent.net`) — le proxy signé ne relaie que ce qui est vérifié.
 - **Route protégée** par grant actif, comme `/api/vod/:id/play`.
+- **Diagnostic joint aux erreurs** : `fetchEmbedText`/`probeDirectUrl`
+  horodatent chaque tentative (`relais`/`direct` + statut/erreur + ms),
+  attachées à l'erreur (`.attempts`) et résumées (`attemptsSummary`,
+  ex. `relais: timeout (15012ms) ; direct: HTTP 403 (812ms)`).
+  `checkSource`/`checkEmbedPage` les renvoient (`detail`) : recheck console
+  et rejets de publication les affichent — fini le debug aveugle.
+
+## Modes de lecture : direct + iframe
+
+- `direct` (mixdrop/dood/voe/uqload) : résolu via `/api/x/play`, lu dans le
+  lecteur maison sans pubs.
+- `iframe` (premium/fsvid, vidzy, filmoon, netu, …) : embed d'origine lu tel
+  quel en iframe en attendant son extracteur. Vérifié par existence de la
+  page (200), re-vérifié par le cron de la même façon.
+- Colonne `ExternalSource.mode` (migration `20260906000001`). La publication
+  ne crée **jamais de titre vide** : vérification avant écriture, 422 sinon.
+  Le détail public expose `mode` + `playRef` (URL `/api/x/play` ou embed).
 
 ## Exploitation
 

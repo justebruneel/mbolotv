@@ -7,8 +7,8 @@ import { externalHostSchema } from '@mbolo/contracts';
 import type { FichePreview, OwnerExternalTitle } from '@mbolo/contracts';
 import { ownerApi } from '../api/owner-api';
 
-// Hosts résolus en direct par les extracteurs (les autres : iframe uniquement,
-// rejetés à la publication avec motif).
+// Hosts résolus en direct par les extracteurs ; les autres sont publiés en
+// repli iframe (embed lu tel quel) en attendant leur extracteur.
 const SUPPORTED_HOSTS = new Set<string>(externalHostSchema.options);
 
 const STATUS_META: Record<string, { label: string; tone: BadgeTone }> = {
@@ -57,7 +57,7 @@ export function ExternalTitlesSection() {
     try {
       const data = await ownerApi.vod.external.preview(ficheUrl);
       setPreview(data);
-      setSelected(new Set(data.players.filter((player) => SUPPORTED_HOSTS.has(player.host)).map((player) => player.host)));
+      setSelected(new Set(data.players.map((player) => player.host)));
       setError(null);
     } catch (reason) {
       setPreview(null);
@@ -72,7 +72,7 @@ export function ExternalTitlesSection() {
     setBusy('publish');
     try {
       const result = await ownerApi.vod.external.publish({ url: preview.ficheUrl, hosts: [...selected] });
-      const rejected = result.rejected.length > 0 ? ` Rejetés : ${result.rejected.map((entry) => `${entry.host} (${entry.reason})`).join(', ')}.` : '';
+      const rejected = result.rejected.length > 0 ? ` Rejetés : ${result.rejected.map((entry) => `${entry.host} (${entry.reason}${entry.detail ? ` — ${entry.detail}` : ''})`).join(', ')}.` : '';
       const skipped = result.skipped > 0 ? ` ${result.skipped} déjà présent(s).` : '';
       setNotice(`« ${result.title} » : ${result.inserted} lecteur(s) publié(s).${skipped}${rejected}`);
       setPreview(null);
@@ -114,8 +114,8 @@ export function ExternalTitlesSection() {
       <div>
         <h2 className="text-lg font-bold">Titres externes (lecteurs tiers)</h2>
         <p className="mt-1 text-sm text-muted">
-          Collez l’URL d’une fiche (French Stream, …) : l’aperçu liste les lecteurs détectés, la publication ne garde que les lecteurs vérifiés (probe).
-          La santé est re-vérifiée en continu (cron) avec bascule sur les lecteurs sains côté lecteur.
+          Collez l’URL d’une fiche (French Stream, …) : l’aperçu liste les lecteurs détectés, la publication vérifie chacun (direct : probe complet ;
+          autres : repli iframe) et ne garde que les sains — jamais de titre vide. La santé est re-vérifiée en continu (cron).
         </p>
       </div>
 
@@ -157,7 +157,7 @@ export function ExternalTitlesSection() {
                     <Badge tone={supported ? 'accent' : 'default'}>{player.host}</Badge>
                   </label>
                   <span className="text-xs text-muted">{player.versions.join(', ')}{player.wrapped ? ' · wrapper suivi' : ''}</span>
-                  {!supported && <span className="text-xs text-muted">— iframe uniquement, rejeté à la publication</span>}
+                  {!supported && <span className="text-xs text-muted">— repli iframe (embed tel quel)</span>}
                 </li>
               );
             })}
@@ -203,6 +203,7 @@ export function ExternalTitlesSection() {
                   {title.sources.map((source) => (
                     <li key={source.id} className={`flex flex-wrap items-center gap-2 text-sm ${source.isActive ? '' : 'opacity-60'}`}>
                       <Badge tone="accent">{source.host}</Badge>
+                      <Badge tone={source.mode === 'iframe' ? 'default' : 'accent'}>{source.mode === 'iframe' ? 'iframe' : 'direct'}</Badge>
                       <span className="text-xs text-muted">{source.versions.join(', ')}</span>
                       <StatusPill status={source.lastStatus} />
                       {source.lastError && <span className="max-w-full truncate text-xs text-muted" title={source.lastError}>{source.lastError}</span>}
@@ -211,7 +212,17 @@ export function ExternalTitlesSection() {
                         type="button"
                         className="btn"
                         disabled={busy === `re:${source.id}`}
-                        onClick={() => void mutate(`re:${source.id}`, () => ownerApi.vod.external.recheckSource(source.id))}
+                        onClick={() => {
+                          setBusy(`re:${source.id}`);
+                          ownerApi.vod.external.recheckSource(source.id)
+                            .then((result) => {
+                              setNotice(result.lastStatus === 'OK' ? `« ${title.title} » (${source.host}) : OK.` : `« ${title.title} » (${source.host}) : ${result.lastStatus} — ${result.lastError ?? ''}${result.detail ? ` (${result.detail})` : ''}`);
+                              setError(null);
+                              return reload();
+                            })
+                            .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Revérification impossible.'))
+                            .finally(() => setBusy(null));
+                        }}
                       >
                         {busy === `re:${source.id}` ? 'Vérif…' : 'Revérifier'}
                       </button>

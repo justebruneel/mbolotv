@@ -7,7 +7,7 @@
 //   → { file (URL m3u8), title, image, … } monté dans jwplayer.
 // La page porte aussi un leurre (var source = Big Buck Bunny) : ignoré.
 import { ExtractorError, extractorError, ExtractorErrorCode } from './errors.js';
-import { fetchEmbedText, probeDirectUrl } from './http.js';
+import { fetchEmbedText, probeDirectUrl, withAttempts } from './http.js';
 
 export const HOST = 'voe';
 
@@ -147,9 +147,10 @@ export async function resolve(env, ref) {
       lastError = extractorError(ExtractorErrorCode.DEAD, 'URL vidéo Voe inattendue');
       continue;
     }
-    const ok = await probeDirectUrl(env, direct, origin);
+    const probeAttempts = [];
+    const ok = await probeDirectUrl(env, direct, origin, probeAttempts);
     if (!ok) {
-      lastError = extractorError(ExtractorErrorCode.RETRYABLE, 'CDN Voe injoignable (vérification)');
+      lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'CDN Voe injoignable (vérification)'), probeAttempts);
       continue;
     }
     return {

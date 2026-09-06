@@ -29,13 +29,23 @@ function documentHeaders(referer) {
  * (IP résidentielle = moins de bot-check que les IP datacenter),
  * puis en direct. Lève ExtractorError typée.
  */
+/**
+ * Une tentative réseau horodatée, attachée aux erreurs (diagnostic prod :
+ * on voit quel maillon casse — relais vs direct, statut vs timeout).
+ */
+function attempt(label, startedAt, status, error) {
+  return { target: label, ms: Date.now() - startedAt, ...(status ? { status } : {}), ...(error ? { error: String(error).slice(0, 120) } : {}) };
+}
+
 export async function fetchEmbedText(env, url) {
   const relayed = resolveRelay(env, url);
   const targets = [];
   if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
   targets.push({ url, headers: {}, label: 'direct' });
+  const attempts = [];
   let lastError = null;
   for (const target of targets) {
+    const startedAt = Date.now();
     try {
       const response = await fetch(target.url, {
         headers: { ...documentHeaders(), ...target.headers },
@@ -43,22 +53,47 @@ export async function fetchEmbedText(env, url) {
         signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
       if (response.status === 429 || response.status === 403) {
-        throw extractorError(ExtractorErrorCode.QUOTA, `Host distant anti-bot (${response.status})`);
+        attempts.push(attempt(target.label, startedAt, response.status));
+        try { await response.body?.cancel(); } catch {}
+        throw withAttempts(extractorError(ExtractorErrorCode.QUOTA, `Host distant anti-bot (${response.status})`), attempts);
       }
       if (response.status === 404 || response.status === 410) {
-        throw extractorError(ExtractorErrorCode.DEAD, 'Fichier introuvable ou retiré (DMCA/expiré)');
+        attempts.push(attempt(target.label, startedAt, response.status));
+        try { await response.body?.cancel(); } catch {}
+        throw withAttempts(extractorError(ExtractorErrorCode.DEAD, 'Fichier introuvable ou retiré (DMCA/expiré)'), attempts);
       }
       if (!response.ok) {
-        lastError = extractorError(ExtractorErrorCode.RETRYABLE, `Host distant ${response.status}`);
+        attempts.push(attempt(target.label, startedAt, response.status));
+        try { await response.body?.cancel(); } catch {}
+        lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, `Host distant ${response.status}`), attempts);
         continue;
       }
       return { text: await response.text(), finalUrl: response.url || target.url };
     } catch (error) {
       if (error instanceof ExtractorError && error.code !== ExtractorErrorCode.RETRYABLE) throw error;
-      lastError = error instanceof ExtractorError ? error : extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable');
+      if (error instanceof ExtractorError && error.attempts) {
+        lastError = error;
+        continue;
+      }
+      attempts.push(attempt(target.label, startedAt, null, error instanceof Error ? error.message : error));
+      lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable'), attempts);
     }
   }
-  throw lastError ?? extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable');
+  throw lastError ?? withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable'), attempts);
+}
+
+export function withAttempts(error, attempts) {
+  error.attempts = (attempts ?? []).map((entry) => ({ ...entry }));
+  return error;
+}
+
+/** Résumé lisible des tentatives pour les réponses API/console. */
+export function attemptsSummary(error) {
+  const attempts = error && Array.isArray(error.attempts) ? error.attempts : null;
+  if (!attempts || attempts.length === 0) return null;
+  return attempts
+    .map((entry) => `${entry.target}: ${entry.status ? `HTTP ${entry.status}` : entry.error ?? '?'}${entry.ms != null ? ` (${entry.ms}ms)` : ''}`)
+    .join('; ');
 }
 
 /**
@@ -67,12 +102,16 @@ export async function fetchEmbedText(env, url) {
  * répondent 403 sans lui). Utilisé avant de renvoyer l'URL au lecteur pour
  * ne jamais servir un lien mort.
  */
-export async function probeDirectUrl(env, url, referer) {
+export async function probeDirectUrl(env, url, referer, attemptsOut) {
   const relayed = resolveRelay(env, url);
   const targets = [];
-  if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers });
-  targets.push({ url, headers: {} });
+  if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  targets.push({ url, headers: {}, label: 'direct' });
   for (const target of targets) {
+    const startedAt = Date.now();
+    const note = (status, error) => {
+      if (Array.isArray(attemptsOut)) attemptsOut.push(attempt(target.label, startedAt, status, error));
+    };
     try {
       const response = await fetch(target.url, {
         headers: {
@@ -86,10 +125,12 @@ export async function probeDirectUrl(env, url, referer) {
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       });
       if (response.status === 429 || response.status === 403) {
+        note(response.status);
         try { await response.body?.cancel(); } catch {}
         return false;
       }
       if (response.status !== 200 && response.status !== 206) {
+        note(response.status);
         try { await response.body?.cancel(); } catch {}
         continue;
       }
@@ -105,7 +146,9 @@ export async function probeDirectUrl(env, url, referer) {
       // Playlists HLS (Voe…) : content-type mpegurl, corps texte court.
       if (/mpegurl/.test(contentType)) return true;
       if (response.status === 206 && hasContentRange) return true;
-    } catch {
+      note(response.status, `content-type inattendu (${contentType || 'absent'})`);
+    } catch (error) {
+      note(null, error instanceof Error ? error.message : error);
       continue;
     }
   }

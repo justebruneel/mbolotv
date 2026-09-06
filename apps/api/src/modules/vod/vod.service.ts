@@ -287,7 +287,7 @@ export class VodService {
       posterUrl: row.posterUrl,
       backdropUrl: row.backdropUrl,
       trailerYoutubeId: row.trailerYoutubeId,
-      sources: row.sources.map((source) => ({ id: source.id, host: source.host, versions: source.versions, playRef: source.finalUrl ?? source.embedUrl })),
+      sources: row.sources.map((source) => ({ id: source.id, host: source.host, mode: (source.mode === 'iframe' ? 'iframe' : 'direct') as 'direct' | 'iframe', versions: source.versions, playRef: source.finalUrl ?? source.embedUrl })),
     };
   }
 }

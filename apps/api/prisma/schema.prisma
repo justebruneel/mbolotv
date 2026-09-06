@@ -282,6 +282,9 @@ model ExternalSource {
   id String @id @default(cuid())
   titleId String
   host String
+  // direct = résolu par un extracteur (/api/x/play) ; iframe = embed lu tel
+  // quel dans une iframe en attendant son extracteur.
+  mode String @default("direct")
   embedUrl String
   finalUrl String?
   versions String[] @default([])

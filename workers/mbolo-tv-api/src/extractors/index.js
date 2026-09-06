@@ -10,6 +10,7 @@
 //     { urls: string[], referer: string, title: string | null }
 import { playResponse } from '../play.js';
 import { ExtractorError, extractorError, ExtractorErrorCode } from './errors.js';
+import { attemptsSummary } from './http.js';
 import * as mixdrop from './mixdrop.js';
 import * as dood from './dood.js';
 import * as voe from './voe.js';
@@ -96,14 +97,16 @@ function canonicalId(ref) {
 }
 
 /**
- * Vérification légère d'une source (publish, recheck console, cron santé) :
- * résout SANS signer (pas de VIDEO_PROXY_URL requis) et ne garde que le
- * statut. Retourne { ok: true } ou { ok: false, code, status, message }.
+ * Vérification d'une source (publish, recheck console, cron santé) :
+ * résout SANS signer (pas de VIDEO_PROXY_URL requis).
+ * Retourne { ok: true } ou { ok: false, code, status, message, detail } où
+ * detail résume la chaîne relais→direct (ex. « relais: timeout (15001ms) ;
+ * direct: HTTP 403 (812ms) »).
  */
 export async function checkSource(env, host, embedUrl) {
   const name = String(host ?? '').trim().toLowerCase();
   const adapter = REGISTRY[name];
-  if (!adapter) return { ok: false, code: 'UNKNOWN_HOST', status: 400, message: `Hôte non pris en charge : ${name}` };
+  if (!adapter) return { ok: false, code: 'UNKNOWN_HOST', status: 400, message: `Hôte non pris en charge : ${name}`, detail: null };
   try {
     await adapter.resolve(env, String(embedUrl ?? ''));
     return { ok: true };
@@ -113,6 +116,27 @@ export async function checkSource(env, host, embedUrl) {
       code: error instanceof ExtractorError ? error.code : 'RETRYABLE',
       status: error instanceof Error && typeof error.status === 'number' ? error.status : 502,
       message: error instanceof Error ? error.message : 'Vérification impossible',
+      detail: attemptsSummary(error),
+    };
+  }
+}
+
+/**
+ * Vérification légère d'une page embed (sources mode iframe) : la page
+ * existe et répond 200. Pas de handshake ni probe média.
+ */
+export async function checkEmbedPage(env, url) {
+  const { fetchEmbedText } = await import('./http.js');
+  try {
+    await fetchEmbedText(env, String(url ?? ''));
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error instanceof ExtractorError ? error.code : 'RETRYABLE',
+      status: error instanceof Error && typeof error.status === 'number' ? error.status : 502,
+      message: error instanceof Error ? error.message : 'Page embed injoignable',
+      detail: attemptsSummary(error),
     };
   }
 }

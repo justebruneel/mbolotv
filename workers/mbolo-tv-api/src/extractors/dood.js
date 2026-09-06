@@ -12,7 +12,7 @@
 // - protections page (Turnstile, FingerprintJS, DisableDevtool, sandbox-detect)
 //   ne concernent que le navigateur : le handshake pass_md5 passe en HTTP pur.
 import { ExtractorError, extractorError, ExtractorErrorCode } from './errors.js';
-import { fetchEmbedText, probeDirectUrl } from './http.js';
+import { fetchEmbedText, probeDirectUrl, withAttempts } from './http.js';
 
 export const HOST = 'dood';
 
@@ -134,9 +134,10 @@ export async function resolve(env, ref) {
       lastError = extractorError(ExtractorErrorCode.DEAD, 'URL CDN DoodStream inattendue');
       continue;
     }
-    const ok = await probeDirectUrl(env, direct, origin);
+    const probeAttempts = [];
+    const ok = await probeDirectUrl(env, direct, origin, probeAttempts);
     if (!ok) {
-      lastError = extractorError(ExtractorErrorCode.RETRYABLE, 'CDN DoodStream injoignable (vérification)');
+      lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'CDN DoodStream injoignable (vérification)'), probeAttempts);
       continue;
     }
     return { urls: [direct], referer: origin, title: extractDoodTitle(page.text) };

@@ -3,7 +3,7 @@
 // en masse, cache edge court (voir index.js). La lecture passe par le proxy
 // vidéo signé avec Referer injecté (le CDN répond 403 sans le Referer du miroir).
 import { ExtractorError, extractorError, ExtractorErrorCode } from './errors.js';
-import { fetchEmbedText, probeDirectUrl } from './http.js';
+import { fetchEmbedText, probeDirectUrl, withAttempts } from './http.js';
 import { absolutizeCdnUrl, extractTitle, extractWurl } from './unpack.js';
 
 export const HOST = 'mixdrop';
@@ -90,9 +90,10 @@ export async function resolve(env, ref) {
     } catch {
       // finalUrl inattendue : garder le miroir demandé.
     }
-    const ok = await probeDirectUrl(env, direct, referer);
+    const probeAttempts = [];
+    const ok = await probeDirectUrl(env, direct, referer, probeAttempts);
     if (!ok) {
-      lastError = extractorError(ExtractorErrorCode.RETRYABLE, 'CDN Mixdrop injoignable (vérification)');
+      lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'CDN Mixdrop injoignable (vérification)'), probeAttempts);
       continue;
     }
     return { urls: [direct], referer, title: extractTitle(page.text) };

@@ -370,7 +370,7 @@ export class OwnerVodController {
         healthySources: row.sources.filter((source) => source.isActive && (source.lastStatus === 'OK' || source.lastStatus === 'UNKNOWN')).length,
         deadSources: row.sources.filter((source) => source.lastStatus === 'DEAD').length,
         sources: row.sources.map((source): OwnerExternalSource => ({
-          id: source.id, titleId: source.titleId, host: source.host, embedUrl: source.embedUrl, finalUrl: source.finalUrl,
+          id: source.id, titleId: source.titleId, host: source.host, mode: (source.mode === 'iframe' ? 'iframe' : 'direct') as OwnerExternalSource['mode'], embedUrl: source.embedUrl, finalUrl: source.finalUrl,
           versions: source.versions, sortOrder: source.sortOrder, isActive: source.isActive,
           lastStatus: source.lastStatus as OwnerExternalSource['lastStatus'],
           lastError: source.lastError, lastCheckedAt: source.lastCheckedAt?.toISOString() ?? null,

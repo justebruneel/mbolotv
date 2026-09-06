@@ -10,6 +10,7 @@ function serializeSource(row) {
   return {
     id: row.id,
     host: row.host,
+    mode: row.mode === 'iframe' ? 'iframe' : 'direct',
     versions: row.versions ?? [],
     playRef: row.finalUrl ?? row.embedUrl,
   };
@@ -55,7 +56,7 @@ export async function findExternalTitleById(env, id) {
   const rows = await env.db.query(
     env,
     `SELECT t.id, t.title, t.year, t."posterUrl", t."backdropUrl", t."trailerYoutubeId",
-      s.id AS "sourceId", s.host, s.versions, s."embedUrl", s."finalUrl"
+      s.id AS "sourceId", s.host, s.mode, s.versions, s."embedUrl", s."finalUrl"
      FROM "ExternalTitle" t
      LEFT JOIN "ExternalSource" s
        ON s."titleId" = t.id AND s."isActive" AND s."lastStatus" IN ('OK','UNKNOWN')
@@ -86,18 +87,21 @@ export async function findExternalTitleById(env, id) {
 export async function checkExternalBatch(env, limit = 8) {
   const rows = await env.db.query(
     env,
-    `SELECT s.id, s.host, s."embedUrl", s."finalUrl" FROM "ExternalSource" s
+    `SELECT s.id, s.host, s.mode, s."embedUrl", s."finalUrl" FROM "ExternalSource" s
      JOIN "ExternalTitle" t ON t.id = s."titleId"
      WHERE s."isActive" AND t."isVisible" = true
      ORDER BY s."lastCheckedAt" ASC NULLS FIRST LIMIT $1`,
     [Math.min(Math.max(1, Number(limit) || 8), 50)],
   );
   // Import paresseux (évite un cycle extractors ↔ external).
-  const { checkSource } = await import('./extractors/index.js');
+  const { checkEmbedPage, checkSource } = await import('./extractors/index.js');
   const summary = { checked: 0, ok: 0, dead: 0, errors: 0 };
   for (const source of rows.rows) {
     try {
-      const check = await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+      // Iframe : simple existence de la page embed (pas de handshake).
+      const check = source.mode === 'iframe'
+        ? await checkEmbedPage(env, source.embedUrl)
+        : await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
       const status = check.ok ? 'OK' : check.code === 'DEAD' ? 'DEAD' : 'ERROR';
       await env.db.query(env, `UPDATE "ExternalSource" SET "lastStatus" = $2, "lastError" = $3, "lastCheckedAt" = now() WHERE id = $1`,
         [source.id, status, check.ok ? null : String(check.message ?? '').slice(0, 200)]);

@@ -3,7 +3,7 @@
 // réponses). Dossiers en arbre + règles categoryTitle + affectations manuelles
 // + sources YouTube rattachées.
 import { slugify } from './normalize.js';
-import { checkSource, SUPPORTED_HOSTS } from './extractors/index.js';
+import { checkEmbedPage, checkSource, SUPPORTED_HOSTS } from './extractors/index.js';
 import { previewFiche, serveFichePreview } from './scrapers/index.js';
 
 const KINDS = new Set(['MOVIE', 'SERIES', 'BOTH']);
@@ -475,9 +475,12 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     return serveFichePreview(env, url.searchParams.get('url') ?? '', ctx.corsHeaders());
   }
 
-  // Publication : scrape la fiche, vérifie (probe) chaque lecteur retenu,
-  // crée le titre (dédupe site+siteRef) et ses sources saines. Les lecteurs
-  // morts sont rejetés avec motif — jamais de catalogue pourri.
+  // Publication : scrape la fiche, vérifie chaque lecteur retenu AVANT toute
+  // écriture (pas de titre vide), puis crée le titre (dédupe site+siteRef).
+  // - hosts à extracteur : probe complet (embed + handshake + CDN) ;
+  // - autres hosts : repli iframe (page embed 200 = OK), lus en iframe côté
+  //   lecteur en attendant leur extracteur. Les morts sont rejetés avec motif
+  //   (+ détail relais/direct) — jamais de catalogue pourri.
   if (path === '/api/owner/vod/external/publish' && method === 'POST') {
     const body = await ctx.readJson().catch(() => ({}));
     const ficheUrl = typeof body?.url === 'string' ? body.url.trim() : '';
@@ -493,6 +496,30 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
       : null;
     const candidates = preview.players.filter((player) => !wanted || wanted.has(player.host)).slice(0, 20);
     if (candidates.length === 0) return ctx.fail(400, 'Aucun lecteur retenu sur cette fiche');
+    // Phase 1 — vérification seule (aucune écriture) : on sait avant de créer
+    // si le titre aura au moins une source.
+    const verified = [];
+    const rejected = [];
+    for (const player of candidates) {
+      if (SUPPORTED_HOSTS.includes(player.host)) {
+        const check = await checkSource(env, player.host, player.finalUrl ?? player.embedUrl);
+        if (!check.ok) {
+          rejected.push({ host: player.host, reason: check.message, detail: check.detail ?? null });
+          continue;
+        }
+        verified.push({ player, mode: 'direct' });
+      } else {
+        const check = await checkEmbedPage(env, player.embedUrl);
+        if (!check.ok) {
+          rejected.push({ host: player.host, reason: `Iframe : ${check.message}`, detail: check.detail ?? null });
+          continue;
+        }
+        verified.push({ player, mode: 'iframe' });
+      }
+    }
+    if (verified.length === 0) {
+      return ctx.fail(422, 'Aucun lecteur vérifiable sur cette fiche (voir motifs). Aucun titre créé.');
+    }
     const title = (typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : preview.title).slice(0, 200);
     const year = body?.year === null || body?.year === undefined ? preview.year : Number(body.year) || null;
     const posterUrl = typeof body?.posterUrl === 'string' && body.posterUrl.trim() ? body.posterUrl.trim() : preview.posterUrl;
@@ -515,30 +542,21 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     const knownKeys = new Set(known.rows.map((row) => `${row.host}|${row.embedUrl}`));
     let inserted = 0;
     let skipped = 0;
-    const rejected = [];
     let order = 0;
-    for (const player of candidates) {
+    for (const { player, mode } of verified) {
       order += 1;
-      if (!SUPPORTED_HOSTS.includes(player.host)) {
-        rejected.push({ host: player.host, reason: `Extracteur « ${player.host} » pas encore implémenté (iframe uniquement)` });
-        continue;
-      }
       if (knownKeys.has(`${player.host}|${player.embedUrl}`)) {
         skipped += 1;
         continue;
       }
-      const check = await checkSource(env, player.host, player.finalUrl ?? player.embedUrl);
-      if (!check.ok) {
-        rejected.push({ host: player.host, reason: check.message });
-        continue;
-      }
       await env.db.query(env,
-        `INSERT INTO "ExternalSource" (id, "titleId", host, "embedUrl", "finalUrl", versions, "sortOrder", "lastStatus", "lastCheckedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,'OK', now())`,
-        [crypto.randomUUID(), titleId, player.host, player.embedUrl, player.finalUrl, player.versions, order],
+        `INSERT INTO "ExternalSource" (id, "titleId", host, mode, "embedUrl", "finalUrl", versions, "sortOrder", "lastStatus", "lastCheckedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'OK', now())`,
+        [crypto.randomUUID(), titleId, player.host, mode, player.embedUrl, player.finalUrl, player.versions, order],
       );
       inserted += 1;
     }
     await audit(ctx, owner.userId, 'vod.external_publish', 'external_title', titleId, { site: preview.site, siteRef, inserted, rejected: rejected.length });
+    // Réponse compatible : rejected[] gagne `detail` (+ mode inséré en plus).
     return ctx.json({ titleId, title, inserted, skipped, rejected });
   }
 
@@ -560,7 +578,7 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     ]);
     const ids = titles.rows.map((row) => row.id);
     const sources = ids.length > 0
-      ? await env.db.query(env, `SELECT id, "titleId", host, "embedUrl", "finalUrl", versions, "sortOrder", "isActive", "lastStatus", "lastError", "lastCheckedAt" FROM "ExternalSource" WHERE "titleId" = ANY($1::text[]) ORDER BY "sortOrder" ASC, "createdAt" ASC`, [ids])
+      ? await env.db.query(env, `SELECT id, "titleId", host, mode, "embedUrl", "finalUrl", versions, "sortOrder", "isActive", "lastStatus", "lastError", "lastCheckedAt" FROM "ExternalSource" WHERE "titleId" = ANY($1::text[]) ORDER BY "sortOrder" ASC, "createdAt" ASC`, [ids])
       : { rows: [] };
     const byTitle = new Map();
     for (const source of sources.rows) {
@@ -637,15 +655,17 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   const recheckMatch = path.match(/^\/api\/owner\/vod\/external\/sources\/([^/]+)\/recheck$/);
   if (recheckMatch && method === 'POST') {
     const id = dec(recheckMatch[1]);
-    const rows = await env.db.query(env, `SELECT id, host, "embedUrl", "finalUrl" FROM "ExternalSource" WHERE id = $1`, [id]);
+    const rows = await env.db.query(env, `SELECT id, host, mode, "embedUrl", "finalUrl" FROM "ExternalSource" WHERE id = $1`, [id]);
     if (rows.rows.length === 0) return ctx.fail(404, 'Source introuvable');
     const source = rows.rows[0];
-    const check = await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+    const check = source.mode === 'iframe'
+      ? await checkEmbedPage(env, source.embedUrl)
+      : await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
     const status = check.ok ? 'OK' : check.code === 'DEAD' ? 'DEAD' : 'ERROR';
     await env.db.query(env, `UPDATE "ExternalSource" SET "lastStatus" = $2, "lastError" = $3, "lastCheckedAt" = now() WHERE id = $1`,
       [id, status, check.ok ? null : String(check.message ?? '').slice(0, 200)]);
     await audit(ctx, owner.userId, 'vod.external_source_recheck', 'external_source', id, { status });
-    return ctx.json({ id, lastStatus: status, lastError: check.ok ? null : check.message });
+    return ctx.json({ id, lastStatus: status, lastError: check.ok ? null : check.message, detail: check.detail ?? null });
   }
 
   return ctx.fail(404, 'Route owner VOD inconnue');

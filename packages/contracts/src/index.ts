@@ -215,11 +215,14 @@ export const externalTitlesResponseSchema = z.object({
   hasMore: z.boolean(),
 });
 export type ExternalTitlesResponse = z.infer<typeof externalTitlesResponseSchema>;
+export const externalSourceModeSchema = z.enum(['direct', 'iframe']);
+export type ExternalSourceMode = z.infer<typeof externalSourceModeSchema>;
 export const externalSourcePublicSchema = z.object({
   id: z.string(),
   host: z.string(),
+  mode: externalSourceModeSchema,
   versions: z.array(z.string()),
-  // Référence de lecture pour /api/x/play (finalUrl si wrapper suivi, sinon embed).
+  // Référence de lecture : /api/x/play pour direct, URL embed (iframe) sinon.
   playRef: z.string(),
 });
 export type ExternalSourcePublic = z.infer<typeof externalSourcePublicSchema>;
@@ -240,6 +243,7 @@ export const ownerExternalSourceSchema = z.object({
   id: z.string(),
   titleId: z.string(),
   host: z.string(),
+  mode: externalSourceModeSchema,
   embedUrl: z.string(),
   finalUrl: z.string().nullable(),
   versions: z.array(z.string()),
@@ -279,7 +283,7 @@ export const ownerExternalPublishResponseSchema = z.object({
   title: z.string(),
   inserted: z.number(),
   skipped: z.number(),
-  rejected: z.array(z.object({ host: z.string(), reason: z.string() })),
+  rejected: z.array(z.object({ host: z.string(), reason: z.string(), detail: z.string().nullable().optional() })),
 });
 export type OwnerExternalPublishResponse = z.infer<typeof ownerExternalPublishResponseSchema>;
 export const ownerExternalTitleUpdateSchema = z.object({

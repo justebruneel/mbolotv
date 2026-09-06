@@ -4,7 +4,7 @@
 // Les query tokens (?t=&s=&e=) sont probés au resolve ; le lecteur
 // re-résout via refetch si expirés.
 import { ExtractorError, extractorError, ExtractorErrorCode } from './errors.js';
-import { fetchEmbedText, probeDirectUrl } from './http.js';
+import { fetchEmbedText, probeDirectUrl, withAttempts } from './http.js';
 import { findPackedBlocks, unpackPacker } from './unpack.js';
 
 export const HOST = 'uqload';
@@ -117,9 +117,10 @@ export async function resolve(env, ref) {
       lastError = extractorError(ExtractorErrorCode.DEAD, 'URL CDN Uqload inattendue');
       continue;
     }
-    const ok = await probeDirectUrl(env, direct, origin);
+    const probeAttempts = [];
+    const ok = await probeDirectUrl(env, direct, origin, probeAttempts);
     if (!ok) {
-      lastError = extractorError(ExtractorErrorCode.RETRYABLE, 'CDN Uqload injoignable (vérification)');
+      lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'CDN Uqload injoignable (vérification)'), probeAttempts);
       continue;
     }
     return { urls: [direct], referer: origin, title: null };

@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { ExtractorError, extractorError, isRetryable, ExtractorErrorCode } from '../src/extractors/errors.js';
 import { absolutizeCdnUrl, extractTitle, extractWurl, findPackedBlocks, unpackPacker } from '../src/extractors/unpack.js';
 import { mirrorsFromEnv, parse, HOST } from '../src/extractors/mixdrop.js';
-import { SUPPORTED_HOSTS, serveExternalPlay } from '../src/extractors/index.js';
+import { SUPPORTED_HOSTS, checkSource, serveExternalPlay } from '../src/extractors/index.js';
+import { attemptsSummary } from '../src/extractors/http.js';
 import { playResponse } from '../src/play.js';
 import { createHmac } from 'node:crypto';
 import { extractPassMd5, parse as parseDood, resolve as resolveDood } from '../src/extractors/dood.js';
@@ -252,6 +253,25 @@ describe('uqload', () => {
     );
     assert.equal(extractFileUrl(`file:"https://strm1.uqload.vc/a.m3u8"`), 'https://strm1.uqload.vc/a.m3u8');
     assert.equal(extractFileUrl('rien ici'), null);
+  });
+});
+
+describe('diagnostic', () => {
+  it('attemptsSummary résume relais/direct (statuts + erreurs + ms)', () => {
+    assert.equal(
+      attemptsSummary({ attempts: [{ target: 'relais', ms: 15001 }, { target: 'direct', status: 403, ms: 812 }] }),
+      'relais: ? (15001ms); direct: HTTP 403 (812ms)',
+    );
+    assert.equal(attemptsSummary(new Error('x')), null);
+    assert.equal(attemptsSummary({ attempts: [] }), null);
+  });
+  it('checkSource : host inconnu (sans réseau), id invalide', async () => {
+    assert.deepEqual(await checkSource({}, 'nope', 'x'), {
+      ok: false, code: 'UNKNOWN_HOST', status: 400, message: 'Hôte non pris en charge : nope', detail: null,
+    });
+    const bad = await checkSource({}, 'mixdrop', '!!!');
+    assert.equal(bad.ok, false);
+    assert.equal(bad.status, 400);
   });
 });
 

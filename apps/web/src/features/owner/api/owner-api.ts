@@ -137,7 +137,7 @@ export const ownerApi = {
       removeTitle: (id: string): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/titles/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<{ ok: true }>),
       updateSource: (id: string, input: OwnerExternalSourceUpdateInput): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<{ ok: true }>),
       removeSource: (id: string): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<{ ok: true }>),
-      recheckSource: (id: string): Promise<{ id: string; lastStatus: string; lastError: string | null }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}/recheck`, { method: 'POST', credentials: 'include' }).then(parseResponse<{ id: string; lastStatus: string; lastError: string | null }>),
+      recheckSource: (id: string): Promise<{ id: string; lastStatus: string; lastError: string | null; detail: string | null }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}/recheck`, { method: 'POST', credentials: 'include' }).then(parseResponse<{ id: string; lastStatus: string; lastError: string | null; detail: string | null }>),
     },
   },
   profile: (): Promise<OwnerProfile> => fetch(`${BASE_URL}/owner/profile`, { credentials: 'include' }).then(parseResponse<OwnerProfile>),
