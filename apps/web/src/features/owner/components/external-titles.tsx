@@ -35,6 +35,8 @@ export function ExternalTitlesSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Motifs par lecteur quand la publication échoue (422 : rien de vérifiable).
+  const [publishErrors, setPublishErrors] = useState<Array<{ host: string; reason: string; detail?: string | null }>>([]);
 
   const reload = useCallback(async (): Promise<void> => {
     try {
@@ -54,6 +56,7 @@ export function ExternalTitlesSection() {
     if (!ficheUrl) return;
     setBusy('preview');
     setNotice(null);
+    setPublishErrors([]);
     try {
       const data = await ownerApi.vod.external.preview(ficheUrl);
       setPreview(data);
@@ -70,17 +73,26 @@ export function ExternalTitlesSection() {
   async function runPublish(): Promise<void> {
     if (!preview || selected.size === 0) return;
     setBusy('publish');
+    setPublishErrors([]);
     try {
       const result = await ownerApi.vod.external.publish({ url: preview.ficheUrl, hosts: [...selected] });
       const rejected = result.rejected.length > 0 ? ` Rejetés : ${result.rejected.map((entry) => `${entry.host} (${entry.reason}${entry.detail ? ` — ${entry.detail}` : ''})`).join(', ')}.` : '';
       const skipped = result.skipped > 0 ? ` ${result.skipped} déjà présent(s).` : '';
       setNotice(`« ${result.title} » : ${result.inserted} lecteur(s) publié(s).${skipped}${rejected}`);
+      setPublishErrors([]);
       setPreview(null);
       setUrl('');
       setError(null);
       await reload();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Publication impossible.');
+      // La 422 embarque rejected[] : l'afficher lecteur par lecteur.
+      const body = (reason as { body?: { rejected?: Array<{ host: string; reason: string; detail?: string | null }> } } | null)?.body;
+      if (body?.rejected?.length) {
+        setPublishErrors(body.rejected);
+        setError(null);
+      } else {
+        setError(reason instanceof Error ? reason.message : 'Publication impossible.');
+      }
     } finally {
       setBusy(null);
     }
@@ -120,6 +132,19 @@ export function ExternalTitlesSection() {
       </div>
 
       {error && <p className="rounded-lg border border-danger/30 bg-danger-muted p-3 text-sm text-danger">{error}</p>}
+      {publishErrors.length > 0 && (
+        <div className="rounded-lg border border-danger/30 bg-danger-muted p-3 text-sm">
+          <p className="mb-2 font-semibold text-danger">Aucun lecteur vérifiable — détail par lecteur :</p>
+          <ul className="space-y-1 text-danger">
+            {publishErrors.map((entry, index) => (
+              <li key={`${entry.host}:${index}`}>
+                <Badge tone="default">{entry.host}</Badge>{' '}{entry.reason}
+                {entry.detail && <span className="block pl-1 text-xs opacity-80">{entry.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {notice && <p className="rounded-lg border border-accent/30 bg-accent/10 p-3 text-sm">{notice}</p>}
 
       <div className="flex flex-wrap items-center gap-2">

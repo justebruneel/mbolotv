@@ -518,7 +518,9 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
       }
     }
     if (verified.length === 0) {
-      return ctx.fail(422, 'Aucun lecteur vérifiable sur cette fiche (voir motifs). Aucun titre créé.');
+      // 422 AVEC le détail par lecteur (la console l'affiche) : sans ça le
+      // diagnostic prod (relais vs direct) est perdu.
+      return ctx.json({ message: 'Aucun lecteur vérifiable sur cette fiche. Aucun titre créé.', rejected }, 422);
     }
     const title = (typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : preview.title).slice(0, 200);
     const year = body?.year === null || body?.year === undefined ? preview.year : Number(body.year) || null;
