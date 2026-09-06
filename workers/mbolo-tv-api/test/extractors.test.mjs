@@ -275,6 +275,61 @@ describe('diagnostic', () => {
   });
 });
 
+describe('fetchEmbedText ordre direct-first', () => {
+  const realFetch = globalThis.fetch;
+  const relayEnv = { RELAY_DEFAULT_ORIGIN: 'https://relay.example' };
+  it('direct 403 → repli relais 200 (pas de QUOTA immédiat)', async () => {
+    const seen = [];
+    globalThis.fetch = async (url) => {
+      seen.push(String(url));
+      if (String(url).startsWith('https://relay.example')) {
+        return new Response('<html>via relais</html>', { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+      return new Response('x', { status: 403 });
+    };
+    try {
+      const { fetchEmbedText } = await import('../src/extractors/http.js');
+      const page = await fetchEmbedText(relayEnv, 'https://host.example/e/abc123');
+      assert.equal(page.text, '<html>via relais</html>');
+      assert.equal(seen.length, 2);
+      assert.ok(!seen[0].startsWith('https://relay.example'), 'direct en premier');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+  it('403 partout → QUOTA avec les 2 tentatives', async () => {
+    globalThis.fetch = async () => new Response('x', { status: 403 });
+    try {
+      const { fetchEmbedText } = await import('../src/extractors/http.js');
+      await assert.rejects(() => fetchEmbedText(relayEnv, 'https://host.example/e/abc123'), (error) => {
+        assert.equal(error.code, 'QUOTA');
+        assert.equal(error.attempts.length, 2);
+        return true;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+  it('404 partout → DEAD (pas de 404 relais seule)', async () => {
+    let calls = 0;
+    globalThis.fetch = async (url) => {
+      calls += 1;
+      return new Response('nf', { status: calls === 1 ? 500 : 404 });
+    };
+    try {
+      const { fetchEmbedText } = await import('../src/extractors/http.js');
+      // direct 500 (retryable) puis relais 404 : ni QUOTA ni verdict hâtif.
+      await assert.rejects(() => fetchEmbedText(relayEnv, 'https://host.example/e/abc123'), (error) => {
+        assert.equal(error.code, 'RETRYABLE');
+        assert.equal(error.attempts.length, 2);
+        return true;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
 describe('registry', () => {
   it('expose mixdrop, dood, voe, uqload', () => {
     assert.equal(HOST, 'mixdrop');

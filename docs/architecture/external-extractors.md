@@ -39,6 +39,13 @@ Helpers partagés : `http.js` (`fetchEmbedText` cascade relais→direct,
 - **Zéro retry** : le serveur essaie déjà les miroirs ; le client ne retente
   pas (`retry: false` + `apiGet(..., false)`). L'utilisateur relance via refetch.
 - **Jamais de retry sur 429/403/451** (même politique que YouTube).
+- **Budget sous-requêtes CF** : `fetchEmbedText` tente **direct d'abord**
+  (1 fetch cas courant), relais en repli ; timeouts 10 s. Un 403/404 sur UN
+  chemin n'est jamais un verdict (l'autre est essayé) ; `DEAD` exige
+  l'unanimité des chemins, sinon `QUOTA`/`RETRYABLE` (re-vérifiables).
+  Publish : players du client validés contre un re-scrape (pas de re-suivi
+  des wrappers), **12 vérifications inline max**, le surplus part en `UNKNOWN`
+  (`lastCheckedAt` NULL → prioritaire au cron).
 - **DEAD sur tous les miroirs = source morte** → marquer, repli iframe.
 - **Garde anti-exfiltration** : chaque adapter allowliste son CDN
   (ex. `mxcontent.net`) — le proxy signé ne relaie que ce qui est vérifié.

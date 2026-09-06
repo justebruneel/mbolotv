@@ -60,7 +60,7 @@ export function ExternalTitlesSection() {
     try {
       const data = await ownerApi.vod.external.preview(ficheUrl);
       setPreview(data);
-      setSelected(new Set(data.players.map((player) => player.host)));
+      setSelected(new Set(data.players.map((player) => `${player.host}|${player.embedUrl}`)));
       setError(null);
     } catch (reason) {
       setPreview(null);
@@ -70,15 +70,23 @@ export function ExternalTitlesSection() {
     }
   }
 
+  // Sélection par (host, embedUrl) exact : un même host peut lister plusieurs
+  // embeds distincts (versions), cochables indépendamment.
+  const playerKey = (host: string, embedUrl: string): string => `${host}|${embedUrl}`;
+
   async function runPublish(): Promise<void> {
     if (!preview || selected.size === 0) return;
     setBusy('publish');
     setPublishErrors([]);
     try {
-      const result = await ownerApi.vod.external.publish({ url: preview.ficheUrl, hosts: [...selected] });
+      const players = preview.players
+        .filter((player) => selected.has(playerKey(player.host, player.embedUrl)))
+        .map((player) => ({ host: player.host, embedUrl: player.embedUrl }));
+      const result = await ownerApi.vod.external.publish({ url: preview.ficheUrl, players });
       const rejected = result.rejected.length > 0 ? ` Rejetés : ${result.rejected.map((entry) => `${entry.host} (${entry.reason}${entry.detail ? ` — ${entry.detail}` : ''})`).join(', ')}.` : '';
       const skipped = result.skipped > 0 ? ` ${result.skipped} déjà présent(s).` : '';
-      setNotice(`« ${result.title} » : ${result.inserted} lecteur(s) publié(s).${skipped}${rejected}`);
+      const pending = (result.pending ?? 0) > 0 ? ` ${result.pending} en attente de vérification (cron).` : '';
+      setNotice(`« ${result.title} » : ${result.inserted} lecteur(s) publié(s).${skipped}${pending}${rejected}`);
       setPublishErrors([]);
       setPreview(null);
       setUrl('');
@@ -98,11 +106,12 @@ export function ExternalTitlesSection() {
     }
   }
 
-  function toggleHost(host: string): void {
+  function togglePlayer(host: string, embedUrl: string): void {
+    const key = playerKey(host, embedUrl);
     setSelected((current) => {
       const next = new Set(current);
-      if (next.has(host)) next.delete(host);
-      else next.add(host);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -177,8 +186,8 @@ export function ExternalTitlesSection() {
               const supported = SUPPORTED_HOSTS.has(player.host);
               return (
                 <li key={`${player.host}:${player.embedUrl}`} className="flex flex-wrap items-center gap-2 text-sm">
-                  <label className={`flex items-center gap-2 ${supported ? 'cursor-pointer' : 'opacity-60'}`}>
-                    <input type="checkbox" checked={selected.has(player.host)} disabled={!supported} onChange={() => toggleHost(player.host)} />
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input type="checkbox" checked={selected.has(`${player.host}:${player.embedUrl}`)} onChange={() => togglePlayer(player.host, player.embedUrl)} />
                     <Badge tone={supported ? 'accent' : 'default'}>{player.host}</Badge>
                   </label>
                   <span className="text-xs text-muted">{player.versions.join(', ')}{player.wrapped ? ' · wrapper suivi' : ''}</span>

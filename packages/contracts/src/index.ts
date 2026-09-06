@@ -274,7 +274,9 @@ export const ownerExternalPublishSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   year: z.number().int().min(1900).max(2100).nullable().optional(),
   posterUrl: z.string().url().nullable().optional(),
-  // Hosts à publier (défaut : tous ceux de l'aperçu).
+  // Lecteurs à publier (host+embedUrl exacts de l'aperçu, validés serveur
+  // contre un re-scrape). Défaut : tous ceux de l'aperçu. Legacy : hosts[].
+  players: z.array(z.object({ host: z.string().min(1).max(30), embedUrl: z.string().url().max(1000) })).max(24).optional(),
   hosts: z.array(z.string().min(1).max(30)).max(20).optional(),
 });
 export type OwnerExternalPublishInput = z.infer<typeof ownerExternalPublishSchema>;
@@ -283,6 +285,7 @@ export const ownerExternalPublishResponseSchema = z.object({
   title: z.string(),
   inserted: z.number(),
   skipped: z.number(),
+  pending: z.number().optional(),
   rejected: z.array(z.object({ host: z.string(), reason: z.string(), detail: z.string().nullable().optional() })),
 });
 export type OwnerExternalPublishResponse = z.infer<typeof ownerExternalPublishResponseSchema>;

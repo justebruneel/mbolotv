@@ -5,7 +5,7 @@
 import { resolveRelay } from '../relay.js';
 import { ExtractorError, extractorError, ExtractorErrorCode } from './errors.js';
 
-export const EMBED_TIMEOUT_MS = 15_000;
+export const EMBED_TIMEOUT_MS = 10_000;
 export const PROBE_TIMEOUT_MS = 10_000;
 
 const CHROME_UA =
@@ -39,11 +39,16 @@ function attempt(label, startedAt, status, error) {
 
 export async function fetchEmbedText(env, url) {
   const relayed = resolveRelay(env, url);
-  const targets = [];
+  // Direct d'abord (1 seul fetch dans le cas courant), relais en repli :
+  // divise par ~2 le budget sous-requêtes du publish et la latence. Le relais
+  // reste indispensable pour les hosts qui filtrent les IP Cloudflare.
+  const targets = [{ url, headers: {}, label: 'direct' }];
   if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
-  targets.push({ url, headers: {}, label: 'direct' });
   const attempts = [];
+  let quotaError = null;
+  let deadError = null;
   let lastError = null;
+  let sawRetryable = false;
   for (const target of targets) {
     const startedAt = Date.now();
     try {
@@ -55,31 +60,39 @@ export async function fetchEmbedText(env, url) {
       if (response.status === 429 || response.status === 403) {
         attempts.push(attempt(target.label, startedAt, response.status));
         try { await response.body?.cancel(); } catch {}
-        throw withAttempts(extractorError(ExtractorErrorCode.QUOTA, `Host distant anti-bot (${response.status})`), attempts);
+        // Anti-bot sur CE chemin seulement : on essaie l'autre avant de
+        // conclure (un 403 relais n'interdit pas le direct, et inversement).
+        quotaError ??= extractorError(ExtractorErrorCode.QUOTA, `Host distant anti-bot (${response.status})`);
+        continue;
       }
       if (response.status === 404 || response.status === 410) {
         attempts.push(attempt(target.label, startedAt, response.status));
         try { await response.body?.cancel(); } catch {}
-        throw withAttempts(extractorError(ExtractorErrorCode.DEAD, 'Fichier introuvable ou retiré (DMCA/expiré)'), attempts);
+        deadError ??= extractorError(ExtractorErrorCode.DEAD, 'Fichier introuvable ou retiré (DMCA/expiré)');
+        continue;
       }
       if (!response.ok) {
         attempts.push(attempt(target.label, startedAt, response.status));
         try { await response.body?.cancel(); } catch {}
-        lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, `Host distant ${response.status}`), attempts);
+        sawRetryable = true;
+        lastError = extractorError(ExtractorErrorCode.RETRYABLE, `Host distant ${response.status}`);
         continue;
       }
       return { text: await response.text(), finalUrl: response.url || target.url };
     } catch (error) {
-      if (error instanceof ExtractorError && error.code !== ExtractorErrorCode.RETRYABLE) throw error;
-      if (error instanceof ExtractorError && error.attempts) {
-        lastError = error;
-        continue;
-      }
+      if (error instanceof ExtractorError) throw error;
       attempts.push(attempt(target.label, startedAt, null, error instanceof Error ? error.message : error));
-      lastError = withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable'), attempts);
+      sawRetryable = true;
+      lastError = extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable');
     }
   }
-  throw lastError ?? withAttempts(extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable'), attempts);
+  // Verdict : DEAD seulement à l'unanimité (tout 404/410) — un signal
+  // transitoire ou anti-bot quelque part interdit de condamner la source.
+  // Chaîne complète attachée au verdict.
+  const verdict = !sawRetryable && deadError && !quotaError
+    ? deadError
+    : (quotaError ?? lastError ?? extractorError(ExtractorErrorCode.RETRYABLE, 'Host distant injoignable'));
+  throw withAttempts(verdict, attempts);
 }
 
 export function withAttempts(error, attempts) {
@@ -104,9 +117,9 @@ export function attemptsSummary(error) {
  */
 export async function probeDirectUrl(env, url, referer, attemptsOut) {
   const relayed = resolveRelay(env, url);
-  const targets = [];
+  // Direct d'abord, relais en repli (même raison que fetchEmbedText).
+  const targets = [{ url, headers: {}, label: 'direct' }];
   if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
-  targets.push({ url, headers: {}, label: 'direct' });
   for (const target of targets) {
     const startedAt = Date.now();
     const note = (status, error) => {

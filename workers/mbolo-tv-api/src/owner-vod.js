@@ -8,6 +8,9 @@ import { previewFiche, serveFichePreview } from './scrapers/index.js';
 
 const KINDS = new Set(['MOVIE', 'SERIES', 'BOTH']);
 const CHANNEL_ID_RE = /^UC[A-Za-z0-9_-]{22}$/;
+// Vérifications inline max par publication : au-delà, les lecteurs partent en
+// UNKNOWN pour le cron (plafond de sous-requêtes Cloudflare par invocation).
+const MAX_INLINE_VERIFY = 12;
 
 function normKey(title) {
   return String(title).trim().toLowerCase();
@@ -481,6 +484,11 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   // - autres hosts : repli iframe (page embed 200 = OK), lus en iframe côté
   //   lecteur en attendant leur extracteur. Les morts sont rejetés avec motif
   //   (+ détail relais/direct) — jamais de catalogue pourri.
+  // Budget sous-requêtes : la console envoie players[] (host+embedUrl) déjà
+  // affichés ; le serveur les VALIDE contre un re-scrape (anti-SSRF : seuls
+  // les embeds de la fiche sont vérifiables) au lieu de re-suivre les
+  // wrappers. Vérification inline plafonnée, le reste part en UNKNOWN pour
+  // le cron — un publish ne doit jamais heurter le plafond CF.
   if (path === '/api/owner/vod/external/publish' && method === 'POST') {
     const body = await ctx.readJson().catch(() => ({}));
     const ficheUrl = typeof body?.url === 'string' ? body.url.trim() : '';
@@ -491,16 +499,35 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     } catch (error) {
       return ctx.fail(error instanceof Error && typeof error.status === 'number' ? error.status : 502, error instanceof Error ? error.message : 'Fiche illisible');
     }
-    const wanted = Array.isArray(body?.hosts) && body.hosts.length > 0
-      ? new Set(body.hosts.map((host) => String(host).toLowerCase()))
-      : null;
-    const candidates = preview.players.filter((player) => !wanted || wanted.has(player.host)).slice(0, 20);
+    // Candidats : players[] du client validés contre le scrape (sécurité),
+    // repli legacy hosts[].
+    const previewMap = new Map(preview.players.map((player) => [`${player.host}|${player.embedUrl}`, player]));
+    let candidates;
+    if (Array.isArray(body?.players) && body.players.length > 0) {
+      candidates = [];
+      for (const entry of body.players.slice(0, 24)) {
+        const host = String(entry?.host ?? '').toLowerCase();
+        const embedUrl = typeof entry?.embedUrl === 'string' ? entry.embedUrl : '';
+        const found = previewMap.get(`${host}|${embedUrl}`);
+        if (found) candidates.push(found);
+      }
+    } else {
+      const wanted = Array.isArray(body?.hosts) && body.hosts.length > 0
+        ? new Set(body.hosts.map((host) => String(host).toLowerCase()))
+        : null;
+      candidates = preview.players.filter((player) => !wanted || wanted.has(player.host)).slice(0, 24);
+    }
     if (candidates.length === 0) return ctx.fail(400, 'Aucun lecteur retenu sur cette fiche');
-    // Phase 1 — vérification seule (aucune écriture) : on sait avant de créer
-    // si le titre aura au moins une source.
+    // Phase 1 — vérification seule (aucune écriture), plafonnée : le surplus
+    // part en UNKNOWN (lastCheckedAt NULL → prioritaire au prochain cron).
     const verified = [];
+    const pending = [];
     const rejected = [];
     for (const player of candidates) {
+      if (verified.length + rejected.length >= MAX_INLINE_VERIFY) {
+        pending.push(player);
+        continue;
+      }
       if (SUPPORTED_HOSTS.includes(player.host)) {
         const check = await checkSource(env, player.host, player.finalUrl ?? player.embedUrl);
         if (!check.ok) {
@@ -517,7 +544,7 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
         verified.push({ player, mode: 'iframe' });
       }
     }
-    if (verified.length === 0) {
+    if (verified.length === 0 && pending.length === 0) {
       // 422 AVEC le détail par lecteur (la console l'affiche) : sans ça le
       // diagnostic prod (relais vs direct) est perdu.
       return ctx.json({ message: 'Aucun lecteur vérifiable sur cette fiche. Aucun titre créé.', rejected }, 422);
@@ -545,21 +572,26 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     let inserted = 0;
     let skipped = 0;
     let order = 0;
-    for (const { player, mode } of verified) {
+    const store = async (player, mode, status) => {
       order += 1;
       if (knownKeys.has(`${player.host}|${player.embedUrl}`)) {
         skipped += 1;
-        continue;
+        return;
       }
       await env.db.query(env,
-        `INSERT INTO "ExternalSource" (id, "titleId", host, mode, "embedUrl", "finalUrl", versions, "sortOrder", "lastStatus", "lastCheckedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'OK', now())`,
-        [crypto.randomUUID(), titleId, player.host, mode, player.embedUrl, player.finalUrl, player.versions, order],
+        `INSERT INTO "ExternalSource" (id, "titleId", host, mode, "embedUrl", "finalUrl", versions, "sortOrder", "lastStatus", "lastCheckedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,${status === 'OK' ? 'now()' : 'NULL'})`,
+        [crypto.randomUUID(), titleId, player.host, mode, player.embedUrl, player.finalUrl, player.versions, order, status],
       );
       inserted += 1;
+    };
+    for (const { player, mode } of verified) await store(player, mode, 'OK');
+    // Surplus non vérifié inline : UNKNOWN + lastCheckedAt NULL → le cron les
+    // prend en priorité au prochain passage (NULLS FIRST).
+    for (const player of pending) {
+      await store(player, SUPPORTED_HOSTS.includes(player.host) ? 'direct' : 'iframe', 'UNKNOWN');
     }
     await audit(ctx, owner.userId, 'vod.external_publish', 'external_title', titleId, { site: preview.site, siteRef, inserted, rejected: rejected.length });
-    // Réponse compatible : rejected[] gagne `detail` (+ mode inséré en plus).
-    return ctx.json({ titleId, title, inserted, skipped, rejected });
+    return ctx.json({ titleId, title, inserted, skipped, pending: pending.length, rejected });
   }
 
   // Liste des titres externes + statut de leurs sources.
