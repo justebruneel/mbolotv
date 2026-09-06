@@ -63,11 +63,43 @@ export async function listExternalTitles(env, { q, limit = 48, offset = 0 } = {}
   };
 }
 
+// Priorité de version dans une liste de lecteurs (le champ `versions` vient
+// du scraper : 'default' | 'vostfr' | 'vfq' | 'vff'). Le public veut le
+// français : VF (vff) > VFQ > VOSTFR > indéterminé (default/[]). La valeur
+// MIN d'une source dans ce rang décide de son ordre ; une source qui cumule
+// plusieurs versions hérite de sa MEILLEURE.
+const VERSION_RANKS = [
+  { match: (v) => /vfq/.test(v), rank: 1 },
+  { match: (v) => /^vff$/.test(v) || v === 'vf', rank: 0 },
+  { match: (v) => /vostfr|vost/.test(v), rank: 2 },
+];
+function versionRank(versions) {
+  const list = versions ?? [];
+  let best = 3;
+  for (const version of list) {
+    for (const { match, rank } of VERSION_RANKS) {
+      if (match(String(version).toLowerCase())) best = Math.min(best, rank);
+    }
+  }
+  return best;
+}
+// Ordre de lecture au clic : direct (Player Mbolo, sans pubs) avant iframe,
+// puis version (VF prioritaire), puis l'ordre console (sortOrder) pour
+// départager les équivalents.
+function sourceOrder(a, b) {
+  const modeDelta = (a.mode === 'direct' ? 0 : 1) - (b.mode === 'direct' ? 0 : 1);
+  if (modeDelta !== 0) return modeDelta;
+  const rankDelta = versionRank(a.versions) - versionRank(b.versions);
+  if (rankDelta !== 0) return rankDelta;
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.createdAt ?? '').localeCompare(b.createdAt ?? '');
+}
+
 export async function findExternalTitleById(env, id) {
   const rows = await env.db.query(
     env,
     `SELECT t.id, t.title, t.year, t."posterUrl", t."backdropUrl", t."trailerYoutubeId",
-      s.id AS "sourceId", s.host, s.mode, s.versions, s."embedUrl", s."finalUrl"
+      s.id AS "sourceId", s.host, s.mode, s.versions, s."embedUrl", s."finalUrl",
+      s."sortOrder", s."createdAt"
      FROM "ExternalTitle" t
      LEFT JOIN "ExternalSource" s
        ON s."titleId" = t.id AND s."isActive" AND s."lastStatus" IN ('OK','UNKNOWN')
@@ -86,6 +118,8 @@ export async function findExternalTitleById(env, id) {
     trailerYoutubeId: first.trailerYoutubeId ?? null,
     sources: rows.rows
       .filter((row) => row.sourceId !== null)
+      .map((row) => ({ sortOrder: row.sortOrder, createdAt: row.createdAt, ...row }))
+      .sort(sourceOrder)
       .map((row) => serializeSource({ id: row.sourceId, host: row.host, mode: row.mode, versions: row.versions, embedUrl: row.embedUrl, finalUrl: row.finalUrl })),
   };
 }
@@ -142,4 +176,4 @@ export async function checkExternalBatch(env, limit = 8) {
   return summary;
 }
 
-export const _internal = { iso, effectiveSourceMode, serializeSource };
+export const _internal = { iso, effectiveSourceMode, serializeSource, versionRank, sourceOrder };

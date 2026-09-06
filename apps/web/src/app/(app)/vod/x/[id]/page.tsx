@@ -12,11 +12,12 @@
 import { EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useExternalPlay, useExternalTitle } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
+import type { ExternalSourcePublic } from '@mbolo/contracts';
 
 function ExternalDetailContent() {
   const params = useParams<{ id: string }>();
@@ -37,6 +38,11 @@ function ExternalDetailContent() {
   // sélection précédente après changement de lecteur.
   const [requestedRef, setRequestedRef] = useState<string | null>(null);
   const [iframeStarted, setIframeStarted] = useState(false);
+  // Lecteurs déjà essayés sans succès (résolution ou lecture) : l'enchaînement
+  // auto passe au suivant, sans boucler. Remis à zéro à l'Arrêter.
+  const [failedRefs, setFailedRefs] = useState<ReadonlySet<string>>(() => new Set());
+  // Notice d'enchaînement : « Lecteur 2 — videozz » a été tenté sans succès.
+  const [skippedHost, setSkippedHost] = useState<string | null>(null);
 
   const playQuery = useExternalPlay(selected?.host ?? 'mixdrop', selected?.playRef ?? '', false);
 
@@ -79,17 +85,38 @@ function ExternalDetailContent() {
     }
   }, [playQuery]);
 
-  const selectSource = useCallback((index: number): void => {
-    setSelectedIndex(index);
-    setRequestedRef(null);
-    setIframeStarted(false);
-  }, []);
+  // Sélection pilotée par INDEX de la liste triée (VF prioritaire côté API) :
+  // le clic Lecture part sur la source d'ordre 0 et descend la liste au besoin.
+  const selectedIndexRef = useRef(0);
+  selectedIndexRef.current = Math.min(selectedIndex, Math.max(0, sources.length - 1));
+  const failedRefsRef = useRef<ReadonlySet<string>>(new Set());
+  failedRefsRef.current = failedRefs;
+  // Position au moment de la bascule de lecteur : un changement de source
+  // remonte un nouveau Player (key host:playRef) — la reprise inter-lecteurs
+  // passe par la progression persistée, à jour à ~5 s (throttle recordVodProgress).
+  const positionAtSwitchRef = useRef(0);
+  const [autoSwitching, setAutoSwitching] = useState(false);
+
+  // Démarre la lecture de `source` : direct = résolution au clic (avec reprise
+  // de position), iframe = embed plein cadre (dernier recours uniquement).
+  const launchSource = useCallback((source: ExternalSourcePublic, position: number): void => {
+    setStartAt(position);
+    setRequestedRef(source.playRef);
+    if (source.mode === 'iframe') setIframeStarted(true);
+    else void playQuery.refetch();
+  }, [playQuery]);
 
   // Déclaré avant les early-returns (React #310 : nombre de hooks stable).
   const startPlayback = useCallback((): void => {
-    if (!selected) return;
-    if (selected.mode === 'iframe') {
-      setIframeStarted(true);
+    // Le clic Lecture part sur la source d'ordre 0 : l'API trie déjà direct
+    // d'abord puis VF > VOSTFR > default — c'est le « meilleur lecteur ».
+    const source = sources[0];
+    if (!source) return;
+    if (source.mode === 'iframe') {
+      // Un seul lecteur, en iframe : l'utilisateur n'a pas d'alternative.
+      setFailedRefs(new Set());
+      setSkippedHost(null);
+      launchSource(source, 0);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -97,18 +124,74 @@ function ExternalDetailContent() {
     // n'est pas fiable avant l'hydratation du persist (même motif que Nollywood).
     const entry = useSettingsStore.getState().vodProgress[progressId];
     const pos = entry && entry.duration > 0 && entry.position > 30 && entry.position < entry.duration - 30 ? entry.position : 0;
-    setStartAt(pos);
-    setRequestedRef(selected.playRef);
-    void playQuery.refetch();
+    setFailedRefs(new Set());
+    setSkippedHost(null);
+    setAutoSwitching(false);
+    launchSource(source, pos);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [playQuery, selected, progressId]);
+  }, [sources, progressId, launchSource]);
+
+  // Changement de lecteur DEPUIS LE PLAYER (icône serveur) : même position
+  // (relue du store, à ~5 s), sans passer par Lecture/Arrêter. Les sources
+  // essayées repartent à zéro : c'est un choix explicite de l'utilisateur.
+  const handleSourceChange = useCallback((sourceId: string): void => {
+    const source = sources.find((candidate) => candidate.id === sourceId);
+    if (!source) return;
+    setSelectedIndex(sources.indexOf(source));
+    setFailedRefs(new Set());
+    setSkippedHost(null);
+    setAutoSwitching(false);
+    setIframeStarted(false);
+    // Purge la résolution du lecteur précédent (playRef obsolète, jetons
+    // à usage unique) pour éviter qu'un cache périmé serve au nouveau.
+    for (const played of sources) {
+      if (played.id !== sourceId) queryClient.removeQueries({ queryKey: ['x-play', played.host, played.playRef] });
+    }
+    const position = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0;
+    launchSource(source, position);
+  }, [sources, progressId, launchSource, queryClient]);
 
   const stopPlayback = useCallback((): void => {
     setRequestedRef(null);
     setIframeStarted(false);
+    setFailedRefs(new Set());
+    setSkippedHost(null);
+    setAutoSwitching(false);
     if (selected) queryClient.removeQueries({ queryKey: ['x-play', selected.host, selected.playRef] });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [queryClient, selected]);
+
+  // Enchaînement automatique : la résolution du lecteur courant a échoué
+  // (extracteur périmé, CDN indisponible…) → on tente le lecteur DIRECT
+  // suivant de la liste (VF prioritaire), l'iframe n'étant que le dernier
+  // recours. La progression persistée (à ~5 s) restaure la position chez le
+  // lecteur suivant. Boucle impossible : chaque source essayée entre dans
+  // failedRefs ; l'effet ne retente que du neuf.
+  useEffect(() => {
+    if (!requestedRef || !selected || selected.mode !== 'direct') return;
+    if (!playQuery.isError || playQuery.isFetching || autoSwitching) return;
+    const ref = selected.playRef;
+    if (failedRefsRef.current.has(ref)) return;
+    const nextFailed = new Set<string>(failedRefsRef.current);
+    nextFailed.add(ref);
+    // Premier lecteur direct non encore essayé APRÈS celui qui vient d'échouer.
+    const fallback = sources
+      .slice(selectedIndexRef.current + 1)
+      .find((candidate) => candidate.mode === 'direct' && !nextFailed.has(candidate.playRef)) ?? null;
+    setFailedRefs(nextFailed);
+    setSkippedHost(selected.host);
+    if (!fallback) {
+      // Aucun direct restant : repli iframe du lecteur courant (comportement
+      // historique) pour que le film joue quand même.
+      setIframeStarted(true);
+      setRequestedRef(null);
+      return;
+    }
+    setAutoSwitching(true);
+    setSelectedIndex(sources.indexOf(fallback));
+    positionAtSwitchRef.current = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0;
+    launchSource(fallback, positionAtSwitchRef.current);
+  }, [requestedRef, selected, playQuery.isError, playQuery.isFetching, autoSwitching, sources, progressId, launchSource]);
 
   if (!id) return <EmptyState title="Contenu introuvable" />;
   if (detailQuery.isLoading) return <div className="flex justify-center py-24"><Spinner /></div>;
@@ -140,6 +223,9 @@ function ExternalDetailContent() {
                 initialTime={startAt}
                 onProgress={handleProgress}
                 onRefreshSource={refreshPlayUrl}
+                sources={sources.map(({ id, host, versions, mode }) => ({ id, host, versions, mode }))}
+                activeSourceId={selected.id}
+                onSourceChange={handleSourceChange}
                 initialVolume={volume}
                 onVolumeChange={setVolume}
                 autoPlay
@@ -204,8 +290,10 @@ function ExternalDetailContent() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
             Arrêter
           </button>
-          {directFailed && (
-            <span className="text-xs text-muted">Lecteur Mbolo indisponible — lecteur source utilisé</span>
+          {skippedHost && (
+            <span className="text-xs text-muted">
+              Lecteur {skippedHost} indisponible{directFailed ? ' — lecteur source utilisé' : ' — lecteur suivant essayé'}
+            </span>
           )}
           <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">{item.title}</span>
         </div>
@@ -242,32 +330,9 @@ function ExternalDetailContent() {
           )}
         </div>
 
-        {/* Sélecteur façon Wiflix : un bouton par lecteur (host + mode +
-            versions), le premier par défaut. Pendant la lecture, le
-            changement de lecteur relance via Lecture/Arrêter. */}
-        {sources.length > 0 && (
-          <div className="mt-4 border-t border-border/60 pt-4 md:mt-8 md:pt-6">
-            <h2 className="mb-3 text-base font-bold">Lecteurs ({sources.length})</h2>
-            <div className="flex flex-wrap gap-2">
-              {sources.map((source, index) => (
-                <button
-                  key={source.id}
-                  type="button"
-                  onClick={() => selectSource(index)}
-                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${index === Math.min(selectedIndex, sources.length - 1)
-                    ? 'border-accent bg-accent/10 text-accent'
-                    : 'border-border text-muted hover:text-text'}`}
-                >
-                  Lecteur {index + 1} · {source.host}
-                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${source.mode === 'direct' ? 'bg-accent/20 text-accent' : 'bg-surface-2 text-muted'}`}>
-                    {source.mode === 'direct' ? 'direct' : 'iframe'}
-                  </span>
-                  {source.versions.length > 0 && <span className="text-xs font-normal opacity-60">{source.versions.join(', ')}</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Sélecteur façon Wiflix supprimé : la liste des lecteurs vit
+            désormais DANS le Player Mbolo (icône serveur, rails + popup
+            mobile). Ici, la fiche ne fait qu'afficher le nombre. */}
 
         <div className="mt-4 flex flex-col gap-4 md:flex-row md:gap-6">
           {!playing && item.posterUrl && (
