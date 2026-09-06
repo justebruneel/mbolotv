@@ -141,7 +141,12 @@ export function usePlayUrl(id: string, enabled = true) {
     // Les URLs de lecture pointent directement vers les fournisseurs (via le
     // proxy edge) et embarquent un jeton fournisseur : on force une revalidation
     // réseau au clic après 60 s (refetch) au lieu des 30 min historiques.
+    // refetchOnReconnect: false — un retour de réseau au milieu d'une lecture
+    // ne doit PAS swappe l'URL en cours (le Player aurait tout rechargé, la
+    // position perdue) ; les vraies pannes passent par onRefreshSource du
+    // lecteur, qui fait le même refetch explicitement.
     staleTime: 60_000,
+    refetchOnReconnect: false,
     enabled,
   });
 }
@@ -484,6 +489,10 @@ export function useYoutubePlay(videoId: string, enabled = true) {
     },
     enabled: enabled && Boolean(videoId),
     staleTime: 30 * 60_000,
+    // Pas de refetch au retour du réseau : un swap d'URL en pleine lecture
+    // rechargerait tout le Player (position perdue) — le lecteur gère ses
+    // pannes via onRefreshSource.
+    refetchOnReconnect: false,
     retry: false,
   });
 }
@@ -500,6 +509,9 @@ export function useExternalPlay(host: string, id: string, enabled = true) {
     queryFn: () => apiGet<ExternalPlayResponse>('/x/play', { host, id }, false),
     enabled: enabled && Boolean(id),
     staleTime: 30 * 60_000,
+    // Pas de refetch au retour du réseau : les liens signés changeraient en
+    // pleine lecture et le Player rechargerait tout (position perdue).
+    refetchOnReconnect: false,
     gcTime: 60 * 60_000,
     retry: false,
   });
@@ -545,6 +557,8 @@ export function useVodEpisodes(id: string, enabled = true) {
 
 // L'URL de lecture VOD embarque le couple saison/épisode dans la clé : changer
 // d'épisode relance une requête (nouvelle URL signée, nouveau fichier).
+// refetchOnReconnect: false — même motif que usePlayUrl : un retour de réseau
+// ne doit pas swappe l'URL en pleine lecture (le Player rechargerait tout).
 export function useVodPlayUrl(id: string, params: { s?: number; e?: number }, enabled = true) {
   return useQuery({
     queryKey: ['vod-play', id, params.s ?? 1, params.e ?? 1],
@@ -554,6 +568,7 @@ export function useVodPlayUrl(id: string, params: { s?: number; e?: number }, en
         params.s || params.e ? { s: params.s, e: params.e } : undefined,
       ),
     staleTime: 60_000,
+    refetchOnReconnect: false,
     enabled: enabled && Boolean(id),
   });
 }

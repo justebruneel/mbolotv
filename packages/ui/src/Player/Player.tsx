@@ -20,6 +20,9 @@ const MAX_NETWORK_RETRIES = 3;
 // pas le player) avec backoff 500 ms → 1 s → 2 s AVANT le reload destructeur
 // de advance() — la majorité de ces erreurs sont des à-coups réseau passagers.
 const MAX_LEVEL_RETRIES = 3;
+// Recovery media VOD (miroir live) : nombre max de recoverMediaError() avant
+// d'abandonner la même instance et de recharger la source.
+const MAX_MEDIA_RECOVERIES = 3;
 const LEVEL_RETRY_BASE_MS = 500;
 // Fast-start : affichage quasi instantané dès la connexion au flux.
 // 1) On démarre sur le niveau de qualité LE PLUS BAS de la chaîne (équivalent
@@ -156,6 +159,12 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   // les retirer avant chaque remontage (retry/source suivante) et au destroy.
   const vodOnMetaRef = useRef<(() => void) | null>(null);
   const vodOnErrorRef = useRef<(() => void) | null>(null);
+  // VOD : dernière position réelle de lecture (tick 500 ms + capture au
+  // destroy). Survit aux re-chargements de l'effet (retry, source suivante,
+  // refresh) — contrairement à initialTime, figé dans la clôture au premier
+  // montage : c'est elle qui restaure la position quand la recovery a dû
+  // recharger la source (sinon la vidéo repart du début après un stall).
+  const lastPositionRef = useRef(0);
   const networkCapRef = useRef(-1);
   // Fast-start : actif + timer de libération ABR en refs pour que l'effet
   // qualité (un choix manuel hors Auto) puisse annuler la libération
@@ -269,6 +278,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       // à remplir le premier bloc — currentTime est déjà fiable, on doit
       // persister la reprise dès le démarrage (sinon stop précoce = perte).
       if (isVod) {
+        // Position en ref (l'état ne suffit pas) : destroy() la relit entre
+        // deux ticks, loadCurrent() la relit après un reload destructeur.
+        // Pas de gate sur duration : un MP4 progressif la donne tard,
+        // currentTime est déjà fiable.
+        if (video.currentTime > 0) lastPositionRef.current = video.currentTime;
         setVodPosition(video.currentTime);
         // Fin du buffer téléchargé : affichée sur la seekbar (zone grise)
         // pour que l'utilisateur voie ce qui est déjà chargé.
@@ -396,6 +410,13 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); if (startupPoll) clearInterval(startupPoll); if (fastStartTimerRef.current) clearTimeout(fastStartTimerRef.current); deadlineTimer = retryTimer = warmupTimer = null; startupPoll = null; fastStartTimerRef.current = null; };
     const destroy = (): void => {
+      // Capture AVANT le reset du <video> (removeAttribute+load() ci-dessous
+      // ramène currentTime à 0) : le dernier tick peut dater de 500 ms, cette
+      // valeur fraîche alimente la reprise du rechargement qui suit.
+      if (isVod) {
+        const t = el.currentTime;
+        if (Number.isFinite(t) && t > 0) lastPositionRef.current = t;
+      }
       const hls = hlsRef.current;
       if (hls) {
         // Chaque étape est isolée : une exception dans hls.js ne doit jamais
@@ -502,13 +523,21 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       if (isVod) {
         started = false;
         playbackInitiated = false;
+        mediaRecoveries = 0;
         const onMeta = (): void => {
           // Auto-désinscription : le readyState>=1 peut déclencher onMeta
           // manuellement pendant que le listener {once:true} est encore posé.
           el.removeEventListener('loadedmetadata', onMeta);
           vodOnMetaRef.current = null;
-          if (initialTime && Number.isFinite(initialTime) && el.duration > 0)
-            el.currentTime = clamp(initialTime, 0, Math.max(0, el.duration - 5));
+          // Reprise : la position COURANTE (ref, tenue par le tick 500 ms et
+          // capturée au destroy) prime sur initialTime (clôture figée au
+          // premier montage) — un reload après vidage de buffer repart de la
+          // position, pas du début. initialTime ne sert qu'au premier montage
+          // (reprise inter-sessions) ; resumeAt = 0 (démarrage frais) =>
+          // aucun seek, comportement historique.
+          const resumeAt = lastPositionRef.current > 0 ? lastPositionRef.current : initialTime ?? 0;
+          if (resumeAt > 0 && Number.isFinite(resumeAt) && el.duration > 0)
+            el.currentTime = clamp(resumeAt, 0, Math.max(0, el.duration - 5));
           attemptPlayback();
         };
         const onFileError = (): void => { if (!cancelled) { setErrorInfo({ type: 'networkError', httpCode: null }); advance(); } };
@@ -523,7 +552,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         el.addEventListener('loadedmetadata', onMeta, { once: true });
         el.addEventListener('error', onFileError, { once: true });
         if (isHlsStream && Hls.isSupported()) {
-          const hls = new Hls({ enableWorker: true, backBufferLength: 90, maxBufferLength: 60, maxBufferSize: 120 * 1000 * 1000, startLevel: -1 });
+          const hls = new Hls({ enableWorker: true, backBufferLength: 90, maxBufferLength: 90, maxBufferHole: 0.5, maxBufferSize: 120 * 1000 * 1000, startLevel: -1 });
           hlsRef.current = hls;
           retryRef.current = loadCurrent;
           hls.loadSource(url);
@@ -532,11 +561,56 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
             if (cancelled || hlsRef.current !== hls) return;
             setLevels(hls.levels.map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate), bitrate: level.bitrate })));
           });
+          // Recovery VOD (miroir de la branche live ci-dessous) : une erreur
+          // fatale après vidage de buffer n'est pas forcément la fin —
+          // startLoad(-1) reprend à lastCurrentTime SANS détacher le MSE
+          // (buffer conservé, position intacte) ; recoverMediaError préserve
+          // aussi la position. Le reload destructeur (advance) n'arrive qu'aux
+          // 401/403/404 (jeton mort) ou après épuisement des retries.
           hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
             if (cancelled || !data.fatal || hlsRef.current !== hls) return;
+            logSession('hls-error', `${data.type}/${data.details}${data.response ? ` http ${data.response.code}` : ''} [fatal]`);
+            if (data.type === ErrorTypes.MEDIA_ERROR) {
+              mediaRecoveries += 1;
+              if (mediaRecoveries > MAX_MEDIA_RECOVERIES) { advance(); return; }
+              if (el.buffered.length > 0 && el.currentTime + 0.5 < el.buffered.end(el.buffered.length - 1)) el.currentTime += 0.5;
+              try { hls.recoverMediaError(); } catch { advance(); }
+              return;
+            }
+            if (data.type === ErrorTypes.NETWORK_ERROR) {
+              const code = data.response?.code ?? null;
+              // Jeton mort / flux retiré : inutile d'insister sur la même URL
+              // signée — VOD n'a qu'une source, advance() enchaîne directement
+              // vers exhausted() → refresh d'URL par la page.
+              if (code === 401 || code === 403 || code === 404) { setErrorInfo({ type: 'networkError', httpCode: code }); advance(); return; }
+              // Retry LÉGER (startLoad ne détruit pas le player, reprend à la
+              // position courante) avec backoff 500 ms → 1 s → 2 s. Garde
+              // levels : manifest jamais chargé => startLoad passerait en
+              // STOPPED sans rien faire => reload destructeur de advance().
+              // FRAG_LOAD_* : les fatals typiques après vidage de buffer.
+              if ((hls.levels?.length ?? 0) > 0 && [Hls.ErrorDetails.MANIFEST_LOAD_ERROR, Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT, Hls.ErrorDetails.LEVEL_LOAD_ERROR, Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT, Hls.ErrorDetails.FRAG_LOAD_ERROR, Hls.ErrorDetails.FRAG_LOAD_TIMEOUT].includes(data.details)) {
+                levelRetries += 1;
+                if (levelRetries <= MAX_LEVEL_RETRIES) {
+                  logSession('level-retry', `${data.details} tentative ${levelRetries}/${MAX_LEVEL_RETRIES}`);
+                  setRetrying(true);
+                  retryTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) { setRetrying(false); hls.startLoad(-1); } }, levelRetryDelay(levelRetries));
+                  return;
+                }
+                setErrorInfo({ type: 'networkError', httpCode: code });
+                advance();
+                return;
+              }
+              networkRetries += 1;
+              if (networkRetries <= MAX_NETWORK_RETRIES) { retryTimer = setTimeout(() => { if (!cancelled && hlsRef.current === hls) hls.startLoad(-1); }, Math.min(1000 * networkRetries, 4000)); return; }
+            }
             setErrorInfo({ type: data.type, httpCode: data.response?.code ?? null });
             advance();
           });
+          // Un fragment bufferisé = le flux respire de nouveau : on réarme les
+          // compteurs de recovery (sans ce reset, une pause utilisateur pendant
+          // la recovery épuiserait les retries au stall suivant — la branche
+          // live les réarme via son propre FRAG_BUFFERED).
+          hls.on(Hls.Events.FRAG_BUFFERED, () => { if (cancelled || hlsRef.current !== hls) return; levelRetries = 0; networkRetries = 0; mediaRecoveries = 0; });
         } else {
           el.src = url;
           el.load();

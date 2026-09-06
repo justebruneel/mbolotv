@@ -12,7 +12,7 @@
 import { EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useExternalPlay, useExternalTitle } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
@@ -40,6 +40,45 @@ function ExternalDetailContent() {
 
   const playQuery = useExternalPlay(selected?.host ?? 'mixdrop', selected?.playRef ?? '', false);
 
+  // Progression (miroir de la fiche Nollywood) : persistance locale throttlée
+  // 5 s pour « Reprendre » + position restaurée par le lecteur. Hooks
+  // déclarés AVANT les early-returns (React #310) — item est calculé après,
+  // on lit donc detailQuery.data.
+  // Préfixe x: : espace d'ids propre, sans collision avec les ids VodItem
+  // Xtream (ResumeRow route le préfixe vers /vod/x/<id>).
+  const progressId = useMemo(() => `x:${id}`, [id]);
+  const [startAt, setStartAt] = useState(0);
+  const recordVodProgress = useSettingsStore((state) => state.recordVodProgress);
+  const lastWriteRef = useMemo(() => ({ at: 0 }), []);
+  const handleProgress = useMemo(() => {
+    return (seconds: number, duration: number): void => {
+      const now = Date.now();
+      if (now - lastWriteRef.at < 5_000) return;
+      lastWriteRef.at = now;
+      recordVodProgress({
+        id: progressId,
+        kind: 'MOVIE',
+        title: detailQuery.data?.title ?? 'Film',
+        posterUrl: detailQuery.data?.posterUrl ?? null,
+        category: 'Externe',
+        position: seconds,
+        duration,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+  }, [detailQuery.data?.title, detailQuery.data?.posterUrl, progressId, recordVodProgress, lastWriteRef]);
+  // Refresh d'URL pour le lecteur : les liens signés des extracteurs expirent
+  // (expiresInSeconds) — sans ce branchement, exhausted() du Player se termine
+  // sur l'écran d'erreur sans pouvoir re-résoudre le flux.
+  const refreshPlayUrl = useCallback(async (): Promise<boolean> => {
+    try {
+      const result = await playQuery.refetch();
+      return result.isSuccess;
+    } catch {
+      return false;
+    }
+  }, [playQuery]);
+
   const selectSource = useCallback((index: number): void => {
     setSelectedIndex(index);
     setRequestedRef(null);
@@ -54,10 +93,15 @@ function ExternalDetailContent() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
+    // Reprise : figée à l'INSTANT du clic (state) — lire vodProgress au render
+    // n'est pas fiable avant l'hydratation du persist (même motif que Nollywood).
+    const entry = useSettingsStore.getState().vodProgress[progressId];
+    const pos = entry && entry.duration > 0 && entry.position > 30 && entry.position < entry.duration - 30 ? entry.position : 0;
+    setStartAt(pos);
     setRequestedRef(selected.playRef);
     void playQuery.refetch();
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [playQuery, selected]);
+  }, [playQuery, selected, progressId]);
 
   const stopPlayback = useCallback((): void => {
     setRequestedRef(null);
@@ -93,6 +137,9 @@ function ExternalDetailContent() {
                 urls={directUrls}
                 title={item.title}
                 mode="vod"
+                initialTime={startAt}
+                onProgress={handleProgress}
+                onRefreshSource={refreshPlayUrl}
                 initialVolume={volume}
                 onVolumeChange={setVolume}
                 autoPlay

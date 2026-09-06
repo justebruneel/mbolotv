@@ -38,6 +38,15 @@ function formatTime(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+// Lien d'une tuile « Reprendre » : les entrées sont préfixées par leur espace
+// (yt: Nollywood, x: titres externes) pour ne pas collisionner avec les ids
+// VodItem Xtream ; sans préfixe => fiche VOD Xtream classique.
+function resumeHref(id: string): string {
+  if (id.startsWith('yt:')) return `/vod/yt/${id.slice(3)}`;
+  if (id.startsWith('x:')) return `/vod/x/${id.slice(2)}`;
+  return `/vod/${id}`;
+}
+
 function ResumeRow() {
   const vodProgress = useSettingsStore((state) => state.vodProgress);
   const entries = useMemo(
@@ -50,7 +59,7 @@ function ResumeRow() {
       <h2 className="mb-3 text-lg font-bold">Reprendre</h2>
       <div className="flex gap-3 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {entries.map((entry) => (
-          <a key={entry.id} href={entry.id.startsWith('yt:') ? `/vod/yt/${entry.id.slice(3)}` : `/vod/${entry.id}`} className="group relative w-[136px] shrink-0">
+          <a key={entry.id} href={resumeHref(entry.id)} className="group relative w-[136px] shrink-0">
             <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg bg-surface">
               {entry.posterUrl ? (
                 <img src={entry.posterUrl} alt="" loading="lazy" className="h-full w-full object-cover transition group-hover:scale-105" />
