@@ -37,18 +37,51 @@ export async function previewFiche(env, url) {
 
 /**
  * GET /api/x/fiche?url=<fiche>
- * Pas de cache : les fiches changent (ajout/retrait de lecteurs).
+ * Mise en cache edge 5 min : la publication relit ce cache au lieu de
+ * re-scraper (fiche + ~9 suivis de wrappers = ~20 sous-requêtes économisées
+ * sur le budget CF de l'invocation publish).
  */
 export async function serveFichePreview(env, url, cors = {}) {
   try {
     const preview = await previewFiche(env, url);
-    return new Response(JSON.stringify(preview), {
+    const response = new Response(JSON.stringify(preview), {
       status: 200,
-      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...cors },
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `no-store`, ...cors },
     });
+    const cache = globalThis.caches?.default;
+    if (cache) {
+      // Entrée cache SÉPARÉE avec TTL 5 min (la réponse client reste
+      // no-store : un no-store mis en cache ne serait jamais relu).
+      const cached = new Response(JSON.stringify(preview), {
+        status: 200,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' },
+      });
+      await cache.put(new Request(ficheCacheKey(url)), cached).catch(() => undefined);
+    }
+    return response;
   } catch (error) {
     const status = error instanceof Error && typeof error.status === 'number' ? error.status : 502;
     return jsonError(error instanceof Error ? error.message : 'Fiche illisible', status, cors);
+  }
+}
+
+function ficheCacheKey(url) {
+  return `https://x.internal/fiche?url=${encodeURIComponent(String(url ?? '').trim())}`;
+}
+
+/** Relecture du cache aperçu (publication) : null si absent/expiré. */
+export async function readCachedPreview(env, url) {
+  void env;
+  const cache = globalThis.caches?.default;
+  if (!cache) return null;
+  try {
+    const hit = await cache.match(new Request(ficheCacheKey(url)));
+    if (!hit) return null;
+    const preview = await hit.json();
+    if (!preview || !Array.isArray(preview.players)) return null;
+    return preview;
+  } catch {
+    return null;
   }
 }
 

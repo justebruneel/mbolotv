@@ -86,7 +86,7 @@ export function ExternalTitlesSection() {
       const rejected = result.rejected.length > 0 ? ` Rejetés : ${result.rejected.map((entry) => `${entry.host} (${entry.reason}${entry.detail ? ` — ${entry.detail}` : ''})`).join(', ')}.` : '';
       const skipped = result.skipped > 0 ? ` ${result.skipped} déjà présent(s).` : '';
       const pending = (result.pending ?? 0) > 0 ? ` ${result.pending} en attente de vérification (cron).` : '';
-      setNotice(`« ${result.title} » : ${result.inserted} lecteur(s) publié(s).${skipped}${pending}${rejected}`);
+      setNotice(`« ${result.title} » : ${result.seen} détecté(s), ${result.inserted} publié(s).${skipped}${pending}${rejected}`);
       setPublishErrors([]);
       setPreview(null);
       setUrl('');

@@ -283,6 +283,7 @@ export type OwnerExternalPublishInput = z.infer<typeof ownerExternalPublishSchem
 export const ownerExternalPublishResponseSchema = z.object({
   titleId: z.string(),
   title: z.string(),
+  seen: z.number(),
   inserted: z.number(),
   skipped: z.number(),
   pending: z.number().optional(),

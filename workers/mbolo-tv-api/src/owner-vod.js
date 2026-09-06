@@ -4,7 +4,7 @@
 // + sources YouTube rattachées.
 import { slugify } from './normalize.js';
 import { checkEmbedPage, checkSource, SUPPORTED_HOSTS } from './extractors/index.js';
-import { previewFiche, serveFichePreview } from './scrapers/index.js';
+import { previewFiche, readCachedPreview, serveFichePreview } from './scrapers/index.js';
 
 const KINDS = new Set(['MOVIE', 'SERIES', 'BOTH']);
 const CHANNEL_ID_RE = /^UC[A-Za-z0-9_-]{22}$/;
@@ -493,17 +493,22 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     const body = await ctx.readJson().catch(() => ({}));
     const ficheUrl = typeof body?.url === 'string' ? body.url.trim() : '';
     if (!ficheUrl) return ctx.fail(400, 'URL de fiche manquante');
-    let preview;
-    try {
-      preview = await previewFiche(env, ficheUrl);
-    } catch (error) {
-      return ctx.fail(error instanceof Error && typeof error.status === 'number' ? error.status : 502, error instanceof Error ? error.message : 'Fiche illisible');
+    const hasClientPlayers = Array.isArray(body?.players) && body.players.length > 0;
+    // Cache de l'aperçu (5 min) : la console vient de l'afficher, inutile de
+    // re-scraper fiche + wrappers (~20 sous-requêtes). Re-scrape sinon.
+    let preview = hasClientPlayers ? await readCachedPreview(env, ficheUrl) : null;
+    if (!preview) {
+      try {
+        preview = await previewFiche(env, ficheUrl);
+      } catch (error) {
+        return ctx.fail(error instanceof Error && typeof error.status === 'number' ? error.status : 502, error instanceof Error ? error.message : 'Fiche illisible');
+      }
     }
-    // Candidats : players[] du client validés contre le scrape (sécurité),
+    // Candidats : players[] du client validés contre l'aperçu (sécurité),
     // repli legacy hosts[].
     const previewMap = new Map(preview.players.map((player) => [`${player.host}|${player.embedUrl}`, player]));
     let candidates;
-    if (Array.isArray(body?.players) && body.players.length > 0) {
+    if (hasClientPlayers) {
       candidates = [];
       for (const entry of body.players.slice(0, 24)) {
         const host = String(entry?.host ?? '').toLowerCase();
@@ -517,9 +522,13 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
         : null;
       candidates = preview.players.filter((player) => !wanted || wanted.has(player.host)).slice(0, 24);
     }
-    if (candidates.length === 0) return ctx.fail(400, 'Aucun lecteur retenu sur cette fiche');
+    const seen = candidates.length;
+    if (seen === 0) return ctx.fail(400, 'Aucun lecteur retenu sur cette fiche');
     // Phase 1 — vérification seule (aucune écriture), plafonnée : le surplus
     // part en UNKNOWN (lastCheckedAt NULL → prioritaire au prochain cron).
+    // Iframe : seul un 404/410 (mort certaine) rejette — 403/timeout (mur
+    // anti-bot, pas preuve de mort ; la lecture aura lieu dans le navigateur
+    // de l'utilisateur) part en UNKNOWN.
     const verified = [];
     const pending = [];
     const rejected = [];
@@ -537,8 +546,14 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
         verified.push({ player, mode: 'direct' });
       } else {
         const check = await checkEmbedPage(env, player.embedUrl);
-        if (!check.ok) {
+        if (!check.ok && (check.code === 'DEAD' || check.code === 'INVALID' || check.status === 400)) {
           rejected.push({ host: player.host, reason: `Iframe : ${check.message}`, detail: check.detail ?? null });
+          continue;
+        }
+        if (!check.ok) {
+          // Mur anti-bot ou timeout : pas une preuve de mort → UNKNOWN,
+          // le cron re-vérifiera (lastCheckedAt NULL = prioritaire).
+          pending.push(player);
           continue;
         }
         verified.push({ player, mode: 'iframe' });
@@ -547,7 +562,7 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     if (verified.length === 0 && pending.length === 0) {
       // 422 AVEC le détail par lecteur (la console l'affiche) : sans ça le
       // diagnostic prod (relais vs direct) est perdu.
-      return ctx.json({ message: 'Aucun lecteur vérifiable sur cette fiche. Aucun titre créé.', rejected }, 422);
+      return ctx.json({ message: 'Aucun lecteur vérifiable sur cette fiche. Aucun titre créé.', seen, rejected }, 422);
     }
     const title = (typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : preview.title).slice(0, 200);
     const year = body?.year === null || body?.year === undefined ? preview.year : Number(body.year) || null;
@@ -591,7 +606,7 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
       await store(player, SUPPORTED_HOSTS.includes(player.host) ? 'direct' : 'iframe', 'UNKNOWN');
     }
     await audit(ctx, owner.userId, 'vod.external_publish', 'external_title', titleId, { site: preview.site, siteRef, inserted, rejected: rejected.length });
-    return ctx.json({ titleId, title, inserted, skipped, pending: pending.length, rejected });
+    return ctx.json({ titleId, title, seen, inserted, skipped, pending: pending.length, rejected });
   }
 
   // Liste des titres externes + statut de leurs sources.
