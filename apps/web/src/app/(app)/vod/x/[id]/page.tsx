@@ -17,6 +17,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useExternalPlay, useExternalTitle } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
+import { TrailerFrame, useTrailerEmbed } from '../../../../../features/vod/components/TrailerHero';
 import type { ExternalSourcePublic } from '@mbolo/contracts';
 
 function ExternalDetailContent() {
@@ -208,6 +209,9 @@ function ExternalDetailContent() {
   const directFailed = selected?.mode === 'direct' && requestedRef !== null && playQuery.isError && directUrls.length === 0;
   const iframePlaying = (selected?.mode === 'iframe' && iframeStarted) || directFailed;
   const playing = directUrls.length > 0 || iframePlaying;
+  // Bande-annonce façon Netflix : iframe YouTube muette en boucle derrière le
+  // hero (différée 2,5 s), son sur geste explicite (bouton / clic image).
+  const trailer = useTrailerEmbed(playing ? '' : (item?.trailerYoutubeId ?? ''));
 
   return (
     <div className="pb-10">
@@ -245,10 +249,34 @@ function ExternalDetailContent() {
           </div>
         ) : (
           <>
-            {backdropUrl ? (
+            {backdropUrl && !trailer.mounted ? (
               <img src={backdropUrl} alt="" className="absolute inset-0 h-full w-full object-cover object-top opacity-85" />
             ) : (
-              <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
+              !backdropUrl && <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
+            )}
+            {/* Bande-annonce muette en fond : l'image reste dessous (la
+                miniature YouTube couvre l'iframe le temps de charger), le son
+                s'active au clic. Le dégradé sombre passe par-dessus pour que
+                les textes restent lisibles, comme sur Netflix. */}
+            {trailer.mounted && !trailer.failed && trailer.src && (
+              <div className="absolute inset-0" onClick={trailer.unmute} role="presentation">
+                <TrailerFrame
+                  src={trailer.src}
+                  onFailed={trailer.setFailed}
+                  frameRef={trailer.frameRef}
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-80"
+                />
+                {!trailer.muted && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); trailer.mute(); }}
+                    aria-label="Couper le son de la bande-annonce"
+                    className="absolute right-3 top-3 z-20 rounded-full bg-black/70 p-1.5 text-white backdrop-blur"
+                  >
+                    <Icon.Volume2 size={13} aria-hidden />
+                  </button>
+                )}
+              </div>
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0f] via-black/50 to-black/10" />
             <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/20 to-transparent" />
@@ -274,9 +302,15 @@ function ExternalDetailContent() {
                   )
                 )}
                 {item.trailerYoutubeId && (
-                  <Link href={`/vod/yt/${item.trailerYoutubeId}`} className="btn">
-                    <Icon.Film size={14} /> Bande-annonce
-                  </Link>
+                  trailer.mounted && !trailer.failed ? (
+                    <button type="button" className="btn" onClick={trailer.unmute}>
+                      <Icon.VolumeX size={14} /> {trailer.muted ? 'Activer le son' : 'Couper le son'}
+                    </button>
+                  ) : (
+                    <Link href={`/vod/yt/${item.trailerYoutubeId}`} className="btn">
+                      <Icon.Film size={14} /> Bande-annonce
+                    </Link>
+                  )
                 )}
               </div>
             </div>
