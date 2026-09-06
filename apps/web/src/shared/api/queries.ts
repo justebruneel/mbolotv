@@ -8,8 +8,9 @@ import type {
   ChannelViewersResponse,
   CountryOption,
   EpgRangeResponse,
-  ExternalHost,
   ExternalPlayResponse,
+  ExternalTitleDetail,
+  ExternalTitlesResponse,
   MatchListResponse,
   PlayResponse,
   Programme,
@@ -491,7 +492,9 @@ export function useYoutubePlay(videoId: string, enabled = true) {
 // (liens signés à expiry courte). ZÉRO retry, à tous les niveaux : le serveur
 // essaie déjà les miroirs en interne, et chaque tentative coûte des fetches
 // embed + expose au anti-bot. L'utilisateur relance via le lecteur (refetch).
-export function useExternalPlay(host: ExternalHost, id: string, enabled = true) {
+// host en string libre (le serveur valide, 400 si inconnu) : les fiches
+// peuvent lister des hosts sans extracteur (iframe, jamais résolus ici).
+export function useExternalPlay(host: string, id: string, enabled = true) {
   return useQuery({
     queryKey: ['x-play', host, id],
     queryFn: () => apiGet<ExternalPlayResponse>('/x/play', { host, id }, false),
@@ -499,6 +502,35 @@ export function useExternalPlay(host: ExternalHost, id: string, enabled = true) 
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
     retry: false,
+  });
+}
+
+// Titres externes (lecteurs tiers) : catalogue public visible + détail.
+// Miroir de useInfiniteVod (pagination par offset serveur).
+export function useInfiniteExternalTitles(q = '', pageSize = 48) {
+  const trimmed = q.trim();
+  return useInfiniteQuery({
+    queryKey: ['x-titles', trimmed],
+    queryFn: ({ pageParam }) =>
+      apiGet<ExternalTitlesResponse>('/x/titles', {
+        ...(trimmed ? { q: trimmed } : {}),
+        limit: pageSize,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.reduce((count, page) => count + page.items.length, 0) : undefined,
+    placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useExternalTitle(id: string, enabled = true) {
+  return useQuery({
+    queryKey: ['x-title', id],
+    queryFn: () => apiGet<ExternalTitleDetail>(`/x/titles/${encodeURIComponent(id)}`),
+    enabled: enabled && Boolean(id),
+    staleTime: 5 * 60_000,
   });
 }
 

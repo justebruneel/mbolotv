@@ -35,19 +35,20 @@ function GlobalPlayerInner() {
   const clearVod = useVodPlayerStore((state) => state.clearVod);
 
   const watchId = pathname?.match(/^\/watch\/([^/]+)/)?.[1] ?? null;
-  // /vod/yt/<videoId> = fiche Nollywood avec son propre lecteur inline :
-  // exclue de la capture VOD (sinon 'yt' partirait vers l'API Xtream).
-  const routeVodId = pathname?.match(/^\/vod\/(?!yt\/)([^/]+)/)?.[1] ?? null;
+  // /vod/yt/<videoId> (Nollywood) et /vod/x/<id> (titres externes) ont leur
+  // propre lecteur inline : exclus de la capture VOD (sinon 'yt'/'x'
+  // partirait vers l'API Xtream).
+  const routeVodId = pathname?.match(/^\/vod\/(?!yt\/|x\/)([^/]+)/)?.[1] ?? null;
   const isWatch = Boolean(watchId);
   const isVodRoute = Boolean(routeVodId);
   // La lecture ne survit à une navigation vers live / favoris que si
   // l'option « Mini-lecteur sur l'accueil » est activée (Préférences).
   const miniPlayerOnBrowse = useSettingsStore((state) => state.miniPlayerOnBrowse);
-  // /vod/yt/* (fiche Nollywood) est exclue du keep-alive : elle possède son
-  // propre lecteur inline — sans exclusion, le mini-lecteur précédent (live
-  // ou VOD Xtream) persiste par-dessus avec ses contrôles => doublons
+  // /vod/yt/* (Nollywood) et /vod/x/* (externes) sont exclus du keep-alive :
+  // lecteurs inline propres — sans exclusion, le mini-lecteur précédent
+  // (live ou VOD Xtream) persiste par-dessus avec ses contrôles => doublons
   // pause/volume/plein écran.
-  const keepAlive = Boolean(pathname && (isWatch || isVodRoute || (miniPlayerOnBrowse && (pathname.startsWith('/live') || pathname.startsWith('/favorites') || (pathname.startsWith('/vod') && !pathname.startsWith('/vod/yt/'))))));
+  const keepAlive = Boolean(pathname && (isWatch || isVodRoute || (miniPlayerOnBrowse && (pathname.startsWith('/live') || pathname.startsWith('/favorites') || (pathname.startsWith('/vod') && !pathname.startsWith('/vod/yt/') && !pathname.startsWith('/vod/x/'))))));
   // Priorité : watch > vod (route) > vod (mini) > chaîne. Le heartbeat
   // d'activité ne suit que les chaînes live : l'éco adaptatif mesure la
   // charge du relais résidentiel, que le VOD (sortie directe) n'utilise pas.

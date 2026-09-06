@@ -4,10 +4,12 @@ import { EmptyState, Icon, Spinner } from '@mbolo/ui';
 import type { VodFolderSummary, VodKind, YoutubeVideo } from '@mbolo/contracts';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteMergedYoutube, useInfiniteVod, useInfiniteVodFolderItems, useInfiniteYoutube, useVodCategories, useVodFolderRows, useVodFolders, useVodHero, useVodRows } from '../../../shared/api/queries';
+import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteExternalTitles, useInfiniteMergedYoutube, useInfiniteVod, useInfiniteVodFolderItems, useInfiniteYoutube, useVodCategories, useVodFolderRows, useVodFolders, useVodHero, useVodRows } from '../../../shared/api/queries';
 import { VodTile } from '../../../features/vod/components/VodTile';
 import { VodHero } from '../../../features/vod/components/VodHero';
 import { VodRow } from '../../../features/vod/components/VodRow';
+import { ExternalRow } from '../../../features/vod/components/ExternalRow';
+import { ExternalTile } from '../../../features/vod/components/ExternalTile';
 import { YoutubeTile } from '../../../features/vod/components/YoutubeTile';
 import { YoutubeRow } from '../../../features/vod/components/YoutubeRow';
 import { useSettingsStore } from '../../../shared/stores/settings';
@@ -165,7 +167,7 @@ function NollywoodOnly({ onBrowseAll }: { onBrowseAll: () => void }) {
 // dossiers gérés dans la console, puis rangées horizontales par catégorie.
 // La grille paginée reste disponible en mode filtré (recherche, catégorie,
 // « Parcourir tout »).
-function VodHome({ kind, onBrowseAll, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseAll: () => void; folders: VodFolderSummary[] }) {
+function VodHome({ kind, onBrowseAll, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseAll: () => void; onBrowseExternal: () => void; folders: VodFolderSummary[] }) {
   const heroQuery = useVodHero(kind);
   const rowsQuery = useVodRows(kind);
 
@@ -175,9 +177,18 @@ function VodHome({ kind, onBrowseAll, folders }: { kind: 'MOVIE' | 'SERIES'; onB
   const hero = heroQuery.data?.items ?? [];
   const rows = rowsQuery.data?.rows ?? [];
   if (rows.length === 0 && hero.length === 0) {
-    if (folders.length > 0) return <FolderOnly folders={folders} tab={kind} onBrowseAll={onBrowseAll} />;
-    // Sans dossiers en base (repli) : Nollywood seul sur Films, état vide sur Séries.
-    return kind === 'MOVIE' ? <NollywoodOnly onBrowseAll={onBrowseAll} /> : <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
+    // Catalogue Xtream vide : les titres externes portent quand même
+    // l'onglet Films (comme les dossiers YouTube portent la page).
+    return (
+      <>
+        {folders.length > 0
+          ? <FolderOnly folders={folders} tab={kind} onBrowseAll={onBrowseAll} />
+          : kind === 'MOVIE'
+            ? <NollywoodOnly onBrowseAll={onBrowseAll} />
+            : <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />}
+        {kind === 'MOVIE' && <ExternalRail onBrowseAll={onBrowseExternal} />}
+      </>
+    );
   }
 
   return (
@@ -186,6 +197,7 @@ function VodHome({ kind, onBrowseAll, folders }: { kind: 'MOVIE' | 'SERIES'; onB
       {folders.length > 0
         ? folders.map((folder) => <FolderRail key={folder.id} folder={folder} tab={kind} />)
         : kind === 'MOVIE' && <NollywoodRail />}
+      {kind === 'MOVIE' && <ExternalRail onBrowseAll={onBrowseExternal} />}
       {rows.map((row) => (
         <VodRow key={row.name} title={row.name} count={row.count} items={row.items} seeAllKind={kind} seeAllCategory={row.name === 'Nouveautés' ? '' : row.name} />
       ))}
@@ -359,6 +371,69 @@ function MergedYoutubeBrowse({ channelIds, q, hideWhenEmpty = false }: { channel
   );
 }
 
+// Rail d'accueil des titres externes (lecteurs tiers) : aperçu silencieux
+// (onglet Films uniquement — pas de kind côté titres externes, tous films
+// v1). « Voir tout » bascule la grille paginée (état local browseExternal,
+// comme browseAll).
+function ExternalRail({ previewCount = 12, onBrowseAll }: { previewCount?: number; onBrowseAll: () => void }) {
+  const query = useInfiniteExternalTitles('', previewCount);
+  if (query.isLoading || query.isError) return null;
+  const items = (query.data?.pages[0]?.items ?? []).slice(0, previewCount);
+  if (items.length === 0) return null;
+  return <ExternalRow title="Titres externes" items={items} onSeeAll={onBrowseAll} />;
+}
+
+// Grille paginée « voir tout » des titres externes (défilement infini).
+function ExternalBrowse({ q }: { q: string }) {
+  const query = useInfiniteExternalTitles(q, PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && query.hasNextPage && !query.isFetchingNextPage && !loadingMore) {
+        setLoadingMore(true);
+        void query.fetchNextPage().finally(() => setLoadingMore(false));
+      }
+    }, { rootMargin: '600px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage, loadingMore]);
+
+  if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (query.isError) return <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
+  const items = query.data?.pages.flatMap((page) => page.items) ?? [];
+  if (items.length === 0) return <EmptyState title="Aucun résultat" hint={q ? `Aucun titre ne correspond à « ${q} ».` : 'Ce catalogue est vide pour le moment.'} />;
+
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+        {items.map((item) => <ExternalTile key={item.id} item={item} />)}
+      </div>
+      <div ref={sentinelRef} className="h-10" />
+      {query.isFetchingNextPage && <div className="flex justify-center py-4"><Spinner /></div>}
+    </>
+  );
+}
+
+// Section recherche des titres externes (première page, silencieuse si vide).
+function ExternalSearch({ q }: { q: string }) {
+  const query = useInfiniteExternalTitles(q, 12);
+  if (query.isLoading || query.isError) return null;
+  const items = query.data?.pages[0]?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <section className="mt-10" aria-label="Résultats titres externes">
+      <h2 className="mb-3 text-lg font-bold">Titres externes</h2>
+      <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+        {items.map((item) => <ExternalTile key={item.id} item={item} />)}
+      </div>
+    </section>
+  );
+}
+
 // Vue « dossier » : titre + grille YouTube fusionnée (sans nom de chaîne).
 // Dossiers sans YouTube : repli grille VOD règles ∪ manuel. `folder` vient de
 // la liste publique ; si le backend à dossiers est mort (repli), slug
@@ -415,6 +490,8 @@ function VodPageContent() {
   });
   const [category, setCategory] = useState<string | null>(null);
   const [browseAll, setBrowseAll] = useState(false);
+  // Grille « voir tout » des titres externes (état local comme browseAll).
+  const [browseExternal, setBrowseExternal] = useState(false);
 
   const kindParam = searchParams.get('kind');
   const dossierParam = searchParams.get('dossier');
@@ -440,7 +517,7 @@ function VodPageContent() {
     }
     if (isVodKind(kindParam)) setTab(kindParam);
   }, [kindParam]);
-  useEffect(() => { setCategory(null); setBrowseAll(false); }, [tab]);
+  useEffect(() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); }, [tab]);
 
   const categories = useVodCategories(tab);
   // Dossiers de la console ; erreur ou liste vide = comportement historique.
@@ -449,6 +526,7 @@ function VodPageContent() {
 
   const switchTab = (next: Tab): void => {
     setTab(next);
+    setBrowseExternal(false);
     const url = new URL(window.location.href);
     url.searchParams.set('kind', next);
     url.searchParams.delete('dossier');
@@ -490,8 +568,8 @@ function VodPageContent() {
             </button>
           ))}
         </div>
-        {(category || browseAll || dossier) && (
-          <button type="button" onClick={() => { setCategory(null); setBrowseAll(false); openDossier(null); }} className="btn">
+        {(category || browseAll || browseExternal || dossier) && (
+          <button type="button" onClick={() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); openDossier(null); }} className="btn">
             <Icon.ChevronLeft size={14} /> Accueil {tab === 'MOVIE' ? 'films' : 'séries'}
           </button>
         )}
@@ -514,7 +592,7 @@ function VodPageContent() {
             Tout
           </button>
           {categories.data.map((entry) => (
-            <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); }}
+            <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); setBrowseExternal(false); }}
               className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${category === entry.name ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:text-text'}`}>
               {entry.name} <span className="opacity-60">{entry.count}</span>
             </button>
@@ -524,13 +602,20 @@ function VodPageContent() {
       <Suspense fallback={<div className="flex justify-center py-16"><Spinner /></div>}>
         {dossier
           ? <DossierView slug={dossier} q={q} folder={dossierFolder ?? (foldersQuery.isPending ? undefined : null)} />
-          : !q && !category && !browseAll
-            ? <VodHome kind={tab} onBrowseAll={() => setBrowseAll(true)} folders={folders} />
-            : q && (folders.length > 0 || tab === 'MOVIE') ? (
+          : !q && !category && !browseAll && !browseExternal
+            ? <VodHome kind={tab} onBrowseAll={() => setBrowseAll(true)} onBrowseExternal={() => setBrowseExternal(true)} folders={folders} />
+            : browseExternal && !q
+              ? <>
+                  <h2 className="mb-4 text-xl font-bold">Titres externes</h2>
+                  <ExternalBrowse q="" />
+                </>
+              : q && (folders.length > 0 || tab === 'MOVIE') ? (
                 // Recherche façon Netflix : le catalogue VOD d'abord, puis les
-                // collections des dossiers (recherche serveur YouTube).
+                // collections des dossiers (recherche serveur YouTube), puis
+                // les titres externes.
                 <>
                   <VodBrowse kind={tab} category={category} q={q} />
+                  <ExternalSearch q={q} />
                   {searchFolders.length > 0
                     ? searchFolders.map((section) => (
                         <section key={section.id} className="mt-10" aria-label={`Résultats ${section.name}`}>
