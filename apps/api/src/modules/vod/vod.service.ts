@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { ExternalTitleDetail, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
+import type { ExternalSourceMode, ExternalTitleDetail, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
+import { publicExternalSourceMode } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { MetadataService } from '../metadata/metadata.service';
@@ -287,7 +288,7 @@ export class VodService {
       posterUrl: row.posterUrl,
       backdropUrl: row.backdropUrl,
       trailerYoutubeId: row.trailerYoutubeId,
-      sources: row.sources.map((source) => ({ id: source.id, host: source.host, mode: (source.mode === 'iframe' ? 'iframe' : 'direct') as 'direct' | 'iframe', versions: source.versions, playRef: source.finalUrl ?? source.embedUrl })),
+      sources: row.sources.map((source) => ({ id: source.id, host: source.host, mode: publicExternalSourceMode(source.mode as ExternalSourceMode, source.host), versions: source.versions, playRef: source.finalUrl ?? source.embedUrl })),
     };
   }
 }

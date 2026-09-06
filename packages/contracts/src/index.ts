@@ -217,6 +217,13 @@ export const externalTitlesResponseSchema = z.object({
 export type ExternalTitlesResponse = z.infer<typeof externalTitlesResponseSchema>;
 export const externalSourceModeSchema = z.enum(['direct', 'iframe']);
 export type ExternalSourceMode = z.infer<typeof externalSourceModeSchema>;
+// Hosts disposant d'un extracteur côté /api/x/play. Tout autre host exposé
+// en « direct » (ligne publiée avant le repli iframe, par ex.) serait
+// renvoyé 400 par le résolveur à la lecture : on force iframe à la lecture.
+export const EXTERNAL_EXTRACTOR_HOSTS = ['mixdrop', 'dood', 'voe', 'uqload'] as const;
+export function publicExternalSourceMode(mode: ExternalSourceMode, host: string): ExternalSourceMode {
+  return mode === 'direct' && (EXTERNAL_EXTRACTOR_HOSTS as readonly string[]).includes(host) ? 'direct' : 'iframe';
+}
 export const externalSourcePublicSchema = z.object({
   id: z.string(),
   host: z.string(),

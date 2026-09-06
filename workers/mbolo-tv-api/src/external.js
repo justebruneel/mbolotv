@@ -6,11 +6,21 @@ function iso(value) {
   return value ? new Date(value).toISOString() : null;
 }
 
+// Hosts disposant d'un extracteur côté /api/x/play (miroir de
+// SUPPORTED_HOSTS dans extractors/index.js — mis à jour ensemble).
+// Un host sans extracteur ne PEUT pas être lu en direct : le résolveur
+// renvoie 400. On l'expose donc toujours en iframe, même si la ligne en
+// base dit « direct » (publiée avant le repli, ou colonne absente du SELECT).
+const DIRECT_HOSTS = new Set(['mixdrop', 'dood', 'voe', 'uqload']);
+function effectiveSourceMode(source) {
+  return source.mode === 'direct' && DIRECT_HOSTS.has(source.host) ? 'direct' : 'iframe';
+}
+
 function serializeSource(row) {
   return {
     id: row.id,
     host: row.host,
-    mode: row.mode === 'iframe' ? 'iframe' : 'direct',
+    mode: effectiveSourceMode(row),
     versions: row.versions ?? [],
     playRef: row.finalUrl ?? row.embedUrl,
   };
@@ -75,7 +85,7 @@ export async function findExternalTitleById(env, id) {
     trailerYoutubeId: first.trailerYoutubeId ?? null,
     sources: rows.rows
       .filter((row) => row.sourceId !== null)
-      .map((row) => serializeSource({ id: row.sourceId, host: row.host, versions: row.versions, embedUrl: row.embedUrl, finalUrl: row.finalUrl })),
+      .map((row) => serializeSource({ id: row.sourceId, host: row.host, mode: row.mode, versions: row.versions, embedUrl: row.embedUrl, finalUrl: row.finalUrl })),
   };
 }
 
@@ -98,8 +108,9 @@ export async function checkExternalBatch(env, limit = 8) {
   const summary = { checked: 0, ok: 0, dead: 0, errors: 0 };
   for (const source of rows.rows) {
     try {
-      // Iframe : simple existence de la page embed (pas de handshake).
-      const check = source.mode === 'iframe'
+      // Iframe (ou host sans extracteur, repli) : simple existence de la
+      // page embed — pas de handshake ; checkSource rejetterait ces hosts.
+      const check = effectiveSourceMode(source) === 'iframe'
         ? await checkEmbedPage(env, source.embedUrl)
         : await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
       const status = check.ok ? 'OK' : check.code === 'DEAD' ? 'DEAD' : 'ERROR';
@@ -117,4 +128,4 @@ export async function checkExternalBatch(env, limit = 8) {
   return summary;
 }
 
-export const _internal = { iso };
+export const _internal = { iso, effectiveSourceMode, serializeSource };
