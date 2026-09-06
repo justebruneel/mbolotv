@@ -167,7 +167,7 @@ export type VodYoutubeChannelsResponse = z.infer<typeof vodYoutubeChannelsSchema
 // ---- Extracteurs tiers (Mixdrop, Doodstream, … : lecture sans pubs ni iframe) ----
 // GET /api/x/play?host=<host>&id=<fileId|embedUrl> — même contrat que
 // /api/yt/play : URLs du proxy vidéo signé (Referer injecté côté proxy).
-export const externalHostSchema = z.enum(['mixdrop', 'dood', 'voe', 'uqload', 'vidzy']);
+export const externalHostSchema = z.enum(['mixdrop', 'dood', 'voe', 'uqload', 'vidzy', 'filmoon']);
 export type ExternalHost = z.infer<typeof externalHostSchema>;
 export const externalPlayResponseSchema = z.object({
   id: z.string(),
@@ -220,7 +220,7 @@ export type ExternalSourceMode = z.infer<typeof externalSourceModeSchema>;
 // Hosts disposant d'un extracteur côté /api/x/play. Tout autre host exposé
 // en « direct » (ligne publiée avant le repli iframe, par ex.) serait
 // renvoyé 400 par le résolveur à la lecture : on force iframe à la lecture.
-export const EXTERNAL_EXTRACTOR_HOSTS = ['mixdrop', 'dood', 'voe', 'uqload', 'vidzy'] as const;
+export const EXTERNAL_EXTRACTOR_HOSTS = ['mixdrop', 'dood', 'voe', 'uqload', 'vidzy', 'filmoon'] as const;
 export function publicExternalSourceMode(mode: ExternalSourceMode, host: string): ExternalSourceMode {
   return mode === 'direct' && (EXTERNAL_EXTRACTOR_HOSTS as readonly string[]).includes(host) ? 'direct' : 'iframe';
 }

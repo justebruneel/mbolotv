@@ -16,8 +16,9 @@ import * as dood from './dood.js';
 import * as voe from './voe.js';
 import * as uqload from './uqload.js';
 import * as vidzy from './vidzy.js';
+import * as filmoon from './filmoon.js';
 
-const REGISTRY = { [mixdrop.HOST]: mixdrop, [dood.HOST]: dood, [voe.HOST]: voe, [uqload.HOST]: uqload, [vidzy.HOST]: vidzy };
+const REGISTRY = { [mixdrop.HOST]: mixdrop, [dood.HOST]: dood, [voe.HOST]: voe, [uqload.HOST]: uqload, [vidzy.HOST]: vidzy, [filmoon.HOST]: filmoon };
 
 export const SUPPORTED_HOSTS = Object.keys(REGISTRY);
 
@@ -60,7 +61,10 @@ export async function serveExternalPlay(env, host, ref, cors = {}) {
     return jsonError('Extraction sans flux exploitable', 502, cors);
   }
   const cache = globalThis.caches?.default;
-  const cacheKey = `https://x.internal/play?host=${name}&id=${encodeURIComponent(canonicalId(ref))}`;
+  // v2 : les jetons de filmoon/Byse sont désormais émis via le relais
+  // résidentiel (IP cohérente handshake ↔ segments) — invalide les réponses
+  // mises en cache avec l'ancienne egress datacenter.
+  const cacheKey = `https://x.internal/play?v2&host=${name}&id=${encodeURIComponent(canonicalId(ref))}`;
   if (cache) {
     const hit = await cache.match(cacheKey).catch(() => null);
     if (hit) return hit;

@@ -14,6 +14,16 @@ import { extractPassMd5, parse as parseDood, resolve as resolveDood } from '../s
 import { decodePayload, extractPayload, parse as parseVoe, rot13 } from '../src/extractors/voe.js';
 import { extractFileUrl, parse as parseUqload } from '../src/extractors/uqload.js';
 import { HOST as VIDZY_HOST, decodeVidzyUrl, mirrorsFromEnv as vidzyMirrors, parse as parseVidzy, reconstructVidzyUrl, resolve as resolveVidzy } from '../src/extractors/vidzy.js';
+import {
+  HOST as FILMOON_HOST,
+  decryptPlayback,
+  grHash,
+  leadingZeroBits,
+  mirrorsFromEnv as filmoonMirrors,
+  parse as parseFilmoon,
+  resolve as resolveFilmoon,
+  solvePow,
+} from '../src/extractors/filmoon.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -375,6 +385,200 @@ describe('vidzy', () => {
   });
 });
 
+describe('filmoon', () => {
+  // Vecteurs grHash relevés sur l'implémentation validée contre le bundle
+  // pow du player Byse (2026-09-06) — garde anti-régression du hash maison.
+  const GR_VECTORS = {
+    abc: 'f2758c8c 405e74da e5cc830f 7e93a277 36deea6e c9dca24a c5b12c30 47a63974',
+    'TESTNONCE:370': '0054cbce 13f9c85e 78985d6c f501dd5f a33e5972 baf801fe f4b54370 e2572895',
+    'dr9l7mdk03dk:0': '642dcc27 1f246d68 5169580f 9674cf3f ee2115af b8a447d6 1bd80b7c 105bae8b',
+  };
+  const hexWords = (bytes) => Array.from(grHash(bytes)).map((w) => w.toString(16).padStart(8, '0')).join(' ');
+  const enc = new TextEncoder();
+  const part = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  it('parse : wrapper kakaflix/kokoflix, SPA /e/<code>, code nu, rejets', () => {
+    assert.deepEqual(parseFilmoon('https://kakaflix.lol/moon2/newPlayer.php?id=abc'), {
+      wrapperUrl: 'https://kakaflix.lol/moon2/newPlayer.php?id=abc',
+    });
+    assert.deepEqual(parseFilmoon('https://kokoflix.lol/chamber_go.php?id=YeNMVJUAmvXkWp63cr2PI'), {
+      wrapperUrl: 'https://kokoflix.lol/chamber_go.php?id=YeNMVJUAmvXkWp63cr2PI',
+    });
+    assert.deepEqual(parseFilmoon('https://bysebuho.com/e/dr9l7mdk03dk'), {
+      spaOrigin: 'https://bysebuho.com',
+      code: 'dr9l7mdk03dk',
+    });
+    assert.deepEqual(parseFilmoon('dr9l7mdk03dk'), { code: 'dr9l7mdk03dk' });
+    // Les SPAs Byse tournent (bysebuho aujourd'hui, bysesayeveum avant) :
+    // tout host /e/<code> est accepté — seule l'origine CDN finale est verrouillée.
+    assert.deepEqual(parseFilmoon('https://spa-avenir.example/e/DR9L7MDK03DK'), {
+      spaOrigin: 'https://spa-avenir.example',
+      code: 'dr9l7mdk03dk',
+    });
+    for (const bad of ['', 'ftp://x.example/e/abc', 'https://vidzy.cc/embed-p731ofuec673.html', 'pas un code !']) {
+      assert.throws(() => parseFilmoon(bad), (error) => error instanceof ExtractorError && error.status === 400, JSON.stringify(bad));
+    }
+  });
+
+  it('mirrorsFromEnv : défauts, surcharge JSON, surcharge CSV, repli', () => {
+    assert.deepEqual(filmoonMirrors({}), ['https://kakaflix.lol', 'https://kokoflix.lol']);
+    assert.equal(FILMOON_HOST, 'filmoon');
+    assert.deepEqual(filmoonMirrors({ FILMOON_MIRRORS: '["https://a.example/","https://b.example"]' }), ['https://a.example', 'https://b.example']);
+    assert.deepEqual(filmoonMirrors({ FILMOON_MIRRORS: 'https://c.example, https://d.example' }), ['https://c.example', 'https://d.example']);
+    assert.deepEqual(filmoonMirrors({ FILMOON_MIRRORS: '!!!' }), ['https://kakaflix.lol', 'https://kokoflix.lol']);
+  });
+
+  it('grHash : sorties identiques au bundle Byse (vecteurs capturés)', () => {
+    for (const [input, expected] of Object.entries(GR_VECTORS)) {
+      assert.equal(hexWords(enc.encode(input)), expected, input);
+    }
+  });
+
+  it('leadingZeroBits : compte big-endian mot 0 d\'abord', () => {
+    assert.equal(leadingZeroBits(new Uint32Array([0, 1])), 63);
+    assert.equal(leadingZeroBits(new Uint32Array([1])), 31);
+    assert.equal(leadingZeroBits(new Uint32Array([0x80000000, 0])), 0);
+    assert.equal(leadingZeroBits(new Uint32Array([0x00010000, 0])), 15);
+    assert.equal(leadingZeroBits(new Uint32Array([0, 0])), 64);
+  });
+
+  it('solvePow : vecteur bundle TESTNONCE/difficulté 8 → 370 ; budget dépassé → null', () => {
+    assert.equal(solvePow('TESTNONCE', 8), '370');
+    assert.equal(solvePow('', 16), '0');
+    assert.equal(solvePow('TESTNONCE', 0), '0');
+    assert.equal(solvePow('impossible', 33, -1), null);
+  });
+
+  it('decryptPlayback : round-trip AES-256-GCM clé parts[version-1]+parts[31-version-1]', async () => {
+    // Tailles observées live (capture byse-playback.json) : les deux vraies
+    // parts font 16 octets (concat = clé AES 32), les leurres 24.
+    const half = crypto.getRandomValues(new Uint8Array(16));
+    const rawKey = new Uint8Array(32);
+    rawKey.set(half, 0);
+    rawKey.set(half, 16);
+    const encKey = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const media = { sources: [{ url: 'https://edge2-waw-sprintcdn.r66nv9ed.com/hls2/x/master.m3u8?t=1', quality: 'auto' }], poster_url: 'p.jpg' };
+    const encrypt = async (version) => {
+      const payload = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, encKey, new TextEncoder().encode(JSON.stringify(media)));
+      return {
+        algorithm: 'AES-256-GCM',
+        key_parts: Array.from({ length: 30 }, (_, i) => (i === version - 1 || i === 31 - version - 1 ? part(half) : part(crypto.getRandomValues(new Uint8Array(24))))),
+        version,
+        iv: part(iv),
+        payload: part(new Uint8Array(payload)),
+      };
+    };
+    for (const version of [1, 7, 30]) {
+      assert.deepEqual(await decryptPlayback(await encrypt(version)), media, `version ${version}`);
+    }
+    await assert.rejects(() => decryptPlayback({ key_parts: [], version: 1, iv: 'x', payload: 'y' }), (error) => error.code === 'DEAD');
+    await assert.rejects(async () => decryptPlayback(await encrypt(31)), (error) => error.code === 'DEAD');
+  });
+  it('resolve (fetch mocké) : chaîne Byse complète → HLS sprintcdn + referer player + titre', async () => {
+    const realFetch = globalThis.fetch;
+    const playerOrigin = 'https://f7hyg4q.org';
+    const masterUrl = 'https://edge2-waw-sprintcdn.r66nv9ed.com/hls2/05/10847/dr9l7mdk03dk_o/master.m3u8?t=abc';
+    const part = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    try {
+      globalThis.fetch = async (input, init) => {
+        const url = String(input);
+        const headers = new Headers(init?.headers);
+        if (url.endsWith('/embed/details')) {
+          // fetchEmbedText n'envoie pas x-embed-parent (seuls les apiPost du
+          // player le font) — on vérifie juste le chemin SPA → details.
+          assert.ok(url.startsWith('https://bysebuho.com/api/videos/dr9l7mdk03dk/'), url);
+          return Response.json({ embed_frame_url: `${playerOrigin}/da6/dr9l7mdk03dk`, title: 'Predator Badlands 2025 TRUEFRENCH VF2 1080p WEB H264-SUPPLY' }, { url });
+        }
+        if (url.endsWith('/access/challenge')) return Response.json({ challenge_id: 'c1', nonce: 'NONCE123' }, { url });
+        if (url.endsWith('/access/attest')) {
+          assert.ok(headers.get('origin') === playerOrigin && headers.get('x-embed-parent'));
+          return Response.json({ token: 't-attest', viewer_id: 'v1', device_id: 'd1', confidence: 0.55 }, { url });
+        }
+        if (url.endsWith('/embed/captcha')) return Response.json({ pow_nonce: 'TESTNONCE', pow_difficulty: 8, pow_token: 'pow-1', algorithm: 'sha256-leading-zero-bits' }, { url });
+        if (url.endsWith('/captcha/verify')) {
+          const body = JSON.parse(init.body);
+          assert.equal(body.solution, solvePow('TESTNONCE', 8));
+          return Response.json({ status: 'ok', token: 't-captcha', expires_in: 1800 }, { url });
+        }
+        if (url.endsWith('/embed/playback')) {
+          assert.equal(headers.get('x-captcha-token'), 't-captcha');
+          // version 1 → clé = parts[0] + parts[29], chacune 16 octets (live).
+          const half = crypto.getRandomValues(new Uint8Array(16));
+          const rawKey = new Uint8Array(32);
+          rawKey.set(half, 0);
+          rawKey.set(half, 16);
+          const keyParts = Array.from({ length: 30 }, (_, i) => (i === 0 || i === 29 ? part(half) : part(crypto.getRandomValues(new Uint8Array(24)))));
+          const key = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['encrypt']);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const media = { sources: [{ url: masterUrl, quality: 'auto' }], poster_url: 'p.jpg' };
+          const payload = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(media)));
+          return Response.json({
+            playback: { algorithm: 'AES-256-GCM', key_parts: keyParts, version: 1, iv: part(iv), payload: part(new Uint8Array(payload)) },
+          }, { url });
+        }
+        if (url.includes('/hls2/')) return new Response('#EXTM3U\n', { status: 200, url, headers: { 'content-type': 'application/vnd.apple.mpegurl' } });
+        return new Response('nf', { status: 404, url });
+      };
+      const result = await resolveFilmoon({}, 'https://bysebuho.com/e/dr9l7mdk03dk');
+      assert.equal(result.urls.length, 1);
+      assert.match(result.urls[0], /^https:\/\/edge2-waw-sprintcdn\.r66nv9ed\.com\/hls2\//);
+      assert.equal(result.referer, `${playerOrigin}/`);
+      assert.match(result.title, /^Predator Badlands/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('resolve : URL CDN hors sprintcdn/r66nv9ed → DEAD (anti-exfiltration)', async () => {
+    const realFetch = globalThis.fetch;
+    const playerOrigin = 'https://f7hyg4q.org';
+    try {
+      globalThis.fetch = async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/embed/details')) return Response.json({ embed_frame_url: `${playerOrigin}/da6/dr9l7mdk03dk`, title: 'x' }, { url });
+        if (url.endsWith('/access/challenge')) return Response.json({ challenge_id: 'c1', nonce: 'NONCE123' }, { url });
+        if (url.endsWith('/access/attest')) return Response.json({ token: 't-attest', viewer_id: 'v1', device_id: 'd1', confidence: 0.55 }, { url });
+        if (url.endsWith('/embed/captcha')) return Response.json({ pow_nonce: 'TESTNONCE', pow_difficulty: 8, pow_token: 'pow-1' }, { url });
+        if (url.endsWith('/captcha/verify')) return Response.json({ status: 'ok', token: 't-captcha' }, { url });
+        if (url.endsWith('/embed/playback')) {
+          const key = await crypto.subtle.importKey('raw', crypto.getRandomValues(new Uint8Array(32)), 'AES-GCM', false, ['encrypt']);
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const payload = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify({ sources: [{ url: 'https://evil.example/hls2/master.m3u8' }] })));
+          return Response.json({
+            playback: {
+              algorithm: 'AES-256-GCM',
+              key_parts: Array.from({ length: 30 }, () => part(crypto.getRandomValues(new Uint8Array(32)))),
+              version: 1,
+              iv: part(iv),
+              payload: part(new Uint8Array(payload)),
+            },
+          }, { url });
+        }
+        return new Response('nf', { status: 404, url });
+      };
+      await assert.rejects(() => resolveFilmoon({}, 'dr9l7mdk03dk'), (error) => {
+        assert.ok(error instanceof ExtractorError);
+        assert.equal(error.code, 'DEAD');
+        return true;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('checkSource route filmoon (pas UNKNOWN_HOST)', async () => {
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input) => new Response('bloqué', { status: 500, url: String(input) });
+      const check = await checkSource({}, 'filmoon', 'https://kokoflix.lol/chamber_go.php?id=YeNMVJUAmvXkWp63cr2PI');
+      assert.notEqual(check.code, 'UNKNOWN_HOST');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
 describe('diagnostic', () => {
   it('attemptsSummary résume relais/direct (statuts + erreurs + ms)', () => {
     assert.equal(
@@ -450,9 +654,9 @@ describe('fetchEmbedText ordre direct-first', () => {
 });
 
 describe('registry', () => {
-  it('expose mixdrop, dood, voe, uqload, vidzy', () => {
+  it('expose mixdrop, dood, voe, uqload, vidzy, filmoon', () => {
     assert.equal(HOST, 'mixdrop');
-    assert.deepEqual(SUPPORTED_HOSTS, ['mixdrop', 'dood', 'voe', 'uqload', 'vidzy']);
+    assert.deepEqual(SUPPORTED_HOSTS, ['mixdrop', 'dood', 'voe', 'uqload', 'vidzy', 'filmoon']);
   });
   it('400 sur host inconnu, sans toucher le réseau', async () => {
     const response = await serveExternalPlay({}, 'unknownhost', 'abc123');

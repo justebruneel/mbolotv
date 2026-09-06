@@ -454,7 +454,13 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
         // VOD : sortie directe d'abord (relais court-circuité, hôtes mappés
         // compris) ; repli UNE fois via le relais résidentiel si le fournisseur
         // refuse les IP datacenter.
-        result = await runAttempts(true, { skipRelay: true });
+        // Exception : un host explicitement mappé (RELAY_MAP/RELAY_DOMAIN_MAP)
+        // sort par le relais DÈS LE PREMIER essai, même en direct=1 — le mapping
+        // signifie « ce fournisseur refuse les IP datacenter » (ex. sprintcdn
+        // lie ses jetons de segments à l'IP du handshake) : un essai direct
+        // ne peut que rater puis renvoyer son 403/404 tel quel.
+        const mappedByDefault = applyRelay(env, target, { allowDefault: false, skipRelay: false }).upstreamAuthority !== null;
+        result = await runAttempts(true, { skipRelay: !mappedByDefault });
         if (!result.response) result = await runAttempts(true);
       } else {
         result = await runAttempts(true);

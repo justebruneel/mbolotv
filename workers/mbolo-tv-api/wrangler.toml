@@ -17,7 +17,7 @@ MATCH_DETECTION_ENABLED = "true"
 # bloquent les IP datacenter. Même carte que le proxy vidéo : le health-check
 # sonde les flux via le relais. Batch réduit : la ligne IPTV limite les
 # connexions simultanées.
-RELAY_DOMAIN_MAP = '{"evorvixa.cc":"https://relay-dns.mbolotv.dpdns.org","dnsjibre.xyz":"https://relay-dns.mbolotv.dpdns.org"}'
+RELAY_DOMAIN_MAP = '{"evorvixa.cc":"https://relay-dns.mbolotv.dpdns.org","dnsjibre.xyz":"https://relay-dns.mbolotv.dpdns.org","r66nv9ed.com":"https://relay-dns.mbolotv.dpdns.org"}'
 # Tout hôte de fournisseur non cartographié ci-dessus sort par le relais
 # générique relay-dns — rien à configurer lors de l'import d'une nouvelle playlist.
 RELAY_DEFAULT_ORIGIN = "https://relay-dns.mbolotv.dpdns.org"

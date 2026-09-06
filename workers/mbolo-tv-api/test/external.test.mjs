@@ -1,10 +1,12 @@
 // Tests unitaires de la sérialisation publique des titres externes.
 // Lancer : node --test 'workers/mbolo-tv-api/test/*.test.mjs'
-// Point crucial : un host sans extracteur (filmoon…) ne peut PAS être exposé
-// en « direct » — /api/x/play le renverrait 400. Le repli iframe est donc
+// Point crucial : un host sans extracteur ne peut PAS être exposé en
+// « direct » — /api/x/play le renverrait 400. Le repli iframe est donc
 // forcé à la lecture, y compris pour les lignes en base publiées avant le
 // repli (colonne mode = 'direct' ou absente). La source de vérité est le
-// REGISTRY des extracteurs (SUPPORTED_HOSTS).
+// REGISTRY des extracteurs (SUPPORTED_HOSTS) — filmoon (Byse) est supporté
+// depuis l'extracteur dédié ; un host non-supporté hypothétique garde le
+// repli iframe.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { SUPPORTED_HOSTS } from '../src/extractors/index.js';
@@ -19,15 +21,19 @@ describe('effectiveSourceMode — repli iframe', () => {
     }
   });
   it('force iframe pour un host sans extracteur déclaré direct', () => {
-    assert.ok(!SUPPORTED_HOSTS.includes('filmoon'));
-    assert.equal(effectiveSourceMode({ mode: 'direct', host: 'filmoon' }), 'iframe');
+    assert.ok(!SUPPORTED_HOSTS.includes('hostfantome'));
+    assert.equal(effectiveSourceMode({ mode: 'direct', host: 'hostfantome' }), 'iframe');
   });
   it('vidzy (extracteur récent) passe direct dès que la ligne le dit', () => {
     assert.ok(SUPPORTED_HOSTS.includes('vidzy'));
     assert.equal(effectiveSourceMode({ mode: 'direct', host: 'vidzy' }), 'direct');
   });
+  it('filmoon (extracteur Byse) passe direct dès que la ligne le dit', () => {
+    assert.ok(SUPPORTED_HOSTS.includes('filmoon'));
+    assert.equal(effectiveSourceMode({ mode: 'direct', host: 'filmoon' }), 'direct');
+  });
   it('force iframe quand le mode est absent (sélection SQL sans colonne mode)', () => {
-    assert.equal(effectiveSourceMode({ host: 'filmoon' }), 'iframe');
+    assert.equal(effectiveSourceMode({ host: 'mixdrop' }), 'iframe');
     assert.equal(effectiveSourceMode({ mode: null, host: 'mixdrop' }), 'iframe');
   });
   it('respecte iframe explicite même sur host supporté', () => {
@@ -45,13 +51,13 @@ describe('serializeSource', () => {
     assert.equal(out.mode, 'direct');
     assert.equal(out.playRef, 'https://vidzy.cc/embed-p731ofuec673.html');
   });
-  it('expose iframe pour filmoon stocké direct (pas d\'extracteur)', () => {
+  it('expose iframe pour filmoon stocké iframe (wrapper kakaflix en playRef)', () => {
     const out = serializeSource({
-      id: 's1b', host: 'filmoon', mode: 'direct', versions: [],
-      embedUrl: 'https://filmoon.com/embed/abc', finalUrl: null,
+      id: 's1b', host: 'filmoon', mode: 'iframe', versions: [],
+      embedUrl: 'https://kokoflix.lol/chamber_go.php?id=YeNMVJUAmvXkWp63cr2PI', finalUrl: null,
     });
     assert.equal(out.mode, 'iframe');
-    assert.equal(out.playRef, 'https://filmoon.com/embed/abc');
+    assert.equal(out.playRef, 'https://kokoflix.lol/chamber_go.php?id=YeNMVJUAmvXkWp63cr2PI');
   });
   it('expose direct pour mixdrop stocké direct', () => {
     const out = serializeSource({
