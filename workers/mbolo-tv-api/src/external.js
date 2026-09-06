@@ -1,17 +1,18 @@
 // Titres externes publics (lecteurs tiers) : catalogue visible + détail.
 // La lecture passe par /api/x/play (résolution au clic) — ici on ne sert que
 // des métas et des références de lecture (finalUrl ?? embedUrl).
+import { SUPPORTED_HOSTS, checkEmbedPage, checkSource } from './extractors/index.js';
 
 function iso(value) {
   return value ? new Date(value).toISOString() : null;
 }
 
-// Hosts disposant d'un extracteur côté /api/x/play (miroir de
-// SUPPORTED_HOSTS dans extractors/index.js — mis à jour ensemble).
-// Un host sans extracteur ne PEUT pas être lu en direct : le résolveur
-// renvoie 400. On l'expose donc toujours en iframe, même si la ligne en
-// base dit « direct » (publiée avant le repli, ou colonne absente du SELECT).
-const DIRECT_HOSTS = new Set(['mixdrop', 'dood', 'voe', 'uqload']);
+// Un host sans extracteur ne PEUT pas être lu en direct (/api/x/play
+// renvoie 400) : on l'expose toujours en iframe, même si la ligne en base
+// dit « direct » (publiée avant le repli, ou colonne absente du SELECT).
+// Source de vérité = REGISTRY des extracteurs (mixdrop, dood, voe, uqload,
+// vidzy…) — rien à mettre à jour ici quand un extracteur arrive.
+const DIRECT_HOSTS = new Set(SUPPORTED_HOSTS);
 function effectiveSourceMode(source) {
   return source.mode === 'direct' && DIRECT_HOSTS.has(source.host) ? 'direct' : 'iframe';
 }
@@ -103,16 +104,29 @@ export async function checkExternalBatch(env, limit = 8) {
      ORDER BY s."lastCheckedAt" ASC NULLS FIRST LIMIT $1`,
     [Math.min(Math.max(1, Number(limit) || 8), 50)],
   );
-  // Import paresseux (évite un cycle extractors ↔ external).
-  const { checkEmbedPage, checkSource } = await import('./extractors/index.js');
-  const summary = { checked: 0, ok: 0, dead: 0, errors: 0 };
+  const summary = { checked: 0, ok: 0, dead: 0, errors: 0, promoted: 0 };
   for (const source of rows.rows) {
     try {
-      // Iframe (ou host sans extracteur, repli) : simple existence de la
-      // page embed — pas de handshake ; checkSource rejetterait ces hosts.
-      const check = effectiveSourceMode(source) === 'iframe'
-        ? await checkEmbedPage(env, source.embedUrl)
-        : await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+      let check;
+      if (effectiveSourceMode(source) === 'iframe' && DIRECT_HOSTS.has(source.host)) {
+        // Ligne enregistrée iframe alors qu'un extracteur existe désormais
+        // (importé avant l'extracteur) : tentative de PROMOTION vers direct.
+        // Check complet (embed + handshake + CDN) — seul un verdict OK
+        // convertit la ligne ; sinon on retombe sur le verdict embed, la
+        // ligne reste iframe et joue quand même.
+        check = await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+        if (check.ok) {
+          await env.db.query(env, `UPDATE "ExternalSource" SET mode = 'direct' WHERE id = $1`, [source.id]);
+          summary.promoted += 1;
+        } else {
+          check = await checkEmbedPage(env, source.embedUrl);
+        }
+      } else if (effectiveSourceMode(source) === 'iframe') {
+        // Host sans extracteur : simple existence de la page embed.
+        check = await checkEmbedPage(env, source.embedUrl);
+      } else {
+        check = await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+      }
       const status = check.ok ? 'OK' : check.code === 'DEAD' ? 'DEAD' : 'ERROR';
       await env.db.query(env, `UPDATE "ExternalSource" SET "lastStatus" = $2, "lastError" = $3, "lastCheckedAt" = now() WHERE id = $1`,
         [source.id, status, check.ok ? null : String(check.message ?? '').slice(0, 200)]);

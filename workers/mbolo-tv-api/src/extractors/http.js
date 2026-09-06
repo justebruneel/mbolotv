@@ -37,13 +37,22 @@ function attempt(label, startedAt, status, error) {
   return { target: label, ms: Date.now() - startedAt, ...(status ? { status } : {}), ...(error ? { error: String(error).slice(0, 120) } : {}) };
 }
 
-export async function fetchEmbedText(env, url) {
+export async function fetchEmbedText(env, url, { via = 'auto' } = {}) {
   const relayed = resolveRelay(env, url);
   // Direct d'abord (1 seul fetch dans le cas courant), relais en repli :
   // divise par ~2 le budget sous-requêtes du publish et la latence. Le relais
   // reste indispensable pour les hosts qui filtrent les IP Cloudflare.
-  const targets = [{ url, headers: {}, label: 'direct' }];
-  if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  // via='relay' force le relais seul — utile quand un jeton est lié à l'IP
+  // qui a chargé la page (Vidzy) : page ET probe doivent sortir par le même
+  // chemin pour que le jeton reste valable.
+  const targets = [];
+  if (via === 'relay') {
+    if (relayed.url === url) throw extractorError(ExtractorErrorCode.RETRYABLE, 'Relais non configuré pour cette URL');
+    targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  } else {
+    targets.push({ url, headers: {}, label: 'direct' });
+    if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  }
   const attempts = [];
   let quotaError = null;
   let deadError = null;
@@ -115,11 +124,17 @@ export function attemptsSummary(error) {
  * répondent 403 sans lui). Utilisé avant de renvoyer l'URL au lecteur pour
  * ne jamais servir un lien mort.
  */
-export async function probeDirectUrl(env, url, referer, attemptsOut) {
+export async function probeDirectUrl(env, url, referer, attemptsOut, { via = 'auto' } = {}) {
   const relayed = resolveRelay(env, url);
   // Direct d'abord, relais en repli (même raison que fetchEmbedText).
-  const targets = [{ url, headers: {}, label: 'direct' }];
-  if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  const targets = [];
+  if (via === 'relay') {
+    if (relayed.url === url) return false;
+    targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  } else {
+    targets.push({ url, headers: {}, label: 'direct' });
+    if (relayed.url !== url) targets.push({ url: relayed.url, headers: relayed.headers, label: 'relais' });
+  }
   for (const target of targets) {
     const startedAt = Date.now();
     const note = (status, error) => {
@@ -138,9 +153,13 @@ export async function probeDirectUrl(env, url, referer, attemptsOut) {
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       });
       if (response.status === 429 || response.status === 403) {
+        // Même règle que fetchEmbedText : un 403/429 sur UN chemin n'est pas
+        // un verdict — l'autre chemin (relais résidentiel si le direct est
+        // une IP datacenter bloquée, ou l'inverse) est essayé avant de
+        // conclure « injoignable ».
         note(response.status);
         try { await response.body?.cancel(); } catch {}
-        return false;
+        continue;
       }
       if (response.status !== 200 && response.status !== 206) {
         note(response.status);

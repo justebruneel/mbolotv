@@ -546,7 +546,11 @@ function applyRelay(env, targetUrl, { allowDefault = true, skipRelay = false } =
     }
     if (!destination || new URL(destination).host === authority) return noRelay;
     const relayed = targetUrl.replace(`${parsed.protocol}//${parsed.host}`, destination.replace(/\/+$/, ""));
-    return { url: relayed, upstreamAuthority: authority };
+    // Autorité sans port = HTTP:80 côté forwarder : expliciter :443 pour
+    // les cibles HTTPS (ex. CDN HLS vidzy), sinon la requête tombe sur un
+    // serveur http qui répond 404.
+    const upstreamAuthority = parsed.port === "" && parsed.protocol === "https:" ? `${authority}:443` : authority;
+    return { url: relayed, upstreamAuthority };
   } catch {
     return noRelay;
   }

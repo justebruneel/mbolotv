@@ -3,6 +3,8 @@
 // Fiche film externe (lecteurs tiers) façon Netflix : hero (backdrop, titre,
 // année, trailer), sélecteur « Lecteur 1/2/3 » façon Wiflix, puis lecture :
 // - direct : Player maison avec l'URL résolue au clic via /api/x/play ;
+//   en cas d'échec de résolution, repli automatique sur l'iframe du lecteur
+//   (le film joue toujours, notice dans la barre de lecture) ;
 // - iframe : embed d'origine en plein cadre 16:9 (sans sandbox : les players
 //   tiers redirigent /blocked quand ils détectent l'attribut sandbox).
 // Lecteur inline propre (comme la fiche Nollywood) : GlobalPlayer exclut
@@ -73,7 +75,11 @@ function ExternalDetailContent() {
   const item = detailQuery.data;
   const backdropUrl = item.backdropUrl ?? item.posterUrl;
   const directUrls = selected?.mode === 'direct' && requestedRef === selected.playRef ? playQuery.data?.urls ?? [] : [];
-  const iframePlaying = selected?.mode === 'iframe' && iframeStarted;
+  // Repli intelligent : la résolution directe a échoué (extracteur périmé,
+  // CDN indisponible…) — on monte l'embed du lecteur en iframe pour que le
+  // film joue quand même, le Player Mbolo restant la voie préférée.
+  const directFailed = selected?.mode === 'direct' && requestedRef !== null && playQuery.isError && directUrls.length === 0;
+  const iframePlaying = (selected?.mode === 'iframe' && iframeStarted) || directFailed;
   const playing = directUrls.length > 0 || iframePlaying;
 
   return (
@@ -151,13 +157,10 @@ function ExternalDetailContent() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
             Arrêter
           </button>
+          {directFailed && (
+            <span className="text-xs text-muted">Lecteur Mbolo indisponible — lecteur source utilisé</span>
+          )}
           <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">{item.title}</span>
-        </div>
-      )}
-
-      {playQuery.isError && !playing && selected?.mode === 'direct' && (
-        <div className="mx-auto mt-8 w-full max-w-6xl px-4">
-          <EmptyState title="Lecture indisponible" hint="Ce lecteur ne répond pas — essayez un autre lecteur ci-dessous." />
         </div>
       )}
 

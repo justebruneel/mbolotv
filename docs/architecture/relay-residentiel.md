@@ -27,6 +27,11 @@ non cartographié** sort automatiquement par relay-dns :
 
 - priorité : `RELAY_MAP` (hôte exact) > `RELAY_DOMAIN_MAP` (suffixe domaine)
   > relais par défaut ;
+- **port de sortie** : l'autorité transite telle quelle ; une cible HTTPS
+  sans port explicite est qualifiée `:443` par `resolveRelay`/`applyRelay`
+  (le forwarder traite une autorité sans port en HTTP:80 — sans cela, un CDN
+  HTTPS comme `u*.vidzy.cc` répond 404). Le `Host` envoyé à l'amont omet les
+  ports standards ;
 - les cibles privées (RFC1918, loopback, link-local, CGNAT, `*.local`) ne
   sont jamais relayées ;
 - si la machine résidentielle est injoignable, le proxy retente une fois en

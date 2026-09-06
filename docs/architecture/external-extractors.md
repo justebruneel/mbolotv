@@ -17,6 +17,7 @@ Le navigateur ne touche jamais le CDN tiers (403 sans `Referer`, CORS, SNI).
 | DoodStream | embed → `/pass_md5/…` → préfixe CDN + `?token=&expiry=` | URL complète (dood.*, wrappers kakaflix/kokoflix) ou code nu | ✅ pipeline validé en mock (403 datacenter depuis le sandbox — le relais résidentiel de prod contourne) |
 | Voe | `/e/{id}` → JSON `application/json` → ROT13 → séparateurs → atob → −3 → reverse → atob → JSON (`source` HLS préféré) | URL complète (miroir quelconque) ou code nu | ✅ validé live (master HLS + probe + titre) |
 | Uqload | `/embed-{id}.html` → packer Dean Edwards → `file:[{file}]` (HLS) | URL complète ou code nu | ⚠️ extraction validée live, probe 403 nginx (IP datacenter — à confirmer via relais) |
+| Vidzy | `/embed-{code}.html` → blob setup video.js → atob → reverse → XOR `kk=(0x3d+i*89+H)&255` (H = somme charcodes hostname) → HLS `u*.vidzy.cc` (chemin mux `,.urlset/` reconstruit en `/index-v1-a1.m3u8`). **Jeton lié à l'IP qui a chargé la page** : strategies « auto » (direct) puis « relay » (page+probe par le relais, même IP) | URL complète, chemin `embed-…`, code nu | ✅ validé live (décodage + relais + probe + jeton) |
 
 ## Ajouter un host (Voe, Uptostream, …)
 
@@ -59,11 +60,23 @@ Helpers partagés : `http.js` (`fetchEmbedText` cascade relais→direct,
 
 ## Modes de lecture : direct + iframe
 
-- `direct` (mixdrop/dood/voe/uqload) : résolu via `/api/x/play`, lu dans le
-  lecteur maison sans pubs.
-- `iframe` (premium/fsvid, vidzy, filmoon, netu, …) : embed d'origine lu tel
-  quel en iframe en attendant son extracteur. Vérifié par existence de la
-  page (200), re-vérifié par le cron de la même façon.
+- `direct` (mixdrop/dood/voe/uqload/vidzy) : résolu via `/api/x/play`, lu dans le
+  lecteur maison sans pubs. La source de vérité est le REGISTRY des
+  extracteurs (`SUPPORTED_HOSTS`) — un host sans extracteur est exposé iframe
+  à la lecture **même si sa ligne en base dit `direct`** (`effectiveSourceMode`).
+- `iframe` (premium/fsvid, filmoon, netu, …) : embed d'origine lu tel quel en
+  iframe en attendant son extracteur. Vérifié par existence de la page (200),
+  re-vérifié par le cron de la même façon.
+  - **Filmoon (french-stream)** : `kokoflix.lol`/`kakaflix.lol` → SPA « Byse »
+    (`bysesayeveum.com/e/<code>`) dont l'API stream exige un **PoW captcha
+    (pow_nonce/difficulty/token) + fingerprint chiffré** — extracteur envisagé
+    plus tard ; iframe en attendant (fonctionnelle).
+- **Auto-promotion `iframe` → `direct`** : dès qu'un extracteur existe pour un
+  host, le cron (`checkExternalBatch`) et le recheck console retentent la
+  résolution complète ; verdict OK → `UPDATE mode='direct'`. Aucune
+  ré-import ni migration : les lignes soignent d'elles-mêmes. Côté client, si
+  la résolution directe échoue au clic, repli automatique sur l'iframe du
+  même lecteur (le film joue toujours, notice dans la barre de lecture).
 - Colonne `ExternalSource.mode` (migration `20260906000001`). La publication
   ne crée **jamais de titre vide** : vérification avant écriture, 422 sinon.
   Le détail public expose `mode` + `playRef` (URL `/api/x/play` ou embed).
@@ -119,7 +132,8 @@ Page Catalogue VOD, section « Titres externes » :
 Slot `*/10` du Worker : `checkExternalBatch(env, 8)` — les 8 sources actives
 les moins vérifiées, en séquentiel (pas de rafale anti-bot), statut persisté.
 Le lecteur bascule sur les sources saines ; les `DEAD` sortent du catalogue
-public mais restent gérables en console.
+public mais restent gérables en console. Le passage d'un extracteur pour un
+host previously iframe déclenche aussi la **promotion** automatique (§ Modes).
 
 ## Parité Nest (auto-hébergé)
 

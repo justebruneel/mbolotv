@@ -1,9 +1,10 @@
 // Tests unitaires de la sérialisation publique des titres externes.
-// Lancer : node --test workers/mbolo-tv-api/test/
-// Point crucial : un host sans extracteur (vidzy, filmoon…) ne peut PAS être
-// exposé en « direct » — /api/x/play le renverrait 400. Le repli iframe est
-// donc forcé à la lecture, y compris pour les lignes en base publiées avant
-// le repli (colonne mode = 'direct' ou absente).
+// Lancer : node --test 'workers/mbolo-tv-api/test/*.test.mjs'
+// Point crucial : un host sans extracteur (filmoon…) ne peut PAS être exposé
+// en « direct » — /api/x/play le renverrait 400. Le repli iframe est donc
+// forcé à la lecture, y compris pour les lignes en base publiées avant le
+// repli (colonne mode = 'direct' ou absente). La source de vérité est le
+// REGISTRY des extracteurs (SUPPORTED_HOSTS).
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { SUPPORTED_HOSTS } from '../src/extractors/index.js';
@@ -18,11 +19,15 @@ describe('effectiveSourceMode — repli iframe', () => {
     }
   });
   it('force iframe pour un host sans extracteur déclaré direct', () => {
-    assert.equal(effectiveSourceMode({ mode: 'direct', host: 'vidzy' }), 'iframe');
+    assert.ok(!SUPPORTED_HOSTS.includes('filmoon'));
     assert.equal(effectiveSourceMode({ mode: 'direct', host: 'filmoon' }), 'iframe');
   });
+  it('vidzy (extracteur récent) passe direct dès que la ligne le dit', () => {
+    assert.ok(SUPPORTED_HOSTS.includes('vidzy'));
+    assert.equal(effectiveSourceMode({ mode: 'direct', host: 'vidzy' }), 'direct');
+  });
   it('force iframe quand le mode est absent (sélection SQL sans colonne mode)', () => {
-    assert.equal(effectiveSourceMode({ host: 'vidzy' }), 'iframe');
+    assert.equal(effectiveSourceMode({ host: 'filmoon' }), 'iframe');
     assert.equal(effectiveSourceMode({ mode: null, host: 'mixdrop' }), 'iframe');
   });
   it('respecte iframe explicite même sur host supporté', () => {
@@ -31,13 +36,22 @@ describe('effectiveSourceMode — repli iframe', () => {
 });
 
 describe('serializeSource', () => {
-  it('expose iframe + playRef embed pour vidzy stocké direct', () => {
+  it('expose direct + playRef finalUrl pour vidzy stocké direct', () => {
     const out = serializeSource({
       id: 's1', host: 'vidzy', mode: 'direct', versions: ['VF'],
-      embedUrl: 'https://vidzy.cc/embed-p731ofuec673.html', finalUrl: null,
+      embedUrl: 'https://vidzy.cc/embed-p731ofuec673.html',
+      finalUrl: 'https://vidzy.cc/embed-p731ofuec673.html',
+    });
+    assert.equal(out.mode, 'direct');
+    assert.equal(out.playRef, 'https://vidzy.cc/embed-p731ofuec673.html');
+  });
+  it('expose iframe pour filmoon stocké direct (pas d\'extracteur)', () => {
+    const out = serializeSource({
+      id: 's1b', host: 'filmoon', mode: 'direct', versions: [],
+      embedUrl: 'https://filmoon.com/embed/abc', finalUrl: null,
     });
     assert.equal(out.mode, 'iframe');
-    assert.equal(out.playRef, 'https://vidzy.cc/embed-p731ofuec673.html');
+    assert.equal(out.playRef, 'https://filmoon.com/embed/abc');
   });
   it('expose direct pour mixdrop stocké direct', () => {
     const out = serializeSource({

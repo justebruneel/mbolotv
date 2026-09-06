@@ -15,8 +15,9 @@ import * as mixdrop from './mixdrop.js';
 import * as dood from './dood.js';
 import * as voe from './voe.js';
 import * as uqload from './uqload.js';
+import * as vidzy from './vidzy.js';
 
-const REGISTRY = { [mixdrop.HOST]: mixdrop, [dood.HOST]: dood, [voe.HOST]: voe, [uqload.HOST]: uqload };
+const REGISTRY = { [mixdrop.HOST]: mixdrop, [dood.HOST]: dood, [voe.HOST]: voe, [uqload.HOST]: uqload, [vidzy.HOST]: vidzy };
 
 export const SUPPORTED_HOSTS = Object.keys(REGISTRY);
 
@@ -25,8 +26,8 @@ export const SUPPORTED_HOSTS = Object.keys(REGISTRY);
 // parfois à usage unique — le lecteur re-résout au besoin via retry).
 const PLAY_CACHE_TTL_S = 3_600;
 
-function jsonError(message, status, cors = {}) {
-  return new Response(JSON.stringify({ message }), {
+function jsonError(message, status, cors = {}, detail = null) {
+  return new Response(JSON.stringify({ message, ...(detail ? { detail } : {}) }), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...cors },
   });
@@ -53,7 +54,7 @@ export async function serveExternalPlay(env, host, ref, cors = {}) {
     resolved = await adapter.resolve(env, String(ref ?? ''));
   } catch (error) {
     const status = error instanceof Error && typeof error.status === 'number' ? error.status : 502;
-    return jsonError(error instanceof Error ? error.message : 'Extraction indisponible', status, cors);
+    return jsonError(error instanceof Error ? error.message : 'Extraction indisponible', status, cors, attemptsSummary(error));
   }
   if (!resolved?.urls?.length || !resolved?.referer) {
     return jsonError('Extraction sans flux exploitable', 502, cors);

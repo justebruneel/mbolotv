@@ -707,14 +707,29 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     const rows = await env.db.query(env, `SELECT id, host, mode, "embedUrl", "finalUrl" FROM "ExternalSource" WHERE id = $1`, [id]);
     if (rows.rows.length === 0) return ctx.fail(404, 'Source introuvable');
     const source = rows.rows[0];
-    const check = source.mode === 'iframe'
-      ? await checkEmbedPage(env, source.embedUrl)
-      : await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+    let check;
+    let promoted = false;
+    if (source.mode === 'iframe' && SUPPORTED_HOSTS.includes(source.host)) {
+      // Verdict identique à la publication : le host a désormais un
+      // extracteur et la résolution directe passe → promotion en direct,
+      // le film bascule dans le Player Mbolo sans réimport.
+      check = await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+      if (check.ok) {
+        await env.db.query(env, `UPDATE "ExternalSource" SET mode = 'direct' WHERE id = $1`, [id]);
+        promoted = true;
+      } else {
+        check = await checkEmbedPage(env, source.embedUrl);
+      }
+    } else if (source.mode === 'iframe') {
+      check = await checkEmbedPage(env, source.embedUrl);
+    } else {
+      check = await checkSource(env, source.host, source.finalUrl ?? source.embedUrl);
+    }
     const status = check.ok ? 'OK' : check.code === 'DEAD' ? 'DEAD' : 'ERROR';
     await env.db.query(env, `UPDATE "ExternalSource" SET "lastStatus" = $2, "lastError" = $3, "lastCheckedAt" = now() WHERE id = $1`,
       [id, status, check.ok ? null : String(check.message ?? '').slice(0, 200)]);
-    await audit(ctx, owner.userId, 'vod.external_source_recheck', 'external_source', id, { status });
-    return ctx.json({ id, lastStatus: status, lastError: check.ok ? null : check.message, detail: check.detail ?? null });
+    await audit(ctx, owner.userId, 'vod.external_source_recheck', 'external_source', id, { status, promoted });
+    return ctx.json({ id, lastStatus: status, mode: promoted ? 'direct' : source.mode, lastError: check.ok ? null : check.message, detail: check.detail ?? null });
   }
 
   return ctx.fail(404, 'Route owner VOD inconnue');

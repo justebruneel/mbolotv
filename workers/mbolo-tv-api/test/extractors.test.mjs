@@ -13,6 +13,7 @@ import { createHmac } from 'node:crypto';
 import { extractPassMd5, parse as parseDood, resolve as resolveDood } from '../src/extractors/dood.js';
 import { decodePayload, extractPayload, parse as parseVoe, rot13 } from '../src/extractors/voe.js';
 import { extractFileUrl, parse as parseUqload } from '../src/extractors/uqload.js';
+import { HOST as VIDZY_HOST, decodeVidzyUrl, mirrorsFromEnv as vidzyMirrors, parse as parseVidzy, reconstructVidzyUrl, resolve as resolveVidzy } from '../src/extractors/vidzy.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -256,6 +257,124 @@ describe('uqload', () => {
   });
 });
 
+describe('vidzy', () => {
+  // Blob capturé live le 2026-09-06 sur https://vidzy.cc/embed-p731ofuec673.html.
+  const REAL_BLOB = '679Zo1Eu61wu00c/nmHLl3nP/2bXvg3utBvsHTnzVCGOWz+Ib8mUcYC8NoL+Bu20TqBBVqxZc/AaYuUIp9QisasQvuRWv+5zuBNt/1pb2CZhhW5W43OBo3ufolXx9EigCEOkX3jhVjuFOWTdKZmsd9ziFtezHuVMDPxBN40VYdx0Ycp+juQhheUU1bla+VIeuAJttA8=';
+  // Encodeur miroir de decodeVidzyUrl (pour fabriquer des fixtures).
+  const encodeVidzy = (url, host) => {
+    let h = 0;
+    for (const ch of host) h = (h + ch.charCodeAt(0)) & 255;
+    let out = '';
+    for (let i = 0; i < url.length; i += 1) out += String.fromCharCode(url.charCodeAt(i) ^ ((0x3d + i * 89 + h) & 255));
+    return btoa([...out].reverse().join(''));
+  };
+  const embedHtml = (blob) => `<html><head><title>Predator Badlands 2025 TRUEFRENCH VF2 1080p WEB H264-SUPPLY - Vidzy</title></head><body>
+    var _fsvHls="https://s1.fsvid.lol/troll/master.m3u8";player = videojs('vjsplayer', {sources: [{src: (function(s){var h=(location&&location.hostname)||"",H=0;return s})("${blob}"), type: "application/x-mpegURL"}]});</body></html>`;
+
+  it('parse : URL complète, chemin embed, code nu, rejets', () => {
+    assert.deepEqual(parseVidzy('https://vidzy.cc/embed-p731ofuec673.html'), {
+      embedUrl: 'https://vidzy.cc/embed-p731ofuec673.html',
+    });
+    assert.deepEqual(parseVidzy('/embed-p731ofuec673.html'), { code: 'p731ofuec673' });
+    assert.deepEqual(parseVidzy('p731ofuec673'), { code: 'p731ofuec673' });
+    for (const bad of ['', 'abc', 'ftp://x.example/embed-p731ofuec673.html', 'pas un code !']) {
+      assert.throws(() => parseVidzy(bad), (error) => error instanceof ExtractorError && error.status === 400, JSON.stringify(bad));
+    }
+  });
+
+  it('mirrorsFromEnv : défauts, surcharge JSON, surcharge CSV, repli', () => {
+    assert.deepEqual(vidzyMirrors({}), ['https://vidzy.cc']);
+    assert.equal(VIDZY_HOST, 'vidzy');
+    assert.deepEqual(vidzyMirrors({ VIDZY_MIRRORS: '["https://a.example/","https://b.example"]' }), ['https://a.example', 'https://b.example']);
+    assert.deepEqual(vidzyMirrors({ VIDZY_MIRRORS: 'https://c.example, https://d.example' }), ['https://c.example', 'https://d.example']);
+    assert.deepEqual(vidzyMirrors({ VIDZY_MIRRORS: '!!!' }), ['https://vidzy.cc']);
+  });
+
+  it('decodeVidzyUrl : blob capturé → HLS u14.vidzy.cc avec jeton', () => {
+    const url = decodeVidzyUrl(REAL_BLOB, 'vidzy.cc');
+    assert.match(url, /^https:\/\/u14\.vidzy\.cc\/hls2\/06\/00047\/p731ofuec673_o\/master\.m3u8\?t=/);
+  });
+
+  it('decodeVidzyUrl : host non émetteur → pas d\'URL (leurre/null)', () => {
+    const wrong = decodeVidzyUrl(REAL_BLOB, 'evil.example');
+    assert.ok(wrong === null || !wrong.includes('vidzy.cc'), String(wrong));
+  });
+
+  it('reconstructVidzyUrl : chemin mux à virgules → index-v1-a1 (fssMuxT)', () => {
+    assert.equal(
+      reconstructVidzyUrl('https://u9.vidzy.cc/hls2/06/00047/,p731ofuec673_o,.urlset/master.m3u8?t=abc'),
+      'https://u9.vidzy.cc/hls2/06/00047/p731ofuec673_o/index-v1-a1.m3u8?t=abc',
+    );
+    assert.equal(
+      reconstructVidzyUrl('https://u14.vidzy.cc/hls2/x/master.m3u8?t=abc'),
+      'https://u14.vidzy.cc/hls2/x/master.m3u8?t=abc',
+    );
+  });
+
+  it('resolve (fetch mocké) : embed → HLS direct + referer + titre', async () => {
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input) => {
+        const url = String(input);
+        if (url.includes('/embed-')) return new Response(embedHtml(REAL_BLOB), { status: 200, url, headers: { 'content-type': 'text/html' } });
+        if (url.includes('/hls2/')) return new Response('#EXTM3U\n', { status: 200, url, headers: { 'content-type': 'application/vnd.apple.mpegurl' } });
+        return new Response('nf', { status: 404, url });
+      };
+      const result = await resolveVidzy({}, 'https://vidzy.cc/embed-p731ofuec673.html');
+      assert.equal(result.urls.length, 1);
+      assert.match(result.urls[0], /^https:\/\/u14\.vidzy\.cc\/hls2\//);
+      assert.equal(result.referer, 'https://vidzy.cc/');
+      assert.match(result.title, /^Predator Badlands/);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('resolve : page sans blob (fichier retiré/player changé) → DEAD', async () => {
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input) => new Response('<html><body>video unavailable</body></html>', { status: 200, url: String(input) });
+      await assert.rejects(() => resolveVidzy({}, 'https://vidzy.cc/embed-p731ofuec673.html'), (error) => {
+        assert.ok(error instanceof ExtractorError);
+        assert.equal(error.code, 'DEAD');
+        return true;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('resolve : URL CDN hors de l\'apex du miroir → DEAD (anti-exfiltration, leurre troll)', async () => {
+    const trollBlob = encodeVidzy('https://s1.fsvid.lol/troll/master.m3u8', 'vidzy.cc');
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input) => {
+        const url = String(input);
+        if (url.includes('/embed-')) return new Response(embedHtml(trollBlob), { status: 200, url, headers: { 'content-type': 'text/html' } });
+        return new Response('nf', { status: 404, url });
+      };
+      await assert.rejects(() => resolveVidzy({}, 'https://vidzy.cc/embed-p731ofuec673.html'), (error) => {
+        assert.ok(error instanceof ExtractorError);
+        assert.equal(error.code, 'DEAD');
+        return true;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('checkSource route vidzy (pas UNKNOWN_HOST)', async () => {
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input) => new Response('bloqué', { status: 500, url: String(input) });
+      const check = await checkSource({}, 'vidzy', 'https://vidzy.cc/embed-p731ofuec673.html');
+      assert.notEqual(check.code, 'UNKNOWN_HOST');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
 describe('diagnostic', () => {
   it('attemptsSummary résume relais/direct (statuts + erreurs + ms)', () => {
     assert.equal(
@@ -331,9 +450,9 @@ describe('fetchEmbedText ordre direct-first', () => {
 });
 
 describe('registry', () => {
-  it('expose mixdrop, dood, voe, uqload', () => {
+  it('expose mixdrop, dood, voe, uqload, vidzy', () => {
     assert.equal(HOST, 'mixdrop');
-    assert.deepEqual(SUPPORTED_HOSTS, ['mixdrop', 'dood', 'voe', 'uqload']);
+    assert.deepEqual(SUPPORTED_HOSTS, ['mixdrop', 'dood', 'voe', 'uqload', 'vidzy']);
   });
   it('400 sur host inconnu, sans toucher le réseau', async () => {
     const response = await serveExternalPlay({}, 'unknownhost', 'abc123');

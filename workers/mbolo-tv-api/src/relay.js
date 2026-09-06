@@ -44,7 +44,11 @@ export function resolveRelay(env, targetUrl) {
       if (authority !== defaultHost && !isPrivateHostname(parsed.hostname)) destination = defaultOrigin;
     }
     if (!destination || new URL(destination).host === authority) return plain;
-    const headers = { 'x-upstream-authority': authority };
+    // Les autorités sans port sont traitées en HTTP:80 par le forwarder —
+    // pour une cible HTTPS, expliciter :443 (sinon vidzy & co. tapent un
+    // serveur http qui répond 404).
+    const upstream = parsed.port === '' && parsed.protocol === 'https:' ? `${authority}:443` : authority;
+    const headers = { 'x-upstream-authority': upstream };
     const token = env?.RELAY_TOKEN ? String(env.RELAY_TOKEN).trim() : '';
     if (token) headers['x-relay-token'] = token;
     return {
