@@ -298,10 +298,11 @@ function ExternalDetailContent() {
                 )}
               </div>
             )}
-            {/* Dégradés de lisibilité : bas du hero uniquement (texte lisible),
-                la zone supérieure de la bande-annonce reste sans voile. */}
-            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-[#0b0b0f] via-[#0b0b0f]/45 to-transparent" />
-            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-r from-black/65 via-black/15 to-transparent" />
+            {/* Dégradé vertical léger au bas uniquement (fondu vers la page) ;
+                le voile latéral sombre est supprimé : c'est lui qui coupait le
+                hero en deux (côté sombre derrière le titre). La lisibilité du
+                texte est assurée par drop-shadow/OMBRE sur chaque élément. */}
+            <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#0b0b0f] via-[#0b0b0f]/40 to-transparent" />
             <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-black/35 to-transparent" />
             <div className="absolute inset-x-0 bottom-0 mx-auto hidden w-full max-w-6xl px-4 pb-6 md:block md:pb-8">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
@@ -309,7 +310,7 @@ function ExternalDetailContent() {
                 {item.year != null && <span>{item.year}</span>}
                 <span>{sources.length} lecteur{sources.length > 1 ? 's' : ''}</span>
               </div>
-              <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white drop-shadow-lg md:text-5xl">{item.title}</h1>
+              <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.9),0_0_24px_rgba(0,0,0,0.65)] md:text-5xl">{item.title}</h1>
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 {sources.length > 0 && (
                   playQuery.isFetching ? (
