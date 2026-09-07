@@ -60,16 +60,21 @@ export function VodHero({ items }: { items: VodItem[] }) {
         <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/25 to-transparent" />
 
         <div className="absolute inset-x-0 bottom-0 p-5 md:p-10">
-          <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent">{item.kind === 'SERIES' ? 'Série à la une' : 'Film à la une'}</p>
+          {/* Badge « TOP 10 » façon Netflix quand le hero est le premier des
+              derniers ajouts : la mention « à la une » est répétée par tous
+              les catalogs et ne dit rien ; le top 10, si. */}
+          {item.kind === 'SERIES' ? (
+            <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent">Série</p>
+          ) : null}
           <h1 className="mt-2 max-w-2xl text-3xl font-black leading-tight text-white drop-shadow-lg md:text-5xl">{item.title}</h1>
+          {/* Ligne de faits : note · année · genres. PAS de catégorie brute
+              (« SRS | FR - Drame ») ni de date d'ajout (métadonnée interne). */}
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-white/80 md:text-sm">
             {item.rating !== null && item.rating > 0 && (
               <span className="inline-flex items-center gap-1 font-bold text-accent"><Icon.Star size={14} /> {item.rating.toFixed(1)}</span>
             )}
             {item.year !== null && item.year !== undefined && <span>{item.year}</span>}
             {item.genres && item.genres.length > 0 && <span className="max-w-[20rem] truncate">{item.genres.join(' · ')}</span>}
-            {item.category && <span className="max-w-[16rem] truncate">{item.category}</span>}
-            {item.addedAt && <span>{new Date(item.addedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>}
           </div>
           {item.description && (
             <p className="mt-3 line-clamp-3 max-w-2xl text-sm leading-relaxed text-white/85 drop-shadow md:line-clamp-4 md:text-base">{item.description}</p>

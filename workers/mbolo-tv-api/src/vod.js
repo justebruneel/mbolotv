@@ -72,6 +72,28 @@ export async function listVodItems(env, { kind, category, q, limit = 48, offset 
 // Rangées « façon Netflix » : les N premières catégories d'un kind, chacune
 // avec ses 20 titres les plus récents. Une seule requête SQL par rangée, en
 // parallèle — la page d'accueil VOD charge tout en un aller-retour client.
+// Titre éditorial d'une rangée de catégorie : les catalogues Xtream/Vivid
+// exposent des libellés techniques (« SRS | FR - DRAME », « VOD - Action »,
+// « FR Films 2024 ») indignes d'une page d'accueil. On nettoie les
+// préfixes/segments techniques et on titre « par genre » — tout ce qui
+// reste technique ou vide retombe sur null (rangée masquée, pas de bruit).
+export function editorialRowTitle(rawName) {
+  const value = String(rawName ?? '').trim();
+  if (!value) return null;
+  const cleaned = value
+    // segments techniques : codes langue/pays en tête (FR-, VF-, VOSTFR-, ENG…)
+    .replace(/^(SRS|VOD|VIVD|VIVID|XTC|MYTF1|TFX|TF1\+?)\s*[|:\-–]\s*/i, '')
+    .replace(/^(FR|EN|ENG|US|UK|AR|ES|DE|IT|PT|JP|KR|IN|NG|ZA)\s*[|:\-–]\s*/gi, '')
+    .replace(/\b(FR|VF|VFF|VFQ|VOSTFR|VOST|SUB-FR|MULTI|ENG|EN|FHD|HD|4K|SD|CAMRIP|WEBRIP|WEB-DL|BluRay)\b/gi, '')
+    .replace(/\s*[|:–\-]\s*$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\s*[|:–\-]\s*/, '')
+    .trim();
+  if (cleaned.length < 2) return null;
+  // Titre en phrase : première lettre capitale, reste tel quel (« Drame »).
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 export async function vodRows(env, { kind, rowsCount = 8, perRow = 20, q = null } = {}) {
   const rowsParam = Math.min(Math.max(1, Number(rowsCount) || 8), 20);
   const perParam = Math.min(Math.max(1, Number(perRow) || 20), 50);
@@ -115,7 +137,11 @@ export async function vodRows(env, { kind, rowsCount = 8, perRow = 20, q = null 
   const settled = await Promise.all([recent, ...queries]);
   const rows = [{ name: 'Nouveautés', count: null, items: settled[0].rows.map(serializeVodItem) }];
   categories.forEach((category, index) => {
-    rows.push({ name: category.name, count: category.count, items: settled[index + 1].rows.map(serializeVodItem) });
+    // Titre éditorial (catégories brutes type « SRS | FR - DRAME » nettoyées)
+    // ; null => rangée masquée plutôt qu'un libellé technique en accueil.
+    const label = editorialRowTitle(category.name);
+    if (!label) return;
+    rows.push({ name: label, count: category.count, items: settled[index + 1].rows.map(serializeVodItem) });
   });
   return rows.filter((row) => row.items.length > 0);
 }

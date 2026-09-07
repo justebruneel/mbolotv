@@ -136,22 +136,20 @@ function FolderRail({ folder, tab }: { folder: VodFolderSummary; tab: Tab }) {
 // portent la page seule au lieu d'un « Aucun résultat » — une panne du
 // fournisseur VOD (purge d'import, 0 film actif…) ne doit pas masquer des
 // sources YouTube qui, elles, répondent.
-function FolderOnly({ folders, tab, onBrowseAll }: { folders: VodFolderSummary[]; tab: Tab; onBrowseAll: () => void }) {
+// « Parcourir tout » retiré de l'accueil (Netflix n'a pas de bouton « tout
+// voir » en bas de page : on navigue par rangées et catégories) — les props
+// onBrowseAll restent pour la signature des deux replis mais sont muettes.
+function FolderOnly({ folders, tab }: { folders: VodFolderSummary[]; tab: Tab }) {
   return (
     <>
       {folders.map((folder) => <FolderRail key={folder.id} folder={folder} tab={tab} />)}
-      <div className="mt-2 flex justify-center">
-        <button type="button" onClick={onBrowseAll} className="btn">
-          Parcourir tout le catalogue <Icon.ChevronRight size={14} />
-        </button>
-      </div>
     </>
   );
 }
 
 // Repli garanti (pas de dossiers en base) : l'ancienne page « Nollywood seul »
 // sur l'onglet Films, inchangée.
-function NollywoodOnly({ onBrowseAll }: { onBrowseAll: () => void }) {
+function NollywoodOnly() {
   const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25, '');
   const items = dedupeYoutubeItems(query.data?.pages[0]?.items ?? []);
   // YouTube en cours : on attend — il reste la dernière source vivante.
@@ -163,20 +161,15 @@ function NollywoodOnly({ onBrowseAll }: { onBrowseAll: () => void }) {
   return (
     <>
       {items.length > 0 && <YoutubeRow title="Nollywood" items={items} seeAllHref={NOLLYWOOD_DOSSIER_HREF} />}
-      <div className="mt-2 flex justify-center">
-        <button type="button" onClick={onBrowseAll} className="btn">
-          Parcourir tout le catalogue <Icon.ChevronRight size={14} />
-        </button>
-      </div>
     </>
   );
 }
 
 // Accueil façon Netflix : héros plein écran (derniers ajouts), rails des
-// dossiers gérés dans la console, puis rangées horizontales par catégorie.
-// La grille paginée reste disponible en mode filtré (recherche, catégorie,
-// « Parcourir tout »).
-function VodHome({ kind, onBrowseAll, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseAll: () => void; onBrowseExternal: () => void; folders: VodFolderSummary[] }) {
+// dossiers gérés dans la console, puis rangées horizontales éditoriales.
+// PAS de bouton « Parcourir tout » : on navigue par rangées et par la
+// barre de catégories (browseAll reste pour les modes filtrés).
+function VodHome({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseExternal: () => void; folders: VodFolderSummary[] }) {
   const heroQuery = useVodHero(kind);
   const rowsQuery = useVodRows(kind);
 
@@ -191,9 +184,9 @@ function VodHome({ kind, onBrowseAll, onBrowseExternal, folders }: { kind: 'MOVI
     return (
       <>
         {folders.length > 0
-          ? <FolderOnly folders={folders} tab={kind} onBrowseAll={onBrowseAll} />
+          ? <FolderOnly folders={folders} tab={kind} />
           : kind === 'MOVIE'
-            ? <NollywoodOnly onBrowseAll={onBrowseAll} />
+            ? <NollywoodOnly />
             : <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />}
         {kind === 'MOVIE' && <ExternalRail onBrowseAll={onBrowseExternal} />}
       </>
@@ -206,15 +199,13 @@ function VodHome({ kind, onBrowseAll, onBrowseExternal, folders }: { kind: 'MOVI
       {folders.length > 0
         ? folders.map((folder) => <FolderRail key={folder.id} folder={folder} tab={kind} />)
         : kind === 'MOVIE' && <NollywoodRail />}
-      {kind === 'MOVIE' && <ExternalRail onBrowseAll={onBrowseExternal} />}
       {rows.map((row) => (
         <VodRow key={row.name} title={row.name} count={row.count} items={row.items} seeAllKind={kind} seeAllCategory={row.name === 'Nouveautés' ? '' : row.name} />
       ))}
-      <div className="mt-2 flex justify-center">
-        <button type="button" onClick={onBrowseAll} className="btn">
-          Parcourir tout le catalogue <Icon.ChevronRight size={14} />
-        </button>
-      </div>
+      {/* Rail « Nouveau sur Mbolo » APRÈS les rangées : il fait écho au hero
+          (les derniers ajouts), pas une entrée de catalogue à part. Masqué en
+          mode filtré par la page (browseExternal gère la grille complète). */}
+      {kind === 'MOVIE' && <ExternalRail onBrowseAll={onBrowseExternal} />}
     </>
   );
 }
@@ -384,12 +375,15 @@ function MergedYoutubeBrowse({ channelIds, q, hideWhenEmpty = false }: { channel
 // (onglet Films uniquement — pas de kind côté titres externes, tous films
 // v1). « Voir tout » bascule la grille paginée (état local browseExternal,
 // comme browseAll).
+// Rail des titres externes : « Nouveau sur Mbolo » — le nom vend le fait
+// nouveau/ajouté (langage Netflix : « Nouveautés », « Populaire »), pas un
+// jargon interne (« titres externes » ne veut rien dire pour l'utilisateur).
 function ExternalRail({ previewCount = 12, onBrowseAll }: { previewCount?: number; onBrowseAll: () => void }) {
   const query = useInfiniteExternalTitles('', previewCount);
   if (query.isLoading || query.isError) return null;
   const items = (query.data?.pages[0]?.items ?? []).slice(0, previewCount);
   if (items.length === 0) return null;
-  return <ExternalRow title="Titres externes" items={items} onSeeAll={onBrowseAll} />;
+  return <ExternalRow title="Nouveau sur Mbolo" items={items} onSeeAll={onBrowseAll} />;
 }
 
 // Grille paginée « voir tout » des titres externes (défilement infini).
@@ -625,7 +619,7 @@ function VodPageContent() {
         {dossier
           ? <DossierView slug={dossier} q={q} folder={dossierFolder ?? (foldersQuery.isPending ? undefined : null)} />
           : !q && !category && !browseAll && !browseExternal
-            ? <VodHome kind={tab} onBrowseAll={() => setBrowseAll(true)} onBrowseExternal={() => setBrowseExternal(true)} folders={folders} />
+            ? <VodHome kind={tab} onBrowseExternal={() => setBrowseExternal(true)} folders={folders} />
             : browseExternal && !q
               ? <>
                   <h2 className="mb-4 text-xl font-bold">Titres externes</h2>
