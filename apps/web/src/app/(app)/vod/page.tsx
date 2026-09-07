@@ -148,14 +148,18 @@ function FolderOnly({ folders, tab }: { folders: VodFolderSummary[]; tab: Tab })
 }
 
 // Repli garanti (pas de dossiers en base) : l'ancienne page « Nollywood seul »
-// sur l'onglet Films, inchangée.
-function NollywoodOnly() {
+// sur l'onglet Films.
+// suppressEmpty : quand une autre source (titres externes) porte déjà la page,
+// on se tait au lieu d'afficher un « Aucun résultat » mensonger.
+function NollywoodOnly({ suppressEmpty = false }: { suppressEmpty?: boolean }) {
   const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25, '');
   const items = dedupeYoutubeItems(query.data?.pages[0]?.items ?? []);
   // YouTube en cours : on attend — il reste la dernière source vivante.
   if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
-  // YouTube vide ou en erreur : plus aucune source disponible -> état vide.
+  // YouTube vide ou en erreur : plus aucune source disponible -> état vide,
+  // sauf si une autre source porte la page (suppressEmpty).
   if (items.length === 0) {
+    if (suppressEmpty) return null;
     return <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
   }
   return (
@@ -163,6 +167,54 @@ function NollywoodOnly() {
       {items.length > 0 && <YoutubeRow title="Nollywood" items={items} seeAllHref={NOLLYWOOD_DOSSIER_HREF} />}
     </>
   );
+}
+
+// Accueil quand le catalogue Xtream (hero + rows) est vide : les autres
+// sources (dossiers YouTube, titres externes) portent la page. Le « Aucun
+// résultat » Xtream ne doit jamais s'afficher AU-DESSUS d'un rail qui a du
+// contenu — sinon message en haut + séries en bas. L'état vide global n'est
+// montré que quand tout est définitivement vide.
+function VodHomeEmpty({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseExternal: () => void; folders: VodFolderSummary[] }) {
+  const externalPreview = useInfiniteExternalTitles('', 12, kind);
+  const externalItems = (externalPreview.data?.pages[0]?.items ?? []).slice(0, 12);
+  const hasExternal = externalItems.length > 0;
+  const isExternalLoading = externalPreview.isLoading;
+  const externalTitle = kind === 'SERIES' ? 'Séries — Nouveau sur Mbolo' : 'Nouveau sur Mbolo';
+
+  // Dossiers console : ils portent la page seuls, pas de « vide » Xtream.
+  // Les rails vides/en erreur se taisent (FolderRail -> null) comme avant.
+  if (folders.length > 0) {
+    return (
+      <>
+        <FolderOnly folders={folders} tab={kind} />
+        {hasExternal && <ExternalRow title={externalTitle} items={externalItems} onSeeAll={onBrowseExternal} />}
+      </>
+    );
+  }
+
+  // Onglet Films sans dossiers : Nollywood + externes se partagent la page.
+  // Le vide Nollywood est supprimé dès que les externes chargent ou ont du
+  // contenu, pour éviter le flash « vide » puis l'apparition du rail.
+  if (kind === 'MOVIE') {
+    const suppressNollywoodEmpty = isExternalLoading || hasExternal;
+    return (
+      <>
+        <NollywoodOnly suppressEmpty={suppressNollywoodEmpty} />
+        {hasExternal
+          ? <ExternalRow title={externalTitle} items={externalItems} onSeeAll={onBrowseExternal} />
+          : isExternalLoading
+            ? <div className="flex justify-center py-16"><Spinner /></div>
+            : null}
+      </>
+    );
+  }
+
+  // Onglet Séries sans dossiers : seuls les externes peuvent porter la page.
+  if (isExternalLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (hasExternal) {
+    return <ExternalRow title={externalTitle} items={externalItems} onSeeAll={onBrowseExternal} />;
+  }
+  return <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
 }
 
 // Accueil façon Netflix : héros plein écran (derniers ajouts), rails des
@@ -179,18 +231,9 @@ function VodHome({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'
   const hero = heroQuery.data?.items ?? [];
   const rows = rowsQuery.data?.rows ?? [];
   if (rows.length === 0 && hero.length === 0) {
-    // Catalogue Xtream vide : les titres externes portent quand même
-    // l'onglet Films (comme les dossiers YouTube portent la page).
-    return (
-      <>
-        {folders.length > 0
-          ? <FolderOnly folders={folders} tab={kind} />
-          : kind === 'MOVIE'
-            ? <NollywoodOnly />
-            : <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />}
-        {<ExternalRail onBrowseAll={onBrowseExternal} kind={kind} />}
-      </>
-    );
+    // Catalogue Xtream vide : délégué à VodHomeEmpty qui ne montre le vide
+    // que si dossiers + externes sont aussi définitivement vides.
+    return <VodHomeEmpty kind={kind} onBrowseExternal={onBrowseExternal} folders={folders} />;
   }
 
   return (
