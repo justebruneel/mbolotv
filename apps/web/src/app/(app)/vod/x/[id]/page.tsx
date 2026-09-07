@@ -262,7 +262,7 @@ function ExternalDetailContent() {
               !backdropUrl && <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
             )}
             {/* Bande-annonce muette en fond : l'image reste dessous, le son
-                s'active au clic. L'iframe est dézoomée (scale 1,33) et recentrée
+                s'active au clic. L'iframe est dézoomée (scale 1,25) et recentrée
                 : l'interface YouTube (plein écran, recommandations, barre titre)
                 est coupée hors cadre — seul le film se voit, façon Netflix. */}
             {trailer.mounted && !trailer.failed && trailer.src && (
@@ -285,8 +285,12 @@ function ExternalDetailContent() {
                 )}
               </div>
             )}
-            <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0f] via-black/50 to-black/10" />
-            <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/20 to-transparent" />
+            {/* Dégradés de lisibilité UNIQUEMENT derrière le texte (bas de
+                hero) : couvrant sur toute la surface, ils assombrissaient la
+                bande-annonce elle-même — c'est la couche sombre constatée. */}
+            <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[#0b0b0f] via-[#0b0b0f]/55 to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-r from-black/70 via-black/20 to-transparent" />
+            <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/40 to-transparent" />
             <div className="absolute inset-x-0 bottom-0 mx-auto hidden w-full max-w-6xl px-4 pb-6 md:block md:pb-8">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
                 <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>

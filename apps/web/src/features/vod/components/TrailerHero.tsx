@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 
 const UNMUTE_MSG = JSON.stringify({ event: 'command', func: 'unMute', args: [] });
+const SET_VOLUME_MSG = JSON.stringify({ event: 'command', func: 'setVolume', args: [100] });
 const PLAY_MSG = JSON.stringify({ event: 'command', func: 'playVideo', args: [] });
 
 function embedUrl(videoId: string): string {
@@ -29,9 +30,12 @@ function embedUrl(videoId: string): string {
     playsinline: '1',
     // Rendu « fond de hero » : le lecteur YouTube ne doit PAS se voir —
     // pas de barre titre (modestbranding), pas de logo, et l'iframe est
-    // dézoomée par le parent (échelle 1,33) pour couper le plein écran
+    // dézoomée par le parent (échelle 1,25) pour couper le plein écran
     // YouTube et les chips de recommandation visibles en bas de la vidéo.
     modestbranding: '1',
+    // SANS enablejsapi, YouTube IGNORE silencieusement les commandes
+    // postMessage (unMute/mute) : le bouton son ne fait rien. Obligatoire.
+    enablejsapi: '1',
   });
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
 }
@@ -60,7 +64,10 @@ export function useTrailerEmbed(videoId: string) {
     frameRef.current?.contentWindow?.postMessage(message, 'https://www.youtube-nocookie.com');
   }, []);
   const unmute = useCallback((): void => {
+    // setVolume après unMute : certains embeds restent à volume 0 tant que
+    // setVolume n'a pas été appelé explicitement.
     post(UNMUTE_MSG);
+    post(SET_VOLUME_MSG);
     post(PLAY_MSG);
     setMuted(false);
   }, [post]);
