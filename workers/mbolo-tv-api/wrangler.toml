@@ -41,6 +41,10 @@ ECO_SATURATED_THRESHOLD = "8"
 # Mixdrop modifiables sans redéploiement quand les domaines tournent.
 # JSON (["https://…"]) ou CSV ("https://a,https://b"). Vide = défauts du code.
 # MIXDROP_MIRRORS = '["https://miixdrop.net"]'
+# Bases de fiches candidates (CSV) pour le backfill des détails : les titres
+# importés avant l'ajout de "ficheUrl" sont re-scrapés depuis le siteRef
+# (newsid) sur ces bases. Voir external.resyncExternalMeta.
+EXTERNAL_FICHE_BASES = "https://french-stream.one"
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
