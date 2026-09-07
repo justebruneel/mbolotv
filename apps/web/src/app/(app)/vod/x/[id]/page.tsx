@@ -22,6 +22,14 @@ import { NativeTrailerFrame, TrailerFrame, useTrailerEmbed } from '../../../../.
 import { ExternalEpisodeList } from '../../../../../features/vod/components/ExternalEpisodeList';
 import type { ExternalSourcePublic } from '@mbolo/contracts';
 
+// Références vides partagées : évitent de recréer un tableau neuf à chaque
+// render (nouvelle identité = effet/callback dépendants qui re-tournent en
+// boucle + re-renders zustand via Object.is). Cause suspecte du React #185.
+const EMPTY_SOURCES: ExternalSourcePublic[] = [];
+const EMPTY_EPISODES: Array<{ number: number; sources: ExternalSourcePublic[] }> = [];
+const EMPTY_NUMBERS: number[] = [];
+const EMPTY_STRINGS: string[] = [];
+
 function ExternalDetailContent() {
   const params = useParams<{ id: string }>();
   const id = typeof params.id === 'string' ? params.id : '';
@@ -34,13 +42,13 @@ function ExternalDetailContent() {
   // La page a son propre lecteur : libérer le mini-lecteur VOD éventuel.
   useEffect(() => { clearVod(); }, [clearVod]);
 
-  const sources = detailQuery.data?.sources ?? [];
+  const sources = detailQuery.data?.sources ?? EMPTY_SOURCES;
   // Séries : les sources portent le numéro d'épisode (bot). Sélection par
   // épisode façon Netflix : on choisit l'épisode, puis la meilleure source
   // (tri serveur : direct avant iframe, VF d'abord) de CET épisode.
   const isSeries = detailQuery.data?.kind === 'SERIES';
   const episodes = useMemo(() => {
-    if (!isSeries) return [];
+    if (!isSeries) return EMPTY_EPISODES;
     const byNumber = new Map<number, typeof sources>();
     for (const source of sources) {
       const key = source.episode ?? 0;
@@ -59,9 +67,13 @@ function ExternalDetailContent() {
     ? (episodeNumber && episodes.some((entry) => entry.number === episodeNumber) ? episodeNumber : episodes[0].number)
     : null;
   // Sources du contexte actif : épisode choisi (série) ou toutes (film).
-  const activeSources = activeEpisode !== null
-    ? (episodes.find((entry) => entry.number === activeEpisode)?.sources ?? sources)
-    : sources;
+  // Mémoïsé : une identité neuve à chaque render ferait re-tourner l'effet
+  // d'enchaînement et changerait les callbacks passés à la liste/Player.
+  const activeSources = useMemo(() => (
+    activeEpisode !== null
+      ? (episodes.find((entry) => entry.number === activeEpisode)?.sources ?? sources)
+      : sources
+  ), [activeEpisode, episodes, sources]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const selected = activeSources[Math.min(selectedIndex, Math.max(0, activeSources.length - 1))] ?? null;
   // Ref de lecture demandée : évite d'afficher un flux résolu pour une
@@ -95,7 +107,10 @@ function ExternalDetailContent() {
   const recordVodProgress = useSettingsStore((state) => state.recordVodProgress);
   const markVodEpisodeWatched = useSettingsStore((state) => state.markVodEpisodeWatched);
   const savedProgress = useSettingsStore((state) => state.vodProgress[progressId]);
-  const watchedEpisodes = useSettingsStore((state) => state.vodWatchedEpisodes[progressId] ?? []);
+  // Sélecteur stable (undefined quand absent) + fallback local partagé : le
+  // `?? []` DANS le sélecteur allouait un tableau neuf à chaque évaluation.
+  const watchedOrUndef = useSettingsStore((state) => state.vodWatchedEpisodes[progressId]);
+  const watchedEpisodes = watchedOrUndef ?? EMPTY_NUMBERS;
   // Épisode courant vu par les callbacks (ref synchrone, pas de clôture périmée).
   const activeEpisodeRef = useRef<number | null>(null);
   activeEpisodeRef.current = activeEpisode;
@@ -134,15 +149,18 @@ function ExternalDetailContent() {
   }, [progressId]);
   // Refresh d'URL pour le lecteur : les liens signés des extracteurs expirent
   // (expiresInSeconds) — sans ce branchement, exhausted() du Player se termine
-  // sur l'écran d'erreur sans pouvoir re-résoudre le flux.
+  // sur l'écran d'erreur sans pouvoir re-résoudre le flux. Dépend de la
+  // fonction refetch (stable) plutôt que de l'objet query (neuf au fil des
+  // statuts), sinon tous les callbacks/effets dépendants re-tournent en boucle.
+  const refetchExternalPlay = playQuery.refetch;
   const refreshPlayUrl = useCallback(async (): Promise<boolean> => {
     try {
-      const result = await playQuery.refetch();
+      const result = await refetchExternalPlay();
       return result.isSuccess;
     } catch {
       return false;
     }
-  }, [playQuery]);
+  }, [refetchExternalPlay]);
 
   // Sélection pilotée par INDEX de la liste triée (VF prioritaire côté API) :
   // le clic Lecture part sur la source d'ordre 0 et descend la liste au besoin.
@@ -162,8 +180,8 @@ function ExternalDetailContent() {
     setStartAt(position);
     setRequestedRef(source.playRef);
     if (source.mode === 'iframe') setIframeStarted(true);
-    else void playQuery.refetch();
-  }, [playQuery]);
+    else void refetchExternalPlay();
+  }, [refetchExternalPlay]);
 
   // Déclaré avant les early-returns (React #310 : nombre de hooks stable).
   const startPlayback = useCallback((): void => {
@@ -238,7 +256,8 @@ function ExternalDetailContent() {
     return index >= 0 ? (sorted[index + 1]?.number ?? null) : null;
   }, [episodes, activeEpisode]);
   const [seriesFinished, setSeriesFinished] = useState(false);
-  useEffect(() => { setSeriesFinished(false); }, [activeEpisode]);
+  // Garde anti-boucle : ne notifie que si l'état change vraiment.
+  useEffect(() => { setSeriesFinished((value) => (value ? false : value)); }, [activeEpisode]);
 
   // Sélection douce (façon Netflix) : change l'épisode sans lancer la lecture.
   // Le bouton Lecture global joue ensuite la meilleure source de l'épisode actif.
@@ -301,7 +320,13 @@ function ExternalDetailContent() {
   // CHAQUE render (React #310 : l'appeler après un return conditionnel fait
   // varier le nombre de hooks entre le render « chargement » et le render
   // « fiche », exactement le crash minifié #310).
-  const directUrls = selected?.mode === 'direct' && requestedRef === selected.playRef ? playQuery.data?.urls ?? [] : [];
+  const directUrls = selected?.mode === 'direct' && requestedRef === selected.playRef ? playQuery.data?.urls ?? EMPTY_STRINGS : EMPTY_STRINGS;
+  // Options lecteurs du Player : mémoïsées pour ne pas changer d'identité à
+  // chaque render (re-renders Player en cascade).
+  const playerSources = useMemo(
+    () => activeSources.map(({ id, host, versions, mode }) => ({ id, host, versions, mode })),
+    [activeSources],
+  );
   // Repli intelligent : la résolution directe a échoué (extracteur périmé,
   // CDN indisponible…) — on monte l'embed du lecteur en iframe pour que le
   // film joue quand même, le Player Mbolo restant la voie préférée.
@@ -403,7 +428,7 @@ function ExternalDetailContent() {
                 onProgress={handleProgress}
                 onEnded={activeEpisode !== null ? handleEpisodeEnded : undefined}
                 onRefreshSource={refreshPlayUrl}
-                sources={activeSources.map(({ id, host, versions, mode }) => ({ id, host, versions, mode }))}
+                sources={playerSources}
                 activeSourceId={selected.id}
                 onSourceChange={handleSourceChange}
                 initialVolume={volume}
