@@ -20,6 +20,8 @@ export interface VodProgressEntry {
   position: number;
   duration: number;
   updatedAt: string;
+  /** Épisode courant pour une série externe (absent = film ou série Xtream). */
+  episode?: number | null;
 }
 
 interface SettingsState {
@@ -35,6 +37,8 @@ interface SettingsState {
   lastWatchedChannelId: string | null;
   browseViewMode: 'grid' | 'list';
   vodProgress: Record<string, VodProgressEntry>;
+  /** Épisodes terminés par série externe (id `x:<titre>`) pour le badge « Vu ». */
+  vodWatchedEpisodes: Record<string, number[]>;
   setVolume: (volume: number) => void;
   setPreferredLevel: (level: number) => void;
   setDataSaver: (dataSaver: boolean) => void;
@@ -48,6 +52,7 @@ interface SettingsState {
   recordVodProgress: (entry: VodProgressEntry) => void;
   clearVodProgress: (id: string) => void;
   clearAllVodProgress: () => void;
+  markVodEpisodeWatched: (id: string, episode: number) => void;
 }
 
 const MAX_LAST_WATCHED = 5;
@@ -66,6 +71,7 @@ export const useSettingsStore = create<SettingsState>()(
       lastWatchedChannelId: null,
       browseViewMode: 'grid',
       vodProgress: {},
+      vodWatchedEpisodes: {},
       setLastNonWatchPath: (path) => set({ lastNonWatchPath: path }),
       setLastWatchedChannelId: (id) => set({ lastWatchedChannelId: id }),
       setBrowseViewMode: (mode) => set({ browseViewMode: mode }),
@@ -104,6 +110,12 @@ export const useSettingsStore = create<SettingsState>()(
           return { vodProgress: next };
         }),
       clearAllVodProgress: () => set({ vodProgress: {} }),
+      markVodEpisodeWatched: (id, episode) =>
+        set((state) => {
+          const current = state.vodWatchedEpisodes[id] ?? [];
+          if (current.includes(episode)) return state;
+          return { vodWatchedEpisodes: { ...state.vodWatchedEpisodes, [id]: [...current, episode].sort((a, b) => a - b).slice(-200) } };
+        }),
     }),
     { name: 'mbolo-settings', partialize: (state) => ({ ...state, lastNonWatchPath: undefined, lastWatchedChannelId: undefined }) },
   ),

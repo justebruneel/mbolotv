@@ -19,6 +19,7 @@ import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
 import { externalFavoriteId, useExternalFavoritesStore } from '../../../../../shared/stores/externalFavorites';
 import { NativeTrailerFrame, TrailerFrame, useTrailerEmbed } from '../../../../../features/vod/components/TrailerHero';
+import { ExternalEpisodeList } from '../../../../../features/vod/components/ExternalEpisodeList';
 import type { ExternalSourcePublic } from '@mbolo/contracts';
 
 function ExternalDetailContent() {
@@ -75,12 +76,13 @@ function ExternalDetailContent() {
 
   const playQuery = useExternalPlay(selected?.host ?? 'mixdrop', selected?.playRef ?? '', false);
 
-  // Progression (miroir de la fiche Nollywood) : persistance locale throttlée
+  // Progression par épisode (façon Netflix) : persistance locale throttlée
   // 5 s pour « Reprendre » + position restaurée par le lecteur. Hooks
   // déclarés AVANT les early-returns (React #310) — item est calculé après,
   // on lit donc detailQuery.data.
   // Préfixe x: : espace d'ids propre, sans collision avec les ids VodItem
-  // Xtream (ResumeRow route le préfixe vers /vod/x/<id>).
+  // Xtream (ResumeRow route le préfixe vers /vod/x/<id>). L'entrée reste
+  // unique par série (routage intact) et porte l'épisode courant.
   const progressId = useMemo(() => `x:${id}`, [id]);
   // Distribution repliée sur mobile (Netflix replie aussi le casting) :
   // ouverte par défaut sur desktop — les breakpoints gèrent l'affichage.
@@ -91,24 +93,45 @@ function ExternalDetailContent() {
   const toggleFavorite = useExternalFavoritesStore((state) => state.toggle);
   const [startAt, setStartAt] = useState(0);
   const recordVodProgress = useSettingsStore((state) => state.recordVodProgress);
+  const markVodEpisodeWatched = useSettingsStore((state) => state.markVodEpisodeWatched);
+  const savedProgress = useSettingsStore((state) => state.vodProgress[progressId]);
+  const watchedEpisodes = useSettingsStore((state) => state.vodWatchedEpisodes[progressId] ?? []);
+  // Épisode courant vu par les callbacks (ref synchrone, pas de clôture périmée).
+  const activeEpisodeRef = useRef<number | null>(null);
+  activeEpisodeRef.current = activeEpisode;
+  const isSeriesRef = useRef(false);
+  isSeriesRef.current = isSeries;
   const lastWriteRef = useMemo(() => ({ at: 0 }), []);
   const handleProgress = useMemo(() => {
     return (seconds: number, duration: number): void => {
       const now = Date.now();
       if (now - lastWriteRef.at < 5_000) return;
       lastWriteRef.at = now;
+      const episode = activeEpisodeRef.current;
+      const series = isSeriesRef.current;
+      const baseTitle = detailQuery.data?.title ?? 'Film';
       recordVodProgress({
         id: progressId,
-        kind: 'MOVIE',
-        title: detailQuery.data?.title ?? 'Film',
+        kind: series ? 'SERIES' : 'MOVIE',
+        title: series && episode !== null ? `${baseTitle} · E${episode}` : baseTitle,
         posterUrl: detailQuery.data?.posterUrl ?? null,
         category: 'Externe',
         position: seconds,
         duration,
         updatedAt: new Date().toISOString(),
+        episode: series ? episode : null,
       });
     };
   }, [detailQuery.data?.title, detailQuery.data?.posterUrl, progressId, recordVodProgress, lastWriteRef]);
+  // Position de reprise pour un épisode : l'entrée ne s'applique que si elle
+  // vise cet épisode (ou si elle est legacy sans épisode).
+  const resumePositionFor = useCallback((episode: number | null): number => {
+    const entry = useSettingsStore.getState().vodProgress[progressId];
+    if (!entry || entry.duration <= 0) return 0;
+    if (entry.episode !== null && entry.episode !== undefined && episode !== null && entry.episode !== episode) return 0;
+    if (entry.position <= 30 || entry.position >= entry.duration - 30) return 0;
+    return entry.position;
+  }, [progressId]);
   // Refresh d'URL pour le lecteur : les liens signés des extracteurs expirent
   // (expiresInSeconds) — sans ce branchement, exhausted() du Player se termine
   // sur l'écran d'erreur sans pouvoir re-résoudre le flux.
@@ -159,14 +182,14 @@ function ExternalDetailContent() {
     }
     // Reprise : figée à l'INSTANT du clic (state) — lire vodProgress au render
     // n'est pas fiable avant l'hydratation du persist (même motif que Nollywood).
-    const entry = useSettingsStore.getState().vodProgress[progressId];
-    const pos = entry && entry.duration > 0 && entry.position > 30 && entry.position < entry.duration - 30 ? entry.position : 0;
+    // Seule la position de CET épisode s'applique (legacy sans épisode = appliquée).
+    const pos = resumePositionFor(activeEpisodeRef.current);
     setFailedRefs(new Set());
     setSkippedHost(null);
     setAutoSwitching(false);
     launchSource(source, pos);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [activeSources, progressId, launchSource]);
+  }, [activeSources, launchSource, resumePositionFor]);
 
   // Changement de lecteur DEPUIS LE PLAYER (icône serveur) : même position
   // (relue du store, à ~5 s), sans passer par Lecture/Arrêter. Les sources
@@ -184,9 +207,8 @@ function ExternalDetailContent() {
     for (const played of activeSources) {
       if (played.id !== sourceId) queryClient.removeQueries({ queryKey: ['x-play', played.host, played.playRef] });
     }
-    const position = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0;
-    launchSource(source, position);
-  }, [activeSources, progressId, launchSource, queryClient]);
+    launchSource(source, resumePositionFor(activeEpisodeRef.current));
+  }, [activeSources, launchSource, queryClient, resumePositionFor]);
 
   const stopPlayback = useCallback((): void => {
     setRequestedRef(null);
@@ -197,6 +219,82 @@ function ExternalDetailContent() {
     if (selected) queryClient.removeQueries({ queryKey: ['x-play', selected.host, selected.playRef] });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [queryClient, selected]);
+
+  // Reprise d'épisode : si une progression vise un épisode existant, on
+  // restaure la sélection (l'ancien code retombait toujours sur l'épisode 1
+  // avec la position d'un autre épisode).
+  useEffect(() => {
+    if (!isSeries || episodes.length === 0) return;
+    const saved = useSettingsStore.getState().vodProgress[progressId]?.episode;
+    if (saved == null || episodeNumber !== null) return;
+    if (episodes.some((entry) => entry.number === saved)) setEpisodeNumber(saved);
+  }, [isSeries, episodes, progressId, episodeNumber]);
+
+  // Épisode suivant (tri croissant) pour l'enchaînement et le bouton dédié.
+  const nextEpisode = useMemo(() => {
+    if (activeEpisode === null) return null;
+    const sorted = [...episodes].sort((a, b) => a.number - b.number);
+    const index = sorted.findIndex((entry) => entry.number === activeEpisode);
+    return index >= 0 ? (sorted[index + 1]?.number ?? null) : null;
+  }, [episodes, activeEpisode]);
+  const [seriesFinished, setSeriesFinished] = useState(false);
+  useEffect(() => { setSeriesFinished(false); }, [activeEpisode]);
+
+  // Sélection douce (façon Netflix) : change l'épisode sans lancer la lecture.
+  // Le bouton Lecture global joue ensuite la meilleure source de l'épisode actif.
+  const selectEpisode = useCallback((episode: number): void => {
+    setEpisodeNumber(episode);
+    setSelectedIndex(0);
+    setFailedRefs(new Set());
+    setSkippedHost(null);
+    setAutoSwitching(false);
+    setIframeStarted(false);
+    setSeriesFinished(false);
+    if (selected) queryClient.removeQueries({ queryKey: ['x-play', selected.host, selected.playRef] });
+  }, [queryClient, selected]);
+
+  // Lecture immédiate d'un épisode depuis sa ligne (bouton play).
+  const playEpisode = useCallback((episode: number): void => {
+    const entry = episodes.find((candidate) => candidate.number === episode);
+    const best = entry?.sources[0];
+    if (!entry || !best) return;
+    setEpisodeNumber(episode);
+    setSelectedIndex(0);
+    setFailedRefs(new Set());
+    setSkippedHost(null);
+    setAutoSwitching(false);
+    setIframeStarted(false);
+    setSeriesFinished(false);
+    launchSource(best, resumePositionFor(episode));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [episodes, launchSource, resumePositionFor]);
+
+  // Fin d'épisode (Player direct uniquement, l'iframe n'émet pas d'événement)
+  // : marque Vu puis enchaîne le suivant, sinon affiche la fin de série.
+  const handleEpisodeEnded = useCallback((): void => {
+    const finished = activeEpisodeRef.current;
+    if (finished === null) return;
+    markVodEpisodeWatched(progressId, finished);
+    useSettingsStore.getState().clearVodProgress(progressId);
+    const sorted = [...episodes].sort((a, b) => a.number - b.number);
+    const index = sorted.findIndex((entry) => entry.number === finished);
+    const next = index >= 0 ? sorted[index + 1] : undefined;
+    if (!next) {
+      setRequestedRef(null);
+      setIframeStarted(false);
+      setSeriesFinished(true);
+      return;
+    }
+    const best = next.sources[0];
+    if (!best) return;
+    setEpisodeNumber(next.number);
+    setSelectedIndex(0);
+    setFailedRefs(new Set());
+    setSkippedHost(null);
+    setAutoSwitching(false);
+    setIframeStarted(false);
+    launchSource(best, 0);
+  }, [episodes, launchSource, markVodEpisodeWatched, progressId]);
 
   // Valeurs dérivées calculées AVANT les early-returns : playing et trailer
   // dépendent de requêtes, pas de `item` — et tout hook doit être appelé sur
@@ -270,9 +368,9 @@ function ExternalDetailContent() {
     }
     setAutoSwitching(true);
     setSelectedIndex(activeSources.indexOf(fallback));
-    positionAtSwitchRef.current = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0;
+    positionAtSwitchRef.current = resumePositionFor(activeEpisodeRef.current);
     launchSource(fallback, positionAtSwitchRef.current);
-  }, [requestedRef, selected, playQuery.isError, playQuery.isFetching, autoSwitching, activeSources, progressId, launchSource]);
+  }, [requestedRef, selected, playQuery.isError, playQuery.isFetching, autoSwitching, activeSources, launchSource, resumePositionFor]);
 
   if (!id) return <EmptyState title="Contenu introuvable" />;
   if (detailQuery.isLoading) return <div className="flex justify-center py-24"><Spinner /></div>;
@@ -282,6 +380,13 @@ function ExternalDetailContent() {
 
   const item = detailQuery.data;
   const backdropUrl = item.backdropUrl ?? item.posterUrl;
+  // Épisode en reprise + pourcentage pour la liste (legacy sans épisode = masqué).
+  const progressEpisode = savedProgress && savedProgress.duration > 0 && savedProgress.position > 30 && savedProgress.position < savedProgress.duration - 30
+    ? (savedProgress.episode ?? null)
+    : null;
+  const progressPct = progressEpisode !== null && savedProgress && savedProgress.duration > 0
+    ? Math.min(99, Math.max(1, Math.round((savedProgress.position / savedProgress.duration) * 100)))
+    : null;
 
   return (
     <div className="pb-10">
@@ -292,10 +397,11 @@ function ExternalDetailContent() {
               <Player
                 key={`${selected.host}:${selected.playRef}`}
                 urls={directUrls}
-                title={item.title}
+                title={activeEpisode !== null ? `${item.title} · E${activeEpisode}` : item.title}
                 mode="vod"
                 initialTime={startAt}
                 onProgress={handleProgress}
+                onEnded={activeEpisode !== null ? handleEpisodeEnded : undefined}
                 onRefreshSource={refreshPlayUrl}
                 sources={activeSources.map(({ id, host, versions, mode }) => ({ id, host, versions, mode }))}
                 activeSourceId={selected.id}
@@ -437,48 +543,43 @@ function ExternalDetailContent() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z" /></svg>
             Arrêter
           </button>
+          {activeEpisode !== null && nextEpisode !== null && (
+            <button type="button" className="btn btn-sm" onClick={() => playEpisode(nextEpisode)}>
+              Épisode suivant · E{nextEpisode}
+            </button>
+          )}
           {skippedHost && (
             <span className="text-xs text-muted">
               Lecteur {skippedHost} indisponible{directFailed ? ' — lecteur source utilisé' : ' — lecteur suivant essayé'}
             </span>
           )}
-          <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">{item.title}</span>
+          <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">
+            {activeEpisode !== null ? `Épisode ${activeEpisode} · ` : ''}{item.title}
+          </span>
+        </div>
+      )}
+      {seriesFinished && (
+        <div className="mx-auto w-full max-w-6xl px-4">
+          <p className="mt-4 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
+            Dernier épisode terminé — bonne série ! Choisis un épisode ci-dessous pour le revoir.
+          </p>
         </div>
       )}
 
       <div className="mx-auto w-full max-w-6xl px-4">
-        {/* SÉRIES : sélecteur d'épisodes façon Netflix — sous le hero, au-dessus
-            des détails. Chaque épisode porte le badge de sa meilleure version
-            (VF d'abord) ; l'épisode en lecture est surligné. Clic = bascule
-            immédiate vers la meilleure source de cet épisode. */}
+        {/* SÉRIES : liste d'épisodes façon Netflix (sans vignettes v1) — sous le
+            hero, au-dessus des détails. Ligne = sélection douce, bouton play =
+            lecture immédiate de la meilleure source de l'épisode. */}
         {isSeries && episodes.length > 0 && (
-          <div className="mt-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Épisodes</h2>
-              <span className="text-xs text-muted">{episodes.length} épisode{episodes.length > 1 ? 's' : ''}</span>
-            </div>
-            <div className="mt-2 grid grid-cols-5 gap-2 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12">
-              {episodes.map((entry) => {
-                const best = entry.sources[0];
-                const active = activeEpisode === entry.number;
-                return (
-                  <button
-                    key={entry.number}
-                    type="button"
-                    onClick={() => { setEpisodeNumber(entry.number); setSelectedIndex(0); setFailedRefs(new Set()); setSkippedHost(null); setAutoSwitching(false); setIframeStarted(false); if (best) { const position = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0; launchSource(best, position); } }}
-                    className={`relative rounded-lg border px-1 py-2.5 text-center text-sm font-bold transition ${active
-                      ? 'border-accent bg-accent text-white'
-                      : 'border-border bg-surface text-foreground hover:border-accent/50'}`}
-                  >
-                    {entry.number}
-                    {best && best.versions.includes('vff') && !active && (
-                      <span className="absolute -right-1 -top-1 rounded-full bg-accent px-1 text-[8px] font-black text-white">VF</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <ExternalEpisodeList
+            episodes={episodes}
+            activeEpisode={activeEpisode}
+            progressEpisode={progressEpisode}
+            progressPct={progressPct}
+            watched={watchedEpisodes}
+            onSelect={selectEpisode}
+            onPlay={playEpisode}
+          />
         )}
         <div className="mt-4 md:hidden">
           <p className="text-lg font-bold leading-snug">{item.title}</p>

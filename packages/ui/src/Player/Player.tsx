@@ -13,7 +13,7 @@ import styles from './Player.module.css';
 // liste ; le choix change la source SANS détruire la position (la page
 // re-résout l'URL du lecteur choisi et repasse urls/initialTime).
 export interface PlayerSourceOption { id: string; host: string; versions: string[]; mode: 'direct' | 'iframe'; }
-export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; mode?: 'live' | 'vod'; initialTime?: number; onProgress?: (seconds: number, duration: number) => void; sources?: PlayerSourceOption[]; activeSourceId?: string; onSourceChange?: (sourceId: string) => void; }
+export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; mode?: 'live' | 'vod'; initialTime?: number; onProgress?: (seconds: number, duration: number) => void; onEnded?: () => void; sources?: PlayerSourceOption[]; activeSourceId?: string; onSourceChange?: (sourceId: string) => void; }
 interface QualityLevel { index: number; height: number; bitrate?: number; }
 interface PlaybackStats { startupMs: number | null; rebufferCount: number; bufferAhead: number; bitrate: number | null; latency: number | null; }
 interface GestureState { startX: number; startY: number; startTime: number; }
@@ -133,7 +133,7 @@ function getErrorMessage(errorType: string | null, httpCode: number | null): str
   return 'Le fournisseur ne répond pas ou la session a expiré.';
 }
 
-export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource, mode = 'live', initialTime, onProgress, sources, activeSourceId, onSourceChange }: PlayerProps) {
+export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource, mode = 'live', initialTime, onProgress, onEnded, sources, activeSourceId, onSourceChange }: PlayerProps) {
   const isVod = mode === 'vod';
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -221,6 +221,8 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const [seekHoverTime, setSeekHoverTime] = useState<number | null>(null);
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
   const [bandwidth, setBandwidth] = useState<number | null>(null);
   const [gestureOverlay, setGestureOverlay] = useState<{ type: 'volume'; value: number } | null>(null);
   const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -267,6 +269,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   const exitPseudoFullscreen = useCallback(() => { setIsPseudoFullscreen(false); document.body.style.overflow = ''; }, []);
   useEffect(() => { const video = videoRef.current; if (!video) return; const onEnterPiP = () => setIsPip(true); const onLeavePiP = () => setIsPip(false); video.addEventListener('enterpictureinpicture', onEnterPiP); video.addEventListener('leavepictureinpicture', onLeavePiP); return () => { video.removeEventListener('enterpictureinpicture', onEnterPiP); video.removeEventListener('leavepictureinpicture', onLeavePiP); }; }, []);
   useEffect(() => { const video = videoRef.current; if (!video) return; const syncPaused = (): void => setIsPaused(video.paused); syncPaused(); video.addEventListener('play', syncPaused); video.addEventListener('pause', syncPaused); return () => { video.removeEventListener('play', syncPaused); video.removeEventListener('pause', syncPaused); }; }, []);
+  // Fin de lecture VOD (fichier consommé) : remonte à la page pour
+  // l'enchaînement (épisode suivant). Ref pour ne pas réabonner à chaque render.
+  useEffect(() => { const video = videoRef.current; if (!video) return; const notifyEnded = (): void => { onEndedRef.current?.(); }; video.addEventListener('ended', notifyEnded); return () => { video.removeEventListener('ended', notifyEnded); }; }, []);
   // Si le composant démonte pendant le pseudo-plein écran, ne pas laisser le
   // scroll du body verrouillé.
   useEffect(() => () => { document.body.style.overflow = ''; }, []);
