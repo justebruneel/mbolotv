@@ -45,6 +45,13 @@ ECO_SATURATED_THRESHOLD = "8"
 # importés avant l'ajout de "ficheUrl" sont re-scrapés depuis le siteRef
 # (newsid) sur ces bases. Voir external.resyncExternalMeta.
 EXTERNAL_FICHE_BASES = "https://french-stream.one"
+# Bot d'import automatique (fiches French Stream → titres externes) :
+# activer avec EXTERNAL_BOT_ENABLED="1" (ou via secret). Lot = fiches traitées
+# par tick du cron */10 (3 ≈ 25-30 sous-requêtes, sous les plafonds Workers).
+# Catégories de listings crawlées : films (MOVIE), s-tv (SERIES).
+EXTERNAL_BOT_ENABLED = "0"
+EXTERNAL_BOT_BATCH = "3"
+EXTERNAL_BOT_CATEGORIES = "films,s-tv"
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"

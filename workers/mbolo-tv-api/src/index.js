@@ -17,6 +17,7 @@ import * as external from "./external.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
+import * as externalBot from "./external-bot.js";
 import { scanDueVariants } from "./healthcheck.js";
 import { discoverMatches } from "./discovery.js";
 import { runEpgImportForSource } from "./epgimport.js";
@@ -747,6 +748,15 @@ export async function scheduled(event, env) {
       const orphaned = await failStaleImports(env);
       if (orphaned > 0) console.log("[cron] imports orphelins marqués FAILED:", orphaned);
     } else if (cron === "*/10 * * * *") {
+      // Bot d'import French Stream d'abord : petit lot borné, il cède la
+      // main avant d'épuiser le budget des jobs ci-dessous.
+      if (String(env.EXTERNAL_BOT_ENABLED ?? "0") === "1") {
+        try {
+          console.log("[cron] external-bot:", JSON.stringify(await externalBot.runExternalBotTick(env)));
+        } catch (error) {
+          console.error("[cron] external-bot", error instanceof Error ? error.message : error);
+        }
+      }
       const key = await importKey(env.ENCRYPTION_KEY);
       console.log("[cron] health:", JSON.stringify(await scanDueVariants(env, key, Number(env.HEALTH_CHECK_BATCH_SIZE ?? 10))));
       // Santé des lecteurs tiers : 8 sources les moins vérifiées, en

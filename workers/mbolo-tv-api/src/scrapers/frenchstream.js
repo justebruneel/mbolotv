@@ -17,6 +17,9 @@ export const SITE = 'frenchstream';
 
 const NEWSID_PATTERN = /^\d{4,12}$/;
 const VERSIONS = ['default', 'vostfr', 'vfq', 'vff'];
+// Base des listings (bot d'import) : le domaine courant du site. Les fiches
+// collées à la main gardent leur propre base (matchUrl).
+const FS_DEFAULT_BASE = 'https://french-stream.one';
 
 /** Domaines reconnus : french-stream.one/.club/…, base = origin de l'URL collée. */
 export function matchUrl(url) {
@@ -277,8 +280,10 @@ export async function scrapeFiche(env, ficheUrl) {
       throw error instanceof Error ? error : extractorError(ExtractorErrorCode.RETRYABLE, 'API lecteurs injoignable');
     }),
   ]);
+  // Série : les lecteurs viennent du pack d'épisodes (ep-data.php), pas de
+  // film_api (players vides) — chaque saison du site est une fiche.
   if (isSeriesPage(fiche.text)) {
-    throw extractorError(ExtractorErrorCode.INVALID, 'Séries pas encore prises en charge (films uniquement)');
+    return scrapeSerieSeason(env, newsid, base, { text: fiche.text, apiText: api.text });
   }
   const filmApi = parseFilmApi(api.text);
   const title = parseTitle(fiche.text);
@@ -323,4 +328,167 @@ export async function scrapeFiche(env, ficheUrl) {
   };
 }
 
-export const _internal = { NEWSID_PATTERN, VERSIONS, parseDetails, cleanText };
+/* ---------------------------------------------------------------------------
+ * Listings du catalogue (bot d'import) : /films/ et /s-tv/ paginés en DLE
+ * via index.php?cstart={N}&do=cat&category={films|s-tv} — 18 fiches/page.
+ * La page 1 expose le lien de pagination max (cstart=1323 films, 588 s-tv) :
+ * on en déduit le volume sans tout crawler.
+ * ------------------------------------------------------------------------- */
+
+const LISTING_CATEGORIES = { films: 'MOVIE', 's-tv': 'SERIES' };
+
+/** Catégorie de listing reconnue (films | s-tv), null sinon. */
+export function listingCategory(category) {
+  const value = String(category ?? '').trim().toLowerCase();
+  return value in LISTING_CATEGORIES ? value : null;
+}
+
+/** Kind VOD pré-classé à la découverte (le bot choisit le scraper d'avance). */
+export function listingKind(category) {
+  return LISTING_CATEGORIES[listingCategory(category)] ?? null;
+}
+
+/**
+ * Une page de listing : { maxPage, items: [{ newsid, ficheUrl }] }.
+ * maxPage = le plus grand cstart de la pagination DLE (0 si mono-page).
+ */
+export async function scrapeListingPage(env, category, cstart = 1) {
+  const cat = listingCategory(category);
+  if (!cat) throw extractorError(ExtractorErrorCode.INVALID, `Catégorie de listing inconnue : ${category} (attendu : films | s-tv)`);
+  const page = Math.max(1, Math.min(9999, Math.floor(Number(cstart) || 1)));
+  const response = await fetchEmbedText(env, `${FS_DEFAULT_BASE}/index.php?cstart=${page}&do=cat&category=${cat}`)
+    .catch((error) => { throw error instanceof Error ? error : extractorError(ExtractorErrorCode.RETRYABLE, 'Listing injoignable'); });
+  const html = response.text ?? '';
+  if (!/<html/i.test(html)) throw extractorError(ExtractorErrorCode.RETRYABLE, 'Listing illisible (anti-bot ?)');
+  const items = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/newsid=(\d{4,12})/g)) {
+    const newsid = match[1];
+    if (seen.has(newsid)) continue;
+    seen.add(newsid);
+    items.push({ newsid, ficheUrl: `${FS_DEFAULT_BASE}/index.php?newsid=${newsid}` });
+  }
+  let maxPage = page;
+  for (const match of html.matchAll(/cstart=(\d{1,5})&/g)) {
+    maxPage = Math.max(maxPage, Number(match[1]));
+  }
+  return { category: cat, page, maxPage, items };
+}
+
+/* ---------------------------------------------------------------------------
+ * Séries : chaque saison du site est une fiche distincte (#serie-data), les
+ * lecteurs ne viennent PAS de film_api (players vides) mais du pack
+ * ep-data.php?id={newsid}&format=js :
+ *   { vf: {"1": {premium, vidzy, uqload, netu, voe: embedUrl}, …},
+ *     vostfr: {…}, vo: {…} }
+ * Mapping : vf→vff, vostfr→vostfr, vo→default ; host déduit de l'URL.
+ * ------------------------------------------------------------------------- */
+
+const EP_HOST_PATTERNS = [
+  { re: /vidzy\./i, host: 'vidzy' },
+  { re: /uqload\./i, host: 'uqload' },
+  { re: /(?:voe|kakaflix|kokoflix|uptoboxx)/i, host: 'voe' },
+  { re: /dood\./i, host: 'dood' },
+  { re: /filmoon|byse/i, host: 'filmoon' },
+  { re: /fsvid\./i, host: 'fsvid' },
+  { re: /multiup|netu/i, host: 'netu' },
+];
+
+/** Conversion du pack d'épisodes → players[] dédupliqués (host|embedUrl),
+ *  versions fusionnées, borné à 24 sources (limite publish). */
+export function packToPlayers(pack) {
+  if (!pack || typeof pack !== 'object') return [];
+  const merged = [];
+  for (const [packVersion, episodes] of Object.entries(pack)) {
+    const version = packVersion === 'vf' ? 'vff' : packVersion === 'vostfr' ? 'vostfr' : 'default';
+    if (!episodes || typeof episodes !== 'object') continue;
+    for (const [, hosts] of Object.entries(episodes)) {
+      if (!hosts || typeof hosts !== 'object') continue;
+      for (const [packHost, embedUrl] of Object.entries(hosts)) {
+        if (typeof embedUrl !== 'string' || !/^https?:\/\//.test(embedUrl)) continue;
+        const known = EP_HOST_PATTERNS.find((entry) => entry.re.test(embedUrl) || entry.re.test(packHost));
+        const host = known?.host ?? String(packHost).toLowerCase();
+        const existing = merged.find((entry) => entry.host === host && entry.embedUrl === embedUrl);
+        if (existing) {
+          if (!existing.versions.includes(version)) existing.versions.push(version);
+          continue;
+        }
+        if (merged.length >= 24) continue;
+        merged.push({ host, versions: [version], embedUrl });
+      }
+    }
+  }
+  return merged;
+}
+
+async function fetchEpData(env, base, newsid) {
+  const response = await fetchEmbedText(env, `${base}/ep-data.php?id=${newsid}&format=js`)
+    .catch(() => null);
+  if (!response) return {};
+  try { return JSON.parse(String(response.text ?? '{}')) || {}; } catch { return {}; }
+}
+
+/** Fiche saison (#serie-data) : métas + lecteurs issus du pack d'épisodes.
+ *  Les fiches série n'ont PAS les lignes « Genre/Acteurs » des films : les
+ *  genres viennent des liens xfsearch/genre-1/ du fil d'ariane, l'année de
+ *  xfsearch/date-de-sortie, le casting du champ meta.bkp de film_api
+ *  (« Nom (Rôle) - https://img… » enchaînés). */
+async function scrapeSerieSeason(env, newsid, base, fiche) {
+  const html = fiche.text;
+  let meta = {};
+  try { meta = parseFilmApi(fiche.apiText)?.meta ?? {}; } catch { meta = {}; }
+  const title = filmDataAttr(html, 'title') || parseTitle(html);
+  if (!title) throw extractorError(ExtractorErrorCode.DEAD, 'Fiche saison sans titre (retirée ou structure changée)');
+  const pack = await fetchEpData(env, base, newsid);
+  const players = packToPlayers(pack);
+  if (players.length === 0) {
+    throw extractorError(ExtractorErrorCode.DEAD, 'Saison sans lecteurs (pack d\'épisodes vide)');
+  }
+  // Casting depuis bkp (films : ligne « Acteurs » ; séries : bkp).
+  let cast = null;
+  if (typeof meta.bkp === 'string' && meta.bkp.length > 10) {
+    const names = [...cleanText(meta.bkp).matchAll(/([A-ZÀ-Ý][\wÀ-ÿ'’\- ]{2,40}?)\s*\(/g)].map((match) => match[1].trim());
+    if (names.length > 0) cast = [...new Set(names)].slice(0, 12).join(', ');
+  }
+  const genres = [...new Set([...html.matchAll(/xfsearch\/genre-1\/([^"'/]+)/g)].map((match) => decodeURIComponent(match[1]).replace(/\+/g, ' ').trim()))].slice(0, 6);
+  const yearMatch = /xfsearch\/date-de-sortie\/(\d{4})/.exec(html);
+  // Suivi des wrappers kakaflix/kokoflix (embed voe réel).
+  const enriched = await Promise.all(
+    players.map(async (player) => {
+      const finalUrl = await resolveWrapper(env, player.embedUrl);
+      return { ...player, wrapped: finalUrl !== null || /kakaflix|kokoflix/i.test(player.embedUrl), finalUrl };
+    }),
+  );
+  const merged = [];
+  for (const player of enriched) {
+    const key = `${player.host}|${player.finalUrl ?? player.embedUrl}`;
+    const existing = merged.find((entry) => `${entry.host}|${entry.finalUrl ?? entry.embedUrl}` === key);
+    if (existing) {
+      for (const version of player.versions) {
+        if (!existing.versions.includes(version)) existing.versions.push(version);
+      }
+      continue;
+    }
+    merged.push(player);
+  }
+  const parsed = parseDetails(html, {});
+  return {
+    site: SITE,
+    newsid,
+    ficheUrl: `${base}/index.php?newsid=${newsid}`,
+    kind: 'SERIES',
+    title: title.slice(0, 200),
+    year: yearMatch ? Number(yearMatch[1]) : parseYear(html),
+    posterUrl: meta.affiche || filmDataAttr(html, 'affiche') || null,
+    backdropUrl: meta.affiche2 || filmDataAttr(html, 'affiche2') || null,
+    trailerYoutubeId: meta.trailer || filmDataAttr(html, 'trailer') || null,
+    synopsis: parsed.synopsis,
+    duration: null,
+    director: null,
+    cast,
+    genres,
+    players: merged,
+  };
+}
+
+export const _internal = { NEWSID_PATTERN, VERSIONS, parseDetails, cleanText, FS_DEFAULT_BASE, packToPlayers };

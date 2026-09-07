@@ -291,6 +291,14 @@ export const ownerExternalTitleSchema = z.object({
   sources: z.array(ownerExternalSourceSchema),
 });
 export type OwnerExternalTitle = z.infer<typeof ownerExternalTitleSchema>;
+// GET /api/owner/vod/external/bot : état de la file du bot d'import.
+export const externalBotStatusSchema = z.object({
+  enabled: z.boolean(),
+  queue: z.object({ pending: z.number(), running: z.number(), done: z.number(), failed: z.number() }),
+  publishedLast24h: z.number(),
+  lastProcessedAt: z.string().nullable(),
+});
+export type ExternalBotStatus = z.infer<typeof externalBotStatusSchema>;
 // POST /api/owner/vod/external/publish : importe une fiche (players présélectionnés).
 export const ownerExternalPublishSchema = z.object({
   url: z.string().min(1).max(500),

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '@mbolo/ui';
 import type { BadgeTone } from '@mbolo/ui';
 import { externalHostSchema } from '@mbolo/contracts';
-import type { FichePreview, OwnerExternalTitle } from '@mbolo/contracts';
+import type { ExternalBotStatus, FichePreview, OwnerExternalTitle } from '@mbolo/contracts';
 import { ownerApi } from '../api/owner-api';
 
 // Hosts résolus en direct par les extracteurs ; les autres sont publiés en
@@ -21,6 +21,72 @@ const STATUS_META: Record<string, { label: string; tone: BadgeTone }> = {
 function StatusPill({ status }: { status: string }) {
   const meta = STATUS_META[status] ?? { label: status, tone: 'default' as BadgeTone };
   return <Badge tone={meta.tone}>{meta.label}</Badge>;
+}
+
+// Panneau du bot d'import : compteurs de la file, découverte des nouveautés
+// (page 1 des listings) et traitement manuel d'un lot sans attendre le cron.
+function BotPanel({ onChanged }: { onChanged: () => void }) {
+  const [status, setStatus] = useState<ExternalBotStatus | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      setStatus(await ownerApi.vod.external.botStatus());
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Statut indisponible.');
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function run(action: 'discover' | 'tick'): Promise<void> {
+    setBusy(action);
+    setNotice(null);
+    try {
+      const result = await ownerApi.vod.external.botAction(action, 1);
+      setNotice(
+        action === 'discover'
+          ? `${result.seeded ?? 0} nouvelle(s) fiche(s) ajoutée(s) à la file.`
+          : `${result.processed ?? 0} fiche(s) traitée(s).`,
+      );
+      await load();
+      onChanged();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Action impossible.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-surface/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-semibold">Bot d&apos;import automatique</h3>
+        {status ? (
+          <Badge tone={status.enabled ? 'success' : 'default'}>{status.enabled ? 'Actif (cron 10 min)' : 'Inactif (EXTERNAL_BOT_ENABLED=0)'}</Badge>
+        ) : null}
+      </div>
+      {status && (
+        <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+          <span>File : <strong>{status.queue.pending}</strong> en attente · <strong>{status.queue.done}</strong> importés · {status.queue.failed} en échec{status.queue.running > 0 ? ` · ${status.queue.running} en cours` : ''}</span>
+          <span className="text-muted">Publiés (24 h) : {status.publishedLast24h}</span>
+        </div>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="btn" disabled={busy !== null} onClick={() => void run('discover')}>
+          {busy === 'discover' ? 'Découverte…' : 'Découvrir les nouveautés'}
+        </button>
+        <button type="button" className="btn btn-primary" disabled={busy !== null} onClick={() => void run('tick')}>
+          {busy === 'tick' ? 'Traitement…' : 'Traiter un lot maintenant'}
+        </button>
+      </div>
+      {notice && <p className="mt-2 text-sm text-accent">{notice}</p>}
+      {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+    </div>
+  );
 }
 
 // Import depuis fiche (French Stream, …) : coller l'URL → aperçu
@@ -198,6 +264,11 @@ export function ExternalTitlesSection() {
           </ul>
         </div>
       )}
+
+      {/* Bot d'import automatique : file d'attente + actions manuelles.
+          Le toggle on/off se pilote via EXTERNAL_BOT_ENABLED (wrangler) ;
+          la console montre la progression et permet d'amorcer sans cron. */}
+      <BotPanel onChanged={() => { void reload(); }} />
 
       <div>
         <div className="mb-2 flex items-center justify-between">

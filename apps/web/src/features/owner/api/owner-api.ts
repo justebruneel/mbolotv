@@ -8,6 +8,7 @@ import type {
   AuditEntry,
   ChannelTestResponse,
   ConnectTestResponse,
+  ExternalBotStatus,
   ImportRun,
   ImportRunListResponse,
   ImportScope,
@@ -138,6 +139,11 @@ export const ownerApi = {
       updateSource: (id: string, input: OwnerExternalSourceUpdateInput): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<{ ok: true }>),
       removeSource: (id: string): Promise<{ ok: true }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<{ ok: true }>),
       recheckSource: (id: string): Promise<{ id: string; lastStatus: string; lastError: string | null; detail: string | null }> => fetch(`${BASE_URL}/owner/vod/external/sources/${id}/recheck`, { method: 'POST', credentials: 'include' }).then(parseResponse<{ id: string; lastStatus: string; lastError: string | null; detail: string | null }>),
+      // Bot d'import automatique : statut de la file + actions manuelles
+      // (découverte des nouveautés, traitement immédiat d'un lot).
+      botStatus: (): Promise<ExternalBotStatus> => fetch(`${BASE_URL}/owner/vod/external/bot`, { credentials: 'include' }).then(parseResponse<ExternalBotStatus>),
+      botAction: (action: 'discover' | 'tick', pages = 1): Promise<{ ok?: boolean; seeded?: number; processed?: number; [key: string]: unknown }> =>
+        fetch(`${BASE_URL}/owner/vod/external/bot`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ action, pages }) }).then(parseResponse<{ ok?: boolean; seeded?: number; processed?: number; [key: string]: unknown }>),
     },
   },
   profile: (): Promise<OwnerProfile> => fetch(`${BASE_URL}/owner/profile`, { credentials: 'include' }).then(parseResponse<OwnerProfile>),

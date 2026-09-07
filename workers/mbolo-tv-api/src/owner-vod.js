@@ -6,6 +6,7 @@ import { slugify } from './normalize.js';
 import { checkEmbedPage, checkSource, SUPPORTED_HOSTS } from './extractors/index.js';
 import { previewFiche, readCachedPreview, serveFichePreview } from './scrapers/index.js';
 import { resyncExternalMeta } from './external.js';
+import { botStatus, discoverNew, runExternalBotTickForce } from './external-bot.js';
 
 const KINDS = new Set(['MOVIE', 'SERIES', 'BOTH']);
 const CHANNEL_ID_RE = /^UC[A-Za-z0-9_-]{22}$/;
@@ -15,6 +16,78 @@ const MAX_INLINE_VERIFY = 12;
 
 function normKey(title) {
   return String(title).trim().toLowerCase();
+}
+
+/**
+ * Publie (insert ou update) un titre externe + ses sources à partir d'un
+ * preview de scraper. Logique partagée par la console (publish manuel) et le
+ * bot d'import automatique — même dédup site+siteRef, même dédup sources
+ * (titleId+host+embedUrl), même répartition OK/UNKNOWN.
+ * verified/pending : [{ player, mode }] (console, players déjà vérifiés) —
+ * le bot passe verified=[] et pending=preview.players (tout part en UNKNOWN,
+ * le cron santé les prendra) pour économiser le budget de sous-requêtes.
+ */
+export async function storeExternalPreview(env, preview, { verified = [], pending = [], rejected = [] } = {}, auditCtx = null) {
+  if (!preview?.newsid || !Array.isArray(preview.players) || preview.players.length === 0) {
+    return { ok: false, reason: 'Aucun lecteur sur cette fiche' };
+  }
+  const title = String(preview.title ?? '').slice(0, 200);
+  const year = Number(preview.year) || null;
+  const posterUrl = preview.posterUrl ?? null;
+  const siteRef = String(preview.newsid);
+  const kind = preview.kind === 'SERIES' ? 'SERIES' : 'MOVIE';
+  let titleId;
+  const existing = await env.db.query(env, `SELECT id FROM "ExternalTitle" WHERE site = $1 AND "siteRef" = $2`, [preview.site ?? 'frenchstream', siteRef]);
+  if (existing.rows.length > 0) {
+    titleId = existing.rows[0].id;
+    // Re-publish d'un titre existant : les métas sont rafraîchies (synopsis,
+    // genres, détails) sans toucher aux sources déjà présentes.
+    await env.db.query(env,
+      `UPDATE "ExternalTitle" SET title = $2, year = $3, "posterUrl" = $4, "backdropUrl" = $5, "trailerYoutubeId" = $6,
+         synopsis = $7, "originalTitle" = $8, duration = $9, director = $10, "cast" = $11, genres = $12, "ficheUrl" = $13, kind = $14
+       WHERE id = $1`,
+      [titleId, title, year, posterUrl, preview.backdropUrl ?? null, preview.trailerYoutubeId ?? null,
+        preview.synopsis ?? null, preview.originalTitle ?? null, preview.duration ?? null, preview.director ?? null, preview.cast ?? null,
+        preview.genres ?? [], preview.ficheUrl ?? null, kind],
+    );
+  } else {
+    titleId = crypto.randomUUID();
+    await env.db.query(env,
+      `INSERT INTO "ExternalTitle" (id, site, "siteRef", title, year, "posterUrl", "backdropUrl", "trailerYoutubeId",
+         synopsis, "originalTitle", duration, director, "cast", genres, "ficheUrl", kind)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      [titleId, preview.site ?? 'frenchstream', siteRef, title, year, posterUrl, preview.backdropUrl ?? null, preview.trailerYoutubeId ?? null,
+        preview.synopsis ?? null, preview.originalTitle ?? null, preview.duration ?? null, preview.director ?? null, preview.cast ?? null,
+        preview.genres ?? [], preview.ficheUrl ?? null, kind],
+    );
+  }
+  const known = await env.db.query(env, `SELECT host, "embedUrl" FROM "ExternalSource" WHERE "titleId" = $1`, [titleId]);
+  const knownKeys = new Set(known.rows.map((row) => `${row.host}|${row.embedUrl}`));
+  let inserted = 0;
+  let skipped = 0;
+  let order = 0;
+  const store = async (player, mode, status) => {
+    order += 1;
+    if (knownKeys.has(`${player.host}|${player.embedUrl}`)) {
+      skipped += 1;
+      return;
+    }
+    await env.db.query(env,
+      `INSERT INTO "ExternalSource" (id, "titleId", host, mode, "embedUrl", "finalUrl", versions, "sortOrder", "lastStatus", "lastCheckedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,${status === 'OK' ? 'now()' : 'NULL'})`,
+      [crypto.randomUUID(), titleId, player.host, mode, player.embedUrl, player.finalUrl, player.versions, order, status],
+    );
+    inserted += 1;
+  };
+  for (const { player, mode } of verified) await store(player, mode, 'OK');
+  // Surplus non vérifié inline : UNKNOWN + lastCheckedAt NULL → le cron les
+  // prend en priorité au prochain passage (NULLS FIRST).
+  for (const player of pending) {
+    await store(player, SUPPORTED_HOSTS.includes(player.host) ? 'direct' : 'iframe', 'UNKNOWN');
+  }
+  if (auditCtx) {
+    await auditCtx('external_title', titleId, { site: preview.site, siteRef, inserted, skipped, rejected: rejected.length });
+  }
+  return { ok: true, titleId, title, inserted, skipped };
 }
 
 async function uniqueFolderSlug(env, name) {
@@ -565,63 +638,13 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
       // diagnostic prod (relais vs direct) est perdu.
       return ctx.json({ message: 'Aucun lecteur vérifiable sur cette fiche. Aucun titre créé.', seen, rejected }, 422);
     }
-    const title = (typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : preview.title).slice(0, 200);
-    const year = body?.year === null || body?.year === undefined ? preview.year : Number(body.year) || null;
-    const posterUrl = typeof body?.posterUrl === 'string' && body.posterUrl.trim() ? body.posterUrl.trim() : preview.posterUrl;
-    const siteRef = preview.newsid ?? null;
-    let titleId;
-    const existing = siteRef
-      ? await env.db.query(env, `SELECT id FROM "ExternalTitle" WHERE site = $1 AND "siteRef" = $2`, [preview.site, siteRef])
-      : { rows: [] };
-    if (existing.rows.length > 0) {
-      titleId = existing.rows[0].id;
-      // Re-publish d'un titre existant : les détails sont rafraîchis aussi
-      // (le scraper re-scrappe la fiche) — synopsis/genres récupérés sans
-      // devoir supprimer/recréer le titre et ses sources.
-      await env.db.query(env,
-        `UPDATE "ExternalTitle" SET title = $2, year = $3, "posterUrl" = $4, "backdropUrl" = $5, "trailerYoutubeId" = $6,
-           synopsis = $7, "originalTitle" = $8, duration = $9, director = $10, "cast" = $11, genres = $12, "ficheUrl" = $13
-         WHERE id = $1`,
-        [titleId, title, year, posterUrl, preview.backdropUrl, preview.trailerYoutubeId,
-          preview.synopsis ?? null, preview.originalTitle ?? null, preview.duration ?? null, preview.director ?? null, preview.cast ?? null,
-          preview.genres ?? [], preview.ficheUrl ?? null],
-      );
-    } else {
-      titleId = crypto.randomUUID();
-      await env.db.query(env,
-        `INSERT INTO "ExternalTitle" (id, site, "siteRef", title, year, "posterUrl", "backdropUrl", "trailerYoutubeId",
-           synopsis, "originalTitle", duration, director, "cast", genres, "ficheUrl")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-        [titleId, preview.site, siteRef, title, year, posterUrl, preview.backdropUrl, preview.trailerYoutubeId,
-          preview.synopsis ?? null, preview.originalTitle ?? null, preview.duration ?? null, preview.director ?? null, preview.cast ?? null,
-          preview.genres ?? [], preview.ficheUrl ?? null],
-      );
-    }
-    const known = await env.db.query(env, `SELECT host, "embedUrl" FROM "ExternalSource" WHERE "titleId" = $1`, [titleId]);
-    const knownKeys = new Set(known.rows.map((row) => `${row.host}|${row.embedUrl}`));
-    let inserted = 0;
-    let skipped = 0;
-    let order = 0;
-    const store = async (player, mode, status) => {
-      order += 1;
-      if (knownKeys.has(`${player.host}|${player.embedUrl}`)) {
-        skipped += 1;
-        return;
-      }
-      await env.db.query(env,
-        `INSERT INTO "ExternalSource" (id, "titleId", host, mode, "embedUrl", "finalUrl", versions, "sortOrder", "lastStatus", "lastCheckedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,${status === 'OK' ? 'now()' : 'NULL'})`,
-        [crypto.randomUUID(), titleId, player.host, mode, player.embedUrl, player.finalUrl, player.versions, order, status],
-      );
-      inserted += 1;
-    };
-    for (const { player, mode } of verified) await store(player, mode, 'OK');
-    // Surplus non vérifié inline : UNKNOWN + lastCheckedAt NULL → le cron les
-    // prend en priorité au prochain passage (NULLS FIRST).
-    for (const player of pending) {
-      await store(player, SUPPORTED_HOSTS.includes(player.host) ? 'direct' : 'iframe', 'UNKNOWN');
-    }
-    await audit(ctx, owner.userId, 'vod.external_publish', 'external_title', titleId, { site: preview.site, siteRef, inserted, rejected: rejected.length });
-    return ctx.json({ titleId, title, seen, inserted, skipped, pending: pending.length, rejected });
+    const result = await storeExternalPreview(
+      env,
+      preview,
+      { verified, pending, rejected },
+      (entity, entityId, detail) => audit(ctx, owner.userId, 'vod.external_publish', entity, entityId, detail),
+    );
+    return ctx.json({ titleId: result.titleId, title: result.title, seen, inserted: result.inserted, skipped: result.skipped, pending: pending.length, rejected });
   }
 
   // Backfill des détails (synopsis/genres/…) des titres déjà publiés :
@@ -632,6 +655,32 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     const summary = await resyncExternalMeta(env, limit);
     await audit(ctx, owner.userId, 'vod.external_resync', 'external_title', null, summary);
     return ctx.json(summary);
+  }
+
+  // Bot d'import automatique : statut (GET) et actions (POST enable/disable/
+  // discover/tick). Le tick manuel permet d'amorcer sans attendre le cron.
+  if (path === '/api/owner/vod/external/bot' && method === 'GET') {
+    return ctx.json(await botStatus(env));
+  }
+  if (path === '/api/owner/vod/external/bot' && method === 'POST') {
+    const body = await ctx.readJson().catch(() => ({}));
+    const action = String(body?.action ?? '').trim();
+    if (action === 'enable' || action === 'disable') {
+      await audit(ctx, owner.userId, `vod.external_bot_${action}`, 'external_title', null, {});
+      return ctx.json({ ok: true, note: 'l\'état se pilote via EXTERNAL_BOT_ENABLED (wrangler vars/secret) — action journalisée' });
+    }
+    if (action === 'discover') {
+      const pages = Math.min(Math.max(1, Number(body?.pages) || 1), 5);
+      const summary = await discoverNew(env, pages);
+      await audit(ctx, owner.userId, 'vod.external_bot_discover', 'external_title', null, summary);
+      return ctx.json(summary);
+    }
+    if (action === 'tick') {
+      const result = await runExternalBotTickForce(env);
+      await audit(ctx, owner.userId, 'vod.external_bot_tick', 'external_title', null, { processed: result.processed });
+      return ctx.json(result);
+    }
+    return ctx.fail(400, 'Action inconnue (enable | disable | discover | tick)');
   }
 
   // Liste des titres externes + statut de leurs sources.

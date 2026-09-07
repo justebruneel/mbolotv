@@ -265,6 +265,8 @@ model ExternalTitle {
   site String
   siteRef String?
   title String
+  // MOVIE | SERIES : posé par l'import (le bot pré-classe via le listing).
+  kind String @default("MOVIE")
   year Int?
   posterUrl String?
   backdropUrl String?
@@ -307,6 +309,25 @@ model ExternalSource {
   title ExternalTitle @relation(fields:[titleId], references:[id], onDelete:Cascade)
   @@unique([titleId, host, embedUrl])
   @@index([isActive, lastCheckedAt])
+}
+
+// File d'attente du bot d'import automatique (fiches French Stream) : chaque
+// ligne = une fiche découverte dans un listing, à publier par petits lots à
+// chaque tick du cron. kind posé à la découverte (films→MOVIE, s-tv→SERIES).
+model ExternalImportQueue {
+  id String @id @default(cuid())
+  site String @default("frenchstream")
+  category String
+  newsid String
+  kind String @default("MOVIE")
+  state String @default("PENDING")
+  priority Int @default(0)
+  attempts Int @default(0)
+  lastError String?
+  discoveredAt DateTime @default(now())
+  processedAt DateTime?
+  @@unique([site, newsid])
+  @@index([state, priority(sort: Desc), attempts, discoveredAt])
 }
 model AuditLog {
   id String @id @default(cuid())
