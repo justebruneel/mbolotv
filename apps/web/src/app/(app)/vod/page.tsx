@@ -287,8 +287,7 @@ function FolderVodBrowse({ slug, q, hideWhenEmpty = false }: { slug: string; q: 
 // hideWhenEmpty : dans les résultats de recherche, une section se retire
 // silencieusement si sa source YouTube est vide ou en erreur — les autres
 // résultats restent lisibles sans « Aucun résultat » parasite.
-function YoutubeBrowse({ channelId, q, hideWhenEmpty = false }: { channelId: string; q: string; hideWhenEmpty?: boolean }) {
-  const query = useInfiniteYoutube(channelId, 25, q);
+function YoutubeBrowse({ channelId, q, hideWhenEmpty = false }: { channelId: string; q: string; hideWhenEmpty?: boolean }) {  const query = useInfiniteYoutube(channelId, 25, q);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -437,10 +436,10 @@ function ExternalSearch({ q }: { q: string }) {
   );
 }
 
-// Vue « dossier » : titre + grille YouTube fusionnée (sans nom de chaîne).
-// Dossiers sans YouTube : repli grille VOD règles ∪ manuel. `folder` vient de
-// la liste publique ; si le backend à dossiers est mort (repli), slug
-// 'nollywood' retrouve exactement l'ancienne page mono-Nollywood.
+// Vue « dossier » (= la page « voir tout » du rail) : l'en-tête de page fait
+// déjà office de titre (barre dossiers/catégories + bouton retour) — le
+// <h2> interne doublait chaque nom (« Afrique » au-dessus de « Afrique »)
+// et est supprimé. La grille occupe l'espace, c'est tout.
 function DossierView({ slug, q, folder }: { slug: string; q: string; folder: VodFolderSummary | null | undefined }) {
   if (folder === undefined) return <div className="flex justify-center py-16"><Spinner /></div>;
 
@@ -449,30 +448,15 @@ function DossierView({ slug, q, folder }: { slug: string; q: string; folder: Vod
       return <EmptyState title="Dossier introuvable" hint="Ce dossier n'existe plus ou est masqué." />;
     }
     // Repli intégral (dossiers indisponibles) : l'ancien dossier Nollywood.
-    return (
-      <section aria-label="Dossier Nollywood">
-        <h2 className="mb-4 text-xl font-bold">Nollywood</h2>
-        <YoutubeBrowse channelId={YOUTUBE_AFOREVO_CHANNEL_ID} q={q} />
-      </section>
-    );
+    return <YoutubeBrowse channelId={YOUTUBE_AFOREVO_CHANNEL_ID} q={q} />;
   }
 
   const channelIds = folder.youtubeSources.map((source) => source.channelId);
   if (channelIds.length === 0) {
-    return (
-      <section aria-label={`Dossier ${folder.name}`}>
-        <h2 className="mb-4 text-xl font-bold">{folder.name}</h2>
-        <FolderVodBrowse slug={folder.slug} q={q} />
-      </section>
-    );
+    return <FolderVodBrowse slug={folder.slug} q={q} />;
   }
 
-  return (
-    <section aria-label={`Dossier ${folder.name}`}>
-      <h2 className="mb-4 text-xl font-bold">{folder.name}</h2>
-      <MergedYoutubeBrowse channelIds={channelIds} q={q} />
-    </section>
-  );
+  return <MergedYoutubeBrowse channelIds={channelIds} q={q} />;
 }
 
 function VodPageContent() {
@@ -582,7 +566,10 @@ function VodPageContent() {
           </button>
         )}
       </div>
-      {!q && <ResumeRow />}
+      {/* Reprendre : accueil uniquement — dans les vues filtrées (« voir
+          tout », dossier, catégorie, recherche) la grille EST le contenu,
+          une rangée de reprise décalerait tout vers le bas sans servir. */}
+      {!q && !dossier && !category && !browseAll && !browseExternal && <ResumeRow />}
       {/* Dossiers façon Netflix : texte seul dans la même barre que les
           catégories — l'actif blanc + soulignement accent, l'inactif
           atténué. Séparés des catégories par un « | » discret (rôles
