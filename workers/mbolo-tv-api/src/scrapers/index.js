@@ -11,6 +11,10 @@ import * as frenchstream from './frenchstream.js';
 
 const REGISTRY = [frenchstream];
 
+// Exporté pour external.resyncExternalMeta (backfill des détails) : retrouver
+// l'adapter d'une ficheUrl stockée en base.
+export { REGISTRY };
+
 export const SUPPORTED_FICHE_SITES = REGISTRY.map((adapter) => adapter.SITE);
 
 function jsonError(message, status, cors = {}) {
