@@ -9,7 +9,7 @@
 //   tiers redirigent /blocked quand ils détectent l'attribut sandbox).
 // Lecteur inline propre (comme la fiche Nollywood) : GlobalPlayer exclut
 // /vod/x/* de sa capture, et on libère le mini-lecteur VOD au montage.
-import { EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
+import { EmptyState, FavoriteButton, Icon, Player, Spinner } from '@mbolo/ui';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -17,6 +17,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useExternalPlay, useExternalTitle } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
+import { externalFavoriteId, useExternalFavoritesStore } from '../../../../../shared/stores/externalFavorites';
 import { TrailerFrame, useTrailerEmbed } from '../../../../../features/vod/components/TrailerHero';
 import type { ExternalSourcePublic } from '@mbolo/contracts';
 
@@ -54,6 +55,10 @@ function ExternalDetailContent() {
   // Préfixe x: : espace d'ids propre, sans collision avec les ids VodItem
   // Xtream (ResumeRow route le préfixe vers /vod/x/<id>).
   const progressId = useMemo(() => `x:${id}`, [id]);
+  // Favori titre externe : store local pur (jamais servi — même motif que
+  // Nollywood), clé préfixée « x: ».
+  const isFavorite = useExternalFavoritesStore((state) => state.ids.includes(externalFavoriteId(id)));
+  const toggleFavorite = useExternalFavoritesStore((state) => state.toggle);
   const [startAt, setStartAt] = useState(0);
   const recordVodProgress = useSettingsStore((state) => state.recordVodProgress);
   const lastWriteRef = useMemo(() => ({ at: 0 }), []);
@@ -256,22 +261,30 @@ function ExternalDetailContent() {
           </div>
         ) : (
           <>
-            {backdropUrl && !trailer.mounted ? (
-              <img src={backdropUrl} alt="" className="absolute inset-0 h-full w-full object-cover object-top opacity-85" />
-            ) : (
-              !backdropUrl && <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
-            )}
-            {/* Bande-annonce muette en fond : l'image reste dessous, le son
-                s'active au clic. L'iframe est dézoomée (scale 1,25) et recentrée
-                : l'interface YouTube (plein écran, recommandations, barre titre)
-                est coupée hors cadre — seul le film se voit, façon Netflix. */}
+            {/* Image de fond : affichée tant que la bande-annonce ne joue pas
+                RÉELLEMENT (ready = événement « playing » du player YouTube).
+                Jamais d'écran YouTube de chargement visible : l'iframe reste
+                opacity 0 derrière l'image jusqu'au basculement en fondu. */}
+            <img
+              key={backdropUrl ?? 'no-backdrop'}
+              src={backdropUrl ?? ''}
+              alt=""
+              className={`absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-700 ${trailer.ready && trailer.mounted && !trailer.failed ? 'opacity-0' : 'opacity-85'}`}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = backdropUrl ? 'visible' : 'hidden'; }}
+            />
+            {!backdropUrl && <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />}
+            {/* Bande-annonce muette en fond : invisible (opacity 0) tant que
+                la vidéo ne joue pas, puis fondu au-dessus de l'image. L'iframe
+                est dézoomée (scale 1,25) et recentrée : l'interface YouTube
+                (plein écran, recommandations, barre titre) est coupée hors
+                cadre — seul le film se voit, façon Netflix. */}
             {trailer.mounted && !trailer.failed && trailer.src && (
               <div className="absolute inset-0 overflow-hidden" onClick={trailer.unmute} role="presentation">
                 <TrailerFrame
                   src={trailer.src}
                   onFailed={trailer.setFailed}
                   frameRef={trailer.frameRef}
-                  className="pointer-events-none absolute left-1/2 top-1/2 aspect-video w-full -translate-x-1/2 -translate-y-1/2 scale-125 opacity-90"
+                  className={`pointer-events-none absolute left-1/2 top-1/2 aspect-video w-full -translate-x-1/2 -translate-y-1/2 scale-125 transition-opacity duration-700 ${trailer.ready ? 'opacity-100' : 'opacity-0'}`}
                 />
                 {!trailer.muted && (
                   <button
@@ -285,12 +298,11 @@ function ExternalDetailContent() {
                 )}
               </div>
             )}
-            {/* Dégradés de lisibilité UNIQUEMENT derrière le texte (bas de
-                hero) : couvrant sur toute la surface, ils assombrissaient la
-                bande-annonce elle-même — c'est la couche sombre constatée. */}
-            <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[#0b0b0f] via-[#0b0b0f]/55 to-transparent" />
-            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-r from-black/70 via-black/20 to-transparent" />
-            <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/40 to-transparent" />
+            {/* Dégradés de lisibilité : bas du hero uniquement (texte lisible),
+                la zone supérieure de la bande-annonce reste sans voile. */}
+            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-[#0b0b0f] via-[#0b0b0f]/45 to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-r from-black/65 via-black/15 to-transparent" />
+            <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-black/35 to-transparent" />
             <div className="absolute inset-x-0 bottom-0 mx-auto hidden w-full max-w-6xl px-4 pb-6 md:block md:pb-8">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
                 <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>
@@ -323,6 +335,11 @@ function ExternalDetailContent() {
                     </Link>
                   )
                 )}
+                <FavoriteButton
+                  isActive={isFavorite}
+                  onToggle={() => toggleFavorite(externalFavoriteId(id))}
+                  label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
+                />
               </div>
             </div>
           </>
@@ -377,6 +394,11 @@ function ExternalDetailContent() {
                   </Link>
                 )
               )}
+              <FavoriteButton
+                isActive={isFavorite}
+                onToggle={() => toggleFavorite(externalFavoriteId(id))}
+                label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
+              />
             </div>
           )}
         </div>
