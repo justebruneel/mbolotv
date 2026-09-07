@@ -13,7 +13,10 @@ import styles from './Player.module.css';
 // liste ; le choix change la source SANS détruire la position (la page
 // re-résout l'URL du lecteur choisi et repasse urls/initialTime).
 export interface PlayerSourceOption { id: string; host: string; versions: string[]; mode: 'direct' | 'iframe'; }
-export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; mode?: 'live' | 'vod'; initialTime?: number; onProgress?: (seconds: number, duration: number) => void; onEnded?: () => void; sources?: PlayerSourceOption[]; activeSourceId?: string; onSourceChange?: (sourceId: string) => void; }
+/** Fenêtre d'introduction (secondes) : le bouton « Sauter l'intro » s'affiche
+ *  quand la position courante est dans [start, end) et seeke vers end. */
+export interface PlayerIntroWindow { start: number; end: number; }
+export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; mode?: 'live' | 'vod'; initialTime?: number; onProgress?: (seconds: number, duration: number) => void; onEnded?: () => void; intro?: PlayerIntroWindow | null; sources?: PlayerSourceOption[]; activeSourceId?: string; onSourceChange?: (sourceId: string) => void; }
 interface QualityLevel { index: number; height: number; bitrate?: number; }
 interface PlaybackStats { startupMs: number | null; rebufferCount: number; bufferAhead: number; bitrate: number | null; latency: number | null; }
 interface GestureState { startX: number; startY: number; startTime: number; }
@@ -133,7 +136,7 @@ function getErrorMessage(errorType: string | null, httpCode: number | null): str
   return 'Le fournisseur ne répond pas ou la session a expiré.';
 }
 
-export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource, mode = 'live', initialTime, onProgress, onEnded, sources, activeSourceId, onSourceChange }: PlayerProps) {
+export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource, mode = 'live', initialTime, onProgress, onEnded, intro, sources, activeSourceId, onSourceChange }: PlayerProps) {
   const isVod = mode === 'vod';
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -894,6 +897,17 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
 
   const VolumeIcon = muted || volume === 0 ? Icon.VolumeX : volume < 0.5 ? Icon.Volume1 : Icon.Volume2;
   const errorMsg = status === 'error' ? getErrorMessage(errorInfo.type, errorInfo.httpCode) : '';
+  // Bouton « Sauter l'intro » façon Netflix : visible uniquement quand la
+  // position courante est dans la fenêtre [start, end) saisie en console.
+  // Fenêtre invalide/absente ou durée inconnue = pas de bouton, jamais d'erreur.
+  const skipIntroTarget = (() => {
+    if (!isVod || status !== 'ready' || !intro) return null;
+    const { start, end } = intro;
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (start < 0 || end <= start || vodDuration <= 0) return null;
+    if (vodPosition < start || vodPosition >= end) return null;
+    return end;
+  })();
   const net = getNetworkInfo();
   const isIos = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
 
@@ -904,6 +918,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
     {bandwidth !== null && controlsVisible && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && (autoplayBlocked || mutedAutoplay) && <button type="button" className={styles.playPrompt} onClick={startPlayback}>{autoplayBlocked ? 'Lancer la lecture' : 'Activer le son'}</button>}
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}><Icon.Volume2 size={28} /></span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
+    {skipIntroTarget !== null && <button type="button" className={styles.skipIntro} onClick={() => seekTo(skipIntroTarget)}>Sauter l'intro</button>}
     {status === 'ready' && !isVod && <div className={styles.progressBar} title={stats.latency !== null ? `Latence au direct : ${formatBuffer(stats.latency)}` : undefined}><div className={styles.progressFill} style={{ width: `${liveProgress}%` }} /></div>}
     {status === 'ready' && isVod && vodDuration > 0 && <div className={styles.seekBar} aria-label="Progression de la vidéo"><div className={styles.seekTrack} onMouseMove={(e: ReactMouseEvent<HTMLDivElement>) => { const rect = e.currentTarget.getBoundingClientRect(); if (rect.width <= 0) return; setSeekHoverTime(clamp((e.clientX - rect.left) / rect.width, 0, 1) * vodDuration); }} onMouseLeave={() => setSeekHoverTime(null)}><input type="range" className={styles.seekSlider} min={0} max={vodDuration} step={1} value={Math.min(vodPosition, vodDuration)} onChange={(e) => seekTo(Number(e.target.value))} aria-label="Position de lecture" /><div className={styles.seekBuffered} style={{ width: `${clamp((vodBuffered / vodDuration) * 100, 0, 100)}%` }} /><div className={styles.seekFill} style={{ width: `${clamp((vodPosition / vodDuration) * 100, 0, 100)}%` }} /><div className={styles.seekThumb} style={{ left: `${clamp((vodPosition / vodDuration) * 100, 0, 100)}%` }} />{seekHoverTime !== null && <div className={styles.seekHover} style={{ left: `${clamp((seekHoverTime / vodDuration) * 100, 0, 100)}%` }}>{formatTime(seekHoverTime)}</div>}</div><span className={styles.seekTime}>{formatTime(vodPosition)} / {formatTime(vodDuration)}</span></div>}
     {/* Durée encore inconnue (MP4 progressif lent à donner ses métadonnées) :

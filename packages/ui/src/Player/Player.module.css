@@ -577,6 +577,44 @@
   font-weight: 700;
 }
 
+/* ---------- Sauter l'intro (façon Netflix) ---------- */
+.skipIntro {
+  position: absolute;
+  right: 16px;
+  bottom: 76px;
+  z-index: 15;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid oklch(1 0 0 / 0.9);
+  border-radius: 10px;
+  background: oklch(1 0 0 / 0.96);
+  color: #0b0b0f;
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 20px oklch(0.02 0.01 260 / 0.5);
+  animation: mbolo-scale-in 200ms var(--mbolo-ease-out) both;
+}
+
+.skipIntro:hover {
+  background: #fff;
+}
+
+.skipIntro:active {
+  transform: scale(0.97);
+}
+
+.skipIntro:focus-visible {
+  outline: 2px solid var(--mbolo-accent);
+  outline-offset: 2px;
+}
+
+/* Mobile : au-dessus de la rangée d'icônes + seekbar (empilées en bas). */
+.mobile .skipIntro {
+  right: 12px;
+  bottom: calc(var(--vod-seek-h) + 64px);
+}
+
 /* ================================================================
    MOBILE LAYOUT
    ================================================================ */

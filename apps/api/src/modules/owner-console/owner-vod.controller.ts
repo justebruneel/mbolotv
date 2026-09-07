@@ -367,6 +367,7 @@ export class OwnerVodController {
       items: rows.map((row) => ({
         id: row.id, site: row.site, siteRef: row.siteRef, title: row.title, year: row.year, posterUrl: row.posterUrl,
         isVisible: row.isVisible, sortOrder: row.sortOrder,
+        introStartSec: row.introStartSec, introEndSec: row.introEndSec,
         healthySources: row.sources.filter((source) => source.isActive && (source.lastStatus === 'OK' || source.lastStatus === 'UNKNOWN')).length,
         deadSources: row.sources.filter((source) => source.lastStatus === 'DEAD').length,
         sources: row.sources.map((source): OwnerExternalSource => ({
@@ -381,10 +382,17 @@ export class OwnerVodController {
   }
 
   @Patch('external/titles/:id')
-  async updateExternalTitle(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerExternalTitleUpdateSchema)) input: { title?: string; year?: number | null; posterUrl?: string | null; isVisible?: boolean; sortOrder?: number }): Promise<{ ok: true }> {
+  async updateExternalTitle(@Req() request: FastifyRequest, @Param('id') id: string, @Body(new ZodValidationPipe(ownerExternalTitleUpdateSchema)) input: { title?: string; year?: number | null; posterUrl?: string | null; isVisible?: boolean; sortOrder?: number; introStartSec?: number | null; introEndSec?: number | null }): Promise<{ ok: true }> {
     const ownerId = getOwnerContext(request).userId;
-    const existing = await this.prisma.externalTitle.findUnique({ where: { id }, select: { id: true } });
+    const existing = await this.prisma.externalTitle.findUnique({ where: { id }, select: { id: true, introStartSec: true, introEndSec: true } });
     if (!existing) throw new NotFoundException('Titre introuvable');
+    // Cohérence de la fenêtre d'intro : début < fin quand les deux bornes
+    // sont connues après application du patch (null = pas de fenêtre).
+    const nextStart = input.introStartSec !== undefined ? input.introStartSec : existing.introStartSec;
+    const nextEnd = input.introEndSec !== undefined ? input.introEndSec : existing.introEndSec;
+    if (nextStart !== null && nextStart !== undefined && nextEnd !== null && nextEnd !== undefined && nextStart >= nextEnd) {
+      throw new BadRequestException('Intro invalide : le début doit précéder la fin');
+    }
     await this.prisma.externalTitle.update({ where: { id }, data: { ...input } });
     await this.audit.log(ownerId, 'vod.external_title_update', 'external_title', id, input);
     return { ok: true };

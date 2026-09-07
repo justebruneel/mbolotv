@@ -299,6 +299,8 @@ export class VodService {
       director: row.director,
       cast: row.cast,
       genres: row.genres,
+      introStartSec: row.introStartSec,
+      introEndSec: row.introEndSec,
       sources: row.sources.map((source) => ({ id: source.id, host: source.host, mode: publicExternalSourceMode(source.mode as ExternalSourceMode, source.host), versions: source.versions, episode: row.kind === 'SERIES' ? source.sortOrder : null, playRef: source.finalUrl ?? source.embedUrl })),
     };
   }

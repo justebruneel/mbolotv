@@ -23,6 +23,102 @@ function StatusPill({ status }: { status: string }) {
   return <Badge tone={meta.tone}>{meta.label}</Badge>;
 }
 
+// Fenêtre d'intro (secondes) : le Player affiche « Sauter l'intro » quand la
+// position est dans [début, fin). Saisie « m:ss » ou secondes brutes, vide =
+// efface. Validation locale + serveur (début < fin).
+function formatIntroSec(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  const total = Math.max(0, Math.floor(value));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function parseIntroSec(text: string): number | null | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const value = Number(trimmed);
+    return Number.isFinite(value) && value >= 0 ? value : undefined;
+  }
+  const match = trimmed.match(/^(\d+):([0-5]?\d(?:\.\d+)?)$/);
+  if (!match) return undefined;
+  const value = Number(match[1]) * 60 + Number(match[2]);
+  return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function IntroEditor({ title, onChanged }: { title: OwnerExternalTitle; onChanged: () => void }) {
+  const [start, setStart] = useState(() => formatIntroSec(title.introStartSec));
+  const [end, setEnd] = useState(() => formatIntroSec(title.introEndSec));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const hasWindow = title.introStartSec !== null && title.introStartSec !== undefined
+    && title.introEndSec !== null && title.introEndSec !== undefined;
+
+  async function save(): Promise<void> {
+    const nextStart = parseIntroSec(start);
+    const nextEnd = parseIntroSec(end);
+    if (nextStart === undefined || nextEnd === undefined) {
+      setError('Format invalide : « m:ss » ou secondes (ex. 1:25 ou 85).');
+      return;
+    }
+    if ((nextStart === null) !== (nextEnd === null)) {
+      setError('Renseigne le début ET la fin, ou vide les deux pour effacer.');
+      return;
+    }
+    if (nextStart !== null && nextEnd !== null && nextStart >= nextEnd) {
+      setError('Le début doit précéder la fin.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await ownerApi.vod.external.updateTitle(title.id, { introStartSec: nextStart, introEndSec: nextEnd });
+      setError(null);
+      onChanged();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Enregistrement impossible.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-border/70 bg-surface-2/40 p-2.5">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-semibold">Intro :</span>
+        {hasWindow ? (
+          <span className="text-xs text-muted">{formatIntroSec(title.introStartSec)} → {formatIntroSec(title.introEndSec)}</span>
+        ) : (
+          <span className="text-xs text-muted">non renseignée (pas de bouton « Sauter l’intro »)</span>
+        )}
+        <span className="flex-1" />
+        <label className="flex items-center gap-1 text-xs text-muted">
+          Début
+          <input
+            value={start}
+            onChange={(event) => setStart(event.target.value)}
+            placeholder="1:25"
+            inputMode="numeric"
+            className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-sm font-mono"
+          />
+        </label>
+        <label className="flex items-center gap-1 text-xs text-muted">
+          Fin
+          <input
+            value={end}
+            onChange={(event) => setEnd(event.target.value)}
+            placeholder="2:10"
+            inputMode="numeric"
+            className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-sm font-mono"
+          />
+        </label>
+        <button type="button" className="btn" disabled={busy} onClick={() => void save()}>
+          {busy ? '…' : 'Enregistrer'}
+        </button>
+      </div>
+      {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
+    </div>
+  );
+}
+
 // Panneau du bot d'import : compteurs de la file, découverte des nouveautés
 // (page 1 des listings) et traitement manuel d'un lot sans attendre le cron.
 function BotPanel({ onChanged }: { onChanged: () => void }) {
@@ -304,6 +400,7 @@ export function ExternalTitlesSection() {
                     Supprimer
                   </button>
                 </div>
+                <IntroEditor key={`${title.id}:${title.introStartSec ?? ''}:${title.introEndSec ?? ''}`} title={title} onChanged={() => { void reload(); }} />
                 <ul className="mt-2 space-y-1.5">
                   {title.sources.map((source) => (
                     <li key={source.id} className={`flex flex-wrap items-center gap-2 text-sm ${source.isActive ? '' : 'opacity-60'}`}>

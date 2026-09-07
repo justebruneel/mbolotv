@@ -696,7 +696,7 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const [titles, total] = await Promise.all([
-      env.db.query(env, `SELECT t.id, t.site, t."siteRef", t.title, t.year, t."posterUrl", t."isVisible", t."sortOrder" FROM "ExternalTitle" t ${where} ORDER BY t."sortOrder" ASC, t."createdAt" DESC LIMIT ${limit} OFFSET ${offset}`, params),
+      env.db.query(env, `SELECT t.id, t.site, t."siteRef", t.title, t.year, t."posterUrl", t."isVisible", t."sortOrder", t."introStartSec", t."introEndSec" FROM "ExternalTitle" t ${where} ORDER BY t."sortOrder" ASC, t."createdAt" DESC LIMIT ${limit} OFFSET ${offset}`, params),
       env.db.query(env, `SELECT COUNT(*)::int AS count FROM "ExternalTitle" t ${where}`, params),
     ]);
     const ids = titles.rows.map((row) => row.id);
@@ -733,6 +733,21 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     if (body.posterUrl !== undefined) updates.posterUrl = typeof body.posterUrl === 'string' && body.posterUrl.trim() ? body.posterUrl.trim() : null;
     if (body.isVisible !== undefined) updates.isVisible = Boolean(body.isVisible);
     if (body.sortOrder !== undefined) updates.sortOrder = Math.max(0, Number(body.sortOrder) || 0);
+    // Fenêtre d'intro en secondes (null = efface). Le Player ignore toute
+    // fenêtre invalide, mais on refuse le cas début >= fin quand les deux
+    // bornes sont renseignées.
+    for (const key of ['introStartSec', 'introEndSec']) {
+      if (body[key] === undefined) continue;
+      if (body[key] === null) { updates[key] = null; continue; }
+      const value = Number(body[key]);
+      if (!Number.isFinite(value) || value < 0 || value > 6 * 3600) return ctx.fail(400, 'Intro invalide : secondes entre 0 et 21600');
+      updates[key] = value;
+    }
+    if (updates.introStartSec !== undefined && updates.introEndSec !== undefined
+      && updates.introStartSec !== null && updates.introEndSec !== null
+      && updates.introStartSec >= updates.introEndSec) {
+      return ctx.fail(400, 'Intro invalide : le début doit précéder la fin');
+    }
     if (Object.keys(updates).length === 0) return ctx.fail(400, 'Aucune modification');
     const rows = await env.db.query(env, `SELECT id FROM "ExternalTitle" WHERE id = $1`, [id]);
     if (rows.rows.length === 0) return ctx.fail(404, 'Titre introuvable');

@@ -281,6 +281,10 @@ model ExternalTitle {
   genres String[] @default([])
   // URL de la fiche d'origine : sert au re-scrapping des titres déjà publiés.
   ficheUrl String?
+  // Fenêtre d'intro (secondes) saisie en console : le Player affiche
+  // « Sauter l'intro » quand la position est dans [début, fin).
+  introStartSec Float?
+  introEndSec Float?
   isVisible Boolean @default(true)
   sortOrder Int @default(0)
   createdAt DateTime @default(now())

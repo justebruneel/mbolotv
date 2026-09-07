@@ -264,6 +264,11 @@ export const externalTitleDetailSchema = z.object({
   cast: z.string().nullable(),
   genres: z.array(z.string()),
   sources: z.array(externalSourcePublicSchema),
+  // Fenêtre d'intro (secondes) saisie en console : le Player affiche
+  // « Sauter l'intro » quand la position est dans [début, fin). Absente (null
+  // ou undefined selon le backend) tant qu'elle n'est pas renseignée.
+  introStartSec: z.number().nullable().optional(),
+  introEndSec: z.number().nullable().optional(),
 });
 export type ExternalTitleDetail = z.infer<typeof externalTitleDetailSchema>;
 // ---- Titres externes (console propriétaire) ----
@@ -293,6 +298,8 @@ export const ownerExternalTitleSchema = z.object({
   posterUrl: z.string().nullable(),
   isVisible: z.boolean(),
   sortOrder: z.number(),
+  introStartSec: z.number().nullable().optional(),
+  introEndSec: z.number().nullable().optional(),
   healthySources: z.number(),
   deadSources: z.number(),
   sources: z.array(ownerExternalSourceSchema),
@@ -334,6 +341,10 @@ export const ownerExternalTitleUpdateSchema = z.object({
   posterUrl: z.string().url().nullable().optional(),
   isVisible: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
+  // Fenêtre d'intro en secondes (null = efface). start < end vérifié côté
+  // serveur quand les deux sont fournis ; sinon le Player ignore la fenêtre.
+  introStartSec: z.number().min(0).max(6 * 3600).nullable().optional(),
+  introEndSec: z.number().min(0).max(6 * 3600).nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, 'Aucune modification');
 export type OwnerExternalTitleUpdateInput = z.infer<typeof ownerExternalTitleUpdateSchema>;
 export const ownerExternalSourceUpdateSchema = z.object({

@@ -112,6 +112,7 @@ export async function findExternalTitleById(env, id) {
     env,
     `SELECT t.id, t.title, t.kind, t.year, t."posterUrl", t."backdropUrl", t."trailerYoutubeId",
       t.synopsis, t."originalTitle", t.duration, t.director, t."cast", t.genres,
+      t."introStartSec", t."introEndSec",
       s.id AS "sourceId", s.host, s.mode, s.versions, s."embedUrl", s."finalUrl",
       s."sortOrder", s."createdAt" AS "sourceCreatedAt"
      FROM "ExternalTitle" t
@@ -138,6 +139,8 @@ export async function findExternalTitleById(env, id) {
     director: first.director ?? null,
     cast: first.cast ?? null,
     genres: first.genres ?? [],
+    introStartSec: first.introStartSec ?? null,
+    introEndSec: first.introEndSec ?? null,
     sources: rows.rows
       .filter((row) => row.sourceId !== null)
       .map((row) => ({ createdAt: row.sourceCreatedAt, ...row }))
