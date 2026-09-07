@@ -752,6 +752,9 @@ export async function scheduled(event, env) {
       // Santé des lecteurs tiers : 8 sources les moins vérifiées, en
       // séquentiel (pas de rafale anti-bot). Voir external.checkExternalBatch.
       console.log("[cron] external:", JSON.stringify(await external.checkExternalBatch(env, 8)));
+      // Backfill des détails (synopsis/genres/…) : petit lot par passage,
+      // les titres remplis sortent de la file (synopsis IS NULL).
+      console.log("[cron] external-resync:", JSON.stringify(await external.resyncExternalMeta(env, 3)));
     } else if (cron === "*/15 * * * *") {
       console.log("[cron] matches:", JSON.stringify(await discoverMatches(env)));
     } else if (cron === "0 5 * * *") {

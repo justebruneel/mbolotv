@@ -434,9 +434,9 @@ function ExternalDetailContent() {
                 )
               )}
               {item.trailerYoutubeId && (
-                trailer.mounted && !trailer.failed ? (
-                  <button type="button" className="btn" onClick={trailer.unmute}>
-                    <Icon.VolumeX size={14} /> {trailer.muted ? 'Activer le son' : 'Couper le son'}
+                trailerActive ? (
+                  <button type="button" className="btn" onClick={trailerMuted ? unmuteTrailer : muteTrailer}>
+                    {trailerMuted ? <><Icon.VolumeX size={14} /> Activer le son</> : <><Icon.Volume2 size={14} /> Couper le son</>}
                   </button>
                 ) : (
                   <Link href={`/vod/yt/${item.trailerYoutubeId}`} className="btn">
@@ -459,12 +459,54 @@ function ExternalDetailContent() {
 
         <div className="mt-4 flex flex-col gap-4 md:flex-row md:gap-6">
           {!playing && item.posterUrl && (
-            <div className="aspect-[2/3] w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-lg sm:w-40">
+            <div className="aspect-[2/3] w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-lg sm:w-40 md:w-44">
               <img src={item.posterUrl} alt={`Affiche de ${item.title}`} className="h-full w-full object-cover" />
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="text-sm leading-relaxed text-muted">Film ajouté via lecteurs tiers, sans publicité.</p>
+            {item.synopsis || (item.genres?.length ?? 0) > 0 || item.duration || item.director || item.cast || item.originalTitle ? (
+              <>
+                {/* Rangée méta façon Netflix : genres en chips + durée —
+                    une seule ligne, cachée si aucune de ces données. */}
+                {(item.genres?.length ?? 0) > 0 || item.duration ? (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {(item.genres ?? []).map((genre) => (
+                      <span key={genre} className="rounded border border-border bg-surface px-2 py-0.5 text-muted">{genre}</span>
+                    ))}
+                    {item.duration && <span className="text-muted">{item.duration}</span>}
+                  </div>
+                ) : null}
+                {item.synopsis && (
+                  <p className="mt-3 text-sm leading-relaxed md:text-[15px]">{item.synopsis}</p>
+                )}
+                {/* Rangée production (réalisateur/acteurs/titre original) :
+                    libellés atténués, valeurs normales, façon fiche Netflix. */}
+                {(item.director || item.cast || item.originalTitle) && (
+                  <dl className="mt-4 space-y-1.5 text-xs md:text-sm">
+                    {item.director && (
+                      <div className="flex gap-2">
+                        <dt className="shrink-0 text-muted">Réalisateur :</dt>
+                        <dd>{item.director}</dd>
+                      </div>
+                    )}
+                    {item.cast && (
+                      <div className="flex gap-2">
+                        <dt className="shrink-0 text-muted">Acteurs :</dt>
+                        <dd>{item.cast}</dd>
+                      </div>
+                    )}
+                    {item.originalTitle && (
+                      <div className="flex gap-2">
+                        <dt className="shrink-0 text-muted">Titre original :</dt>
+                        <dd className="italic">{item.originalTitle}</dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </>
+            ) : (
+              <p className="text-sm leading-relaxed text-muted">Film ajouté via lecteurs tiers, sans publicité.</p>
+            )}
           </div>
         </div>
       </div>

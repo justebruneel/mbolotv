@@ -269,6 +269,16 @@ model ExternalTitle {
   posterUrl String?
   backdropUrl String?
   trailerYoutubeId String?
+  // Détails « façon Netflix » extraits par le scraper (tout null-able : la
+  // fiche source ne les fournit pas toujours ; l'UI masque ce qui manque).
+  synopsis String?
+  originalTitle String?
+  duration String?
+  director String?
+  cast String?
+  genres String[] @default([])
+  // URL de la fiche d'origine : sert au re-scrapping des titres déjà publiés.
+  ficheUrl String?
   isVisible Boolean @default(true)
   sortOrder Int @default(0)
   createdAt DateTime @default(now())

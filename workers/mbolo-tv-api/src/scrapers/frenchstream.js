@@ -75,6 +75,106 @@ export function parseYear(html) {
   return null;
 }
 
+/* ---------------------------------------------------------------------------
+ * Détails façon Netflix (synopsis, genres, durée, réalisateur, acteurs, titre
+ * original) : parseurs DÉFENSIFS — chaque champ tente plusieurs sources (liste
+ * <li> libellée, data-*, meta og:description) et retombe sur null si absent :
+ * l'UI masque ce qui manque, jamais de planter ni de texte parasite. Site non
+ * interrogeable ici (anti-bot) : d'où le multi-sources et le repli systématique.
+ * ------------------------------------------------------------------------- */
+
+/** Décode les entités HTML courantes et nettoie le texte extrait. */
+function cleanText(html) {
+  return String(html ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&#0?39;|&apos;|&rsquo;/g, "'")
+    .replace(/&quot;|&ldquo;|&rdquo;/g, '"')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&laquo;|&raquo;/g, ' ')
+    .replace(/&egrave;|&Egrave;/g, 'è')
+    .replace(/&eacute;|&Eacute;/g, 'é')
+    .replace(/&agrave;|&Agrave;/g, 'à')
+    .replace(/&ccedil;|&Ccedil;/g, 'ç')
+    .replace(/&atilde;|&tilde;|&ntilde;/g, ' ')
+    .replace(/&#(\d+);/g, (_m, code) => {
+      try { return String.fromCharCode(Number(code)); } catch { return ''; }
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const MAX_FIELD_LENGTH = 400;
+const MAX_SYNOPSIS_LENGTH = 1_500;
+
+/** Ligne « Label : valeur » dans un <li> de la fiche (valeur = texte nu ou
+ *  suite de liens séparés par des virgules). Bornée, null si introuvable. */
+function labeledField(source, label) {
+  const re = new RegExp(
+    `<li[^>]*>[\\s\\S]{0,60}?${label}[\\s\\u00a0:]*([\\s\\S]{1,400}?)</li>`,
+    'i',
+  );
+  const match = re.exec(source);
+  if (!match) return null;
+  const value = cleanText(match[1]).slice(0, MAX_FIELD_LENGTH);
+  return value || null;
+}
+
+/** Synopsis : bloc #film-story / .story / .description, repli og:description. */
+function parseSynopsis(source) {
+  for (const selector of ['id="film-story"', 'id="story"', 'class="[^"]*\\bstory\\b[^"]*"', 'class="[^"]*\\bdescription\\b[^"]*"']) {
+    const match = new RegExp(`<div[^>]+${selector}[^>]*>([\\s\\S]{1,4000}?)</div>`, 'i').exec(source);
+    if (match) {
+      const text = cleanText(match[1]).slice(0, MAX_SYNOPSIS_LENGTH);
+      if (text.length >= 20) return text;
+    }
+  }
+  const og = metaContent(source, 'og:description');
+  if (og) {
+    const text = cleanText(og).slice(0, MAX_SYNOPSIS_LENGTH);
+    // og:description d'un film DLE commence parfois par le titre + année :
+    // trop court ou redondant avec le <title> → inutilisable comme synopsis.
+    if (text.length >= 40) return text;
+  }
+  return null;
+}
+
+/** Genres : ligne « Genre(s) : » (liens), repli data-genre, puis tagz de
+ *  film_api (les tags DLE portent souvent les genres). Tableau max 6. */
+function parseGenres(source, tagz) {
+  const fromField = labeledField(source, 'Genres?');
+  if (fromField) {
+    const list = fromField.split(',').map((value) => value.trim()).filter(Boolean).slice(0, 6);
+    if (list.length > 0) return list;
+  }
+  const data = filmDataAttr(source, 'genre');
+  if (data) {
+    const list = cleanText(data).split(',').map((value) => value.trim()).filter(Boolean).slice(0, 6);
+    if (list.length > 0) return list;
+  }
+  if (typeof tagz === 'string' && tagz.trim()) {
+    const list = cleanText(tagz).split(',').map((value) => value.trim()).filter(Boolean).slice(0, 6);
+    if (list.length > 0) return list;
+  }
+  return null;
+}
+
+/** Détails Netflix-like : chaque champ null si non trouvé (UI masque). */
+export function parseDetails(html, meta) {
+  const source = String(html ?? '');
+  const original = filmDataAttr(source, 'original')
+    ?? labeledField(source, 'Titre\\s+original')
+    ?? (typeof meta?.original === 'string' ? cleanText(meta.original) : null);
+  return {
+    synopsis: parseSynopsis(source),
+    originalTitle: original ? original.slice(0, MAX_FIELD_LENGTH) : null,
+    genres: parseGenres(source, meta?.tagz),
+    duration: labeledField(source, 'Dur[ée]e') ?? filmDataAttr(source, 'duree'),
+    director: labeledField(source, 'R[ée]alisateur') ?? filmDataAttr(source, 'realisateur'),
+    cast: labeledField(source, 'Acteurs|Casting') ?? filmDataAttr(source, 'acteurs'),
+  };
+}
+
 export function isSeriesPage(html) {
   const source = String(html ?? '');
   return source.includes('id="serie-data"') || source.includes('data-type="serie"');
@@ -191,8 +291,9 @@ export async function scrapeFiche(env, ficheUrl) {
     posterUrl: meta.affiche || filmDataAttr(fiche.text, 'affiche') || null,
     backdropUrl: meta.affiche2 || filmDataAttr(fiche.text, 'affiche2') || null,
     trailerYoutubeId: meta.trailer || filmDataAttr(fiche.text, 'trailer') || null,
+    ...parseDetails(fiche.text, meta),
     players: merged,
   };
 }
 
-export const _internal = { NEWSID_PATTERN, VERSIONS };
+export const _internal = { NEWSID_PATTERN, VERSIONS, parseDetails, cleanText };

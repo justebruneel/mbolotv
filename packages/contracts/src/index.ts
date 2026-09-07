@@ -196,6 +196,14 @@ export const fichePreviewSchema = z.object({
   posterUrl: z.string().nullable(),
   backdropUrl: z.string().nullable(),
   trailerYoutubeId: z.string().nullable(),
+  // Détails « façon Netflix » (parseurs défensifs : tout null-able/tableau
+  // vide si la fiche ne les fournit pas — l'UI masque ce qui manque).
+  synopsis: z.string().nullable().optional(),
+  originalTitle: z.string().nullable().optional(),
+  duration: z.string().nullable().optional(),
+  director: z.string().nullable().optional(),
+  cast: z.string().nullable().optional(),
+  genres: z.array(z.string()).nullable().optional(),
   players: z.array(fichePlayerSchema),
 });
 export type FichePreview = z.infer<typeof fichePreviewSchema>;
@@ -240,6 +248,14 @@ export const externalTitleDetailSchema = z.object({
   posterUrl: z.string().nullable(),
   backdropUrl: z.string().nullable(),
   trailerYoutubeId: z.string().nullable(),
+  // Détails « façon Netflix » : null/vide tant que le titre n'a pas été
+  // re-scrapé (backfill) — l'UI masque ce qui manque.
+  synopsis: z.string().nullable(),
+  originalTitle: z.string().nullable(),
+  duration: z.string().nullable(),
+  director: z.string().nullable(),
+  cast: z.string().nullable(),
+  genres: z.array(z.string()),
   sources: z.array(externalSourcePublicSchema),
 });
 export type ExternalTitleDetail = z.infer<typeof externalTitleDetailSchema>;

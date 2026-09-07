@@ -288,6 +288,12 @@ export class VodService {
       posterUrl: row.posterUrl,
       backdropUrl: row.backdropUrl,
       trailerYoutubeId: row.trailerYoutubeId,
+      synopsis: row.synopsis,
+      originalTitle: row.originalTitle,
+      duration: row.duration,
+      director: row.director,
+      cast: row.cast,
+      genres: row.genres,
       sources: row.sources.map((source) => ({ id: source.id, host: source.host, mode: publicExternalSourceMode(source.mode as ExternalSourceMode, source.host), versions: source.versions, playRef: source.finalUrl ?? source.embedUrl })),
     };
   }

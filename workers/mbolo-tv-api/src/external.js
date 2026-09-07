@@ -2,6 +2,7 @@
 // La lecture passe par /api/x/play (résolution au clic) — ici on ne sert que
 // des métas et des références de lecture (finalUrl ?? embedUrl).
 import { SUPPORTED_HOSTS, checkEmbedPage, checkSource } from './extractors/index.js';
+import { REGISTRY as FICHE_ADAPTERS } from './scrapers/index.js';
 
 function iso(value) {
   return value ? new Date(value).toISOString() : null;
@@ -98,8 +99,9 @@ export async function findExternalTitleById(env, id) {
   const rows = await env.db.query(
     env,
     `SELECT t.id, t.title, t.year, t."posterUrl", t."backdropUrl", t."trailerYoutubeId",
+      t.synopsis, t."originalTitle", t.duration, t.director, t."cast", t.genres,
       s.id AS "sourceId", s.host, s.mode, s.versions, s."embedUrl", s."finalUrl",
-      s."sortOrder", s."createdAt"
+      s."sortOrder" AS "sourceSortOrder", s."createdAt" AS "sourceCreatedAt"
      FROM "ExternalTitle" t
      LEFT JOIN "ExternalSource" s
        ON s."titleId" = t.id AND s."isActive" AND s."lastStatus" IN ('OK','UNKNOWN')
@@ -116,12 +118,71 @@ export async function findExternalTitleById(env, id) {
     posterUrl: first.posterUrl ?? null,
     backdropUrl: first.backdropUrl ?? null,
     trailerYoutubeId: first.trailerYoutubeId ?? null,
+    // Détails « façon Netflix » : tout null-able, l'UI masque ce qui manque.
+    synopsis: first.synopsis ?? null,
+    originalTitle: first.originalTitle ?? null,
+    duration: first.duration ?? null,
+    director: first.director ?? null,
+    cast: first.cast ?? null,
+    genres: first.genres ?? [],
     sources: rows.rows
       .filter((row) => row.sourceId !== null)
-      .map((row) => ({ sortOrder: row.sortOrder, createdAt: row.createdAt, ...row }))
+      .map((row) => ({ sortOrder: row.sourceSortOrder, createdAt: row.sourceCreatedAt, ...row }))
       .sort(sourceOrder)
       .map((row) => serializeSource({ id: row.sourceId, host: row.host, mode: row.mode, versions: row.versions, embedUrl: row.embedUrl, finalUrl: row.finalUrl })),
   };
+}
+
+/**
+ * Backfill des détails « façon Netflix » : re-scrape les N titres les plus
+ * anciens dont le synopsis est vide et dont on connaît la ficheUrl (stockée
+ * au publish, ou devinée via BASE_CANDIDATES pour les imports antérieurs).
+ * Appelé par POST /api/owner/vod/external/resync (console) et piggybacké
+ * sur le cron santé (petit lot séquentiel, pas de rafale anti-bot).
+ */
+export async function resyncExternalMeta(env, limit = 4) {
+  const bases = String(env.EXTERNAL_FICHE_BASES ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const rows = await env.db.query(
+    env,
+    `SELECT t.id, t."siteRef", t."ficheUrl" FROM "ExternalTitle" t
+     WHERE t."isVisible" AND t.synopsis IS NULL
+     ORDER BY t."createdAt" ASC LIMIT $1`,
+    [Math.min(Math.max(1, Number(limit) || 4), 20)],
+  );
+  const summary = { scanned: rows.rows.length, updated: 0, failed: 0 };
+  for (const row of rows.rows) {
+    // URL de fiche : stockée au publish, sinon devinée depuis les bases
+    // candidates (les newsid sont globaux aux domaines du site).
+    const ficheUrl = row.ficheUrl
+      ?? (row.siteRef && bases.length > 0 ? `${bases[0]}/index.php?newsid=${row.siteRef}` : null);
+    if (!ficheUrl) { summary.failed += 1; continue; }
+    try {
+      const adapter = ficheAdapterFor(ficheUrl);
+      if (!adapter) { summary.failed += 1; continue; }
+      const preview = await adapter.scrapeFiche(env, ficheUrl);
+      await env.db.query(
+        env,
+        `UPDATE "ExternalTitle" SET synopsis = $2, "originalTitle" = $3, duration = $4,
+           director = $5, "cast" = $6, genres = $7, "ficheUrl" = $8
+         WHERE id = $1 AND synopsis IS NULL`,
+        [row.id, preview.synopsis ?? null, preview.originalTitle ?? null, preview.duration ?? null,
+          preview.director ?? null, preview.cast ?? null, preview.genres ?? [], ficheUrl],
+      );
+      summary.updated += 1;
+    } catch {
+      summary.failed += 1;
+    }
+  }
+  return summary;
+}
+
+/** Adapter de scraper pour une URL de fiche (null si site inconnu). */
+function ficheAdapterFor(url) {
+  const value = String(url ?? '').trim();
+  return FICHE_ADAPTERS.find((entry) => entry.matchUrl(value) !== null) ?? null;
 }
 
 /**
@@ -176,4 +237,4 @@ export async function checkExternalBatch(env, limit = 8) {
   return summary;
 }
 
-export const _internal = { iso, effectiveSourceMode, serializeSource, versionRank, sourceOrder };
+export const _internal = { iso, effectiveSourceMode, serializeSource, versionRank, sourceOrder, resyncExternalMeta };

@@ -5,6 +5,7 @@
 import { slugify } from './normalize.js';
 import { checkEmbedPage, checkSource, SUPPORTED_HOSTS } from './extractors/index.js';
 import { previewFiche, readCachedPreview, serveFichePreview } from './scrapers/index.js';
+import { resyncExternalMeta } from './external.js';
 
 const KINDS = new Set(['MOVIE', 'SERIES', 'BOTH']);
 const CHANNEL_ID_RE = /^UC[A-Za-z0-9_-]{22}$/;
@@ -574,12 +575,26 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
       : { rows: [] };
     if (existing.rows.length > 0) {
       titleId = existing.rows[0].id;
-      await env.db.query(env, `UPDATE "ExternalTitle" SET title = $2, year = $3, "posterUrl" = $4 WHERE id = $1`, [titleId, title, year, posterUrl]);
+      // Re-publish d'un titre existant : les détails sont rafraîchis aussi
+      // (le scraper re-scrappe la fiche) — synopsis/genres récupérés sans
+      // devoir supprimer/recréer le titre et ses sources.
+      await env.db.query(env,
+        `UPDATE "ExternalTitle" SET title = $2, year = $3, "posterUrl" = $4, "backdropUrl" = $5, "trailerYoutubeId" = $6,
+           synopsis = $7, "originalTitle" = $8, duration = $9, director = $10, "cast" = $11, genres = $12, "ficheUrl" = $13
+         WHERE id = $1`,
+        [titleId, title, year, posterUrl, preview.backdropUrl, preview.trailerYoutubeId,
+          preview.synopsis ?? null, preview.originalTitle ?? null, preview.duration ?? null, preview.director ?? null, preview.cast ?? null,
+          preview.genres ?? [], preview.ficheUrl ?? null],
+      );
     } else {
       titleId = crypto.randomUUID();
       await env.db.query(env,
-        `INSERT INTO "ExternalTitle" (id, site, "siteRef", title, year, "posterUrl", "backdropUrl", "trailerYoutubeId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [titleId, preview.site, siteRef, title, year, posterUrl, preview.backdropUrl, preview.trailerYoutubeId],
+        `INSERT INTO "ExternalTitle" (id, site, "siteRef", title, year, "posterUrl", "backdropUrl", "trailerYoutubeId",
+           synopsis, "originalTitle", duration, director, "cast", genres, "ficheUrl")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [titleId, preview.site, siteRef, title, year, posterUrl, preview.backdropUrl, preview.trailerYoutubeId,
+          preview.synopsis ?? null, preview.originalTitle ?? null, preview.duration ?? null, preview.director ?? null, preview.cast ?? null,
+          preview.genres ?? [], preview.ficheUrl ?? null],
       );
     }
     const known = await env.db.query(env, `SELECT host, "embedUrl" FROM "ExternalSource" WHERE "titleId" = $1`, [titleId]);
@@ -607,6 +622,16 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
     }
     await audit(ctx, owner.userId, 'vod.external_publish', 'external_title', titleId, { site: preview.site, siteRef, inserted, rejected: rejected.length });
     return ctx.json({ titleId, title, seen, inserted, skipped, pending: pending.length, rejected });
+  }
+
+  // Backfill des détails (synopsis/genres/…) des titres déjà publiés :
+  // re-scrape la fiche d'origine (ficheUrl stockée) pour remplir les colonnes
+  // vides — utiles aux titres importés avant l'ajout des détails.
+  if (path === '/api/owner/vod/external/resync' && method === 'POST') {
+    const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 4), 20);
+    const summary = await resyncExternalMeta(env, limit);
+    await audit(ctx, owner.userId, 'vod.external_resync', 'external_title', null, summary);
+    return ctx.json(summary);
   }
 
   // Liste des titres externes + statut de leurs sources.
