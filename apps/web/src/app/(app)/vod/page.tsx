@@ -568,15 +568,20 @@ function VodPageContent() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-2" role="tablist" aria-label="Type de contenu">
+      {/* Onglets Films / Séries façon Netflix : navigation ancrée en haut de
+          page, texte seul, l'onglet actif en gras blanc, l'inactif atténué —
+          pas de pills (Netflix n'en a pas), la hiérarchie passe par le poids. */}
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <nav className="flex items-center gap-5" role="tablist" aria-label="Type de contenu">
           {(['MOVIE', 'SERIES'] as const).map((value) => (
             <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => switchTab(value)}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${tab === value ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text'}`}>
+              className={`relative pb-1 text-lg font-bold transition md:text-xl ${tab === value ? 'text-foreground' : 'text-muted hover:text-foreground/70'}`}>
               {value === 'MOVIE' ? 'Films' : 'Séries'}
+              {/* Soulignement accent sous l'onglet actif (marqueur Netflix). */}
+              {tab === value && <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-accent" aria-hidden />}
             </button>
           ))}
-        </div>
+        </nav>
         {(category || browseAll || browseExternal || dossier) && (
           <button type="button" onClick={() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); openDossier(null); }} className="btn">
             <Icon.ChevronLeft size={14} /> Accueil {tab === 'MOVIE' ? 'films' : 'séries'}
