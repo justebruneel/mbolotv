@@ -214,6 +214,8 @@ export const externalTitlePublicSchema = z.object({
   title: z.string(),
   year: z.number().nullable(),
   posterUrl: z.string().nullable(),
+  // MOVIE | SERIES : les onglets Films/Séries affichent chacun leur type.
+  kind: z.enum(['MOVIE', 'SERIES']).default('MOVIE'),
   healthySources: z.number(),
 });
 export type ExternalTitlePublic = z.infer<typeof externalTitlePublicSchema>;
@@ -237,6 +239,9 @@ export const externalSourcePublicSchema = z.object({
   host: z.string(),
   mode: externalSourceModeSchema,
   versions: z.array(z.string()),
+  // Séries uniquement : numéro d'épisode (stocké dans sortOrder par le bot).
+  // Films : null.
+  episode: z.number().nullable().default(null),
   // Référence de lecture : /api/x/play pour direct, URL embed (iframe) sinon.
   playRef: z.string(),
 });
@@ -244,6 +249,8 @@ export type ExternalSourcePublic = z.infer<typeof externalSourcePublicSchema>;
 export const externalTitleDetailSchema = z.object({
   id: z.string(),
   title: z.string(),
+  // MOVIE | SERIES : détermine l'affichage (liste d'épisodes vs lecture directe).
+  kind: z.enum(['MOVIE', 'SERIES']).default('MOVIE'),
   year: z.number().nullable(),
   posterUrl: z.string().nullable(),
   backdropUrl: z.string().nullable(),

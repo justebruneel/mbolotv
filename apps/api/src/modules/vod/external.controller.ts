@@ -12,11 +12,13 @@ export class ExternalController {
   @Get()
   list(
     @Query('q') q?: string,
+    @Query('kind') kind?: 'MOVIE' | 'SERIES',
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): ReturnType<VodService['listExternalTitles']> {
     return this.vod.listExternalTitles({
       q: q ?? undefined,
+      kind: kind === 'MOVIE' || kind === 'SERIES' ? kind : undefined,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });

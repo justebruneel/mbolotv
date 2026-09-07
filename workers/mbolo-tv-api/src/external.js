@@ -24,13 +24,22 @@ function serializeSource(row) {
     host: row.host,
     mode: effectiveSourceMode(row),
     versions: row.versions ?? [],
+    // Séries : le numéro d'épisode est stocké dans sortOrder par le bot
+    // (ordre = épisodes croissants). Films : ordre console, sans sémantique.
+    episode: row.episode ?? null,
     playRef: row.finalUrl ?? row.embedUrl,
   };
 }
 
-export async function listExternalTitles(env, { q, limit = 48, offset = 0 } = {}) {
+export async function listExternalTitles(env, { q, kind, limit = 48, offset = 0 } = {}) {
   const params = [];
   const conditions = [`t."isVisible" = true`];
+  // Filtre MOVIE/SERIES : les onglets Films et Séries de l'app ne doivent pas
+  // mélanger les deux (le bot pré-classe via le listing films/s-tv).
+  if (kind === 'MOVIE' || kind === 'SERIES') {
+    params.push(kind);
+    conditions.push(`t.kind = $${params.length}`);
+  }
   if (q && String(q).trim()) {
     params.push(`%${String(q).trim()}%`);
     conditions.push(`t.title ILIKE $${params.length}`);
@@ -41,7 +50,7 @@ export async function listExternalTitles(env, { q, limit = 48, offset = 0 } = {}
   const [rows, counts] = await Promise.all([
     env.db.query(
       env,
-      `SELECT t.id, t.title, t.year, t."posterUrl",
+      `SELECT t.id, t.title, t.year, t."posterUrl", t.kind,
         (SELECT COUNT(*)::int FROM "ExternalSource" s
           WHERE s."titleId" = t.id AND s."isActive" AND s."lastStatus" IN ('OK','UNKNOWN')) AS "healthySources"
        FROM "ExternalTitle" t ${where}
@@ -57,12 +66,15 @@ export async function listExternalTitles(env, { q, limit = 48, offset = 0 } = {}
       title: row.title,
       year: row.year ?? null,
       posterUrl: row.posterUrl ?? null,
+      kind: row.kind === 'SERIES' ? 'SERIES' : 'MOVIE',
       healthySources: row.healthySources ?? 0,
     })),
     total,
     hasMore: offsetParam + rows.rows.length < total,
   };
 }
+
+// (listExternalTitles ci-dessous inclut le champ kind par titre.)
 
 // Priorité de version dans une liste de lecteurs (le champ `versions` vient
 // du scraper : 'default' | 'vostfr' | 'vfq' | 'vff'). Le public veut le
@@ -98,10 +110,10 @@ function sourceOrder(a, b) {
 export async function findExternalTitleById(env, id) {
   const rows = await env.db.query(
     env,
-    `SELECT t.id, t.title, t.year, t."posterUrl", t."backdropUrl", t."trailerYoutubeId",
+    `SELECT t.id, t.title, t.kind, t.year, t."posterUrl", t."backdropUrl", t."trailerYoutubeId",
       t.synopsis, t."originalTitle", t.duration, t.director, t."cast", t.genres,
       s.id AS "sourceId", s.host, s.mode, s.versions, s."embedUrl", s."finalUrl",
-      s."sortOrder" AS "sourceSortOrder", s."createdAt" AS "sourceCreatedAt"
+      s."sortOrder", s."createdAt" AS "sourceCreatedAt"
      FROM "ExternalTitle" t
      LEFT JOIN "ExternalSource" s
        ON s."titleId" = t.id AND s."isActive" AND s."lastStatus" IN ('OK','UNKNOWN')
@@ -114,6 +126,7 @@ export async function findExternalTitleById(env, id) {
   return {
     id: first.id,
     title: first.title,
+    kind: first.kind === 'SERIES' ? 'SERIES' : 'MOVIE',
     year: first.year ?? null,
     posterUrl: first.posterUrl ?? null,
     backdropUrl: first.backdropUrl ?? null,
@@ -127,9 +140,9 @@ export async function findExternalTitleById(env, id) {
     genres: first.genres ?? [],
     sources: rows.rows
       .filter((row) => row.sourceId !== null)
-      .map((row) => ({ sortOrder: row.sourceSortOrder, createdAt: row.sourceCreatedAt, ...row }))
+      .map((row) => ({ createdAt: row.sourceCreatedAt, ...row }))
       .sort(sourceOrder)
-      .map((row) => serializeSource({ id: row.sourceId, host: row.host, mode: row.mode, versions: row.versions, embedUrl: row.embedUrl, finalUrl: row.finalUrl })),
+      .map((row) => serializeSource({ id: row.sourceId, host: row.host, mode: row.mode, versions: row.versions, embedUrl: row.embedUrl, finalUrl: row.finalUrl, episode: first.kind === 'SERIES' ? row.sortOrder : null })),
   };
 }
 

@@ -519,13 +519,14 @@ export function useExternalPlay(host: string, id: string, enabled = true) {
 
 // Titres externes (lecteurs tiers) : catalogue public visible + détail.
 // Miroir de useInfiniteVod (pagination par offset serveur).
-export function useInfiniteExternalTitles(q = '', pageSize = 48) {
+export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' | 'SERIES') {
   const trimmed = q.trim();
   return useInfiniteQuery({
-    queryKey: ['x-titles', trimmed],
+    queryKey: ['x-titles', trimmed, kind ?? 'all'],
     queryFn: ({ pageParam }) =>
       apiGet<ExternalTitlesResponse>('/x/titles', {
         ...(trimmed ? { q: trimmed } : {}),
+        ...(kind ? { kind } : {}),
         limit: pageSize,
         offset: pageParam,
       }),

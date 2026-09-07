@@ -254,10 +254,14 @@ export class VodService {
 
   // Titres externes publics (lecteurs tiers) : miroir du Worker (external.js).
   // La résolution/lecture reste côté Worker (/api/x/play).
-  async listExternalTitles({ q, limit = 48, offset = 0 }: { q?: string; limit?: number; offset?: number }): Promise<ExternalTitlesResponse> {
+  async listExternalTitles({ q, kind, limit = 48, offset = 0 }: { q?: string; kind?: 'MOVIE' | 'SERIES'; limit?: number; offset?: number }): Promise<ExternalTitlesResponse> {
     const safeLimit = Math.min(Math.max(1, Number(limit) || 48), 100);
     const safeOffset = Math.max(0, Number(offset) || 0);
-    const where = { isVisible: true, ...(q?.trim() ? { title: { contains: q.trim(), mode: 'insensitive' as const } } : {}) };
+    const where = {
+      isVisible: true,
+      ...(kind === 'MOVIE' || kind === 'SERIES' ? { kind } : {}),
+      ...(q?.trim() ? { title: { contains: q.trim(), mode: 'insensitive' as const } } : {}),
+    };
     const [rows, total] = await Promise.all([
       this.prisma.externalTitle.findMany({
         where,
@@ -269,7 +273,7 @@ export class VodService {
       this.prisma.externalTitle.count({ where }),
     ]);
     return {
-      items: rows.map((row) => ({ id: row.id, title: row.title, year: row.year, posterUrl: row.posterUrl, healthySources: row.sources.length })),
+      items: rows.map((row) => ({ id: row.id, title: row.title, year: row.year, posterUrl: row.posterUrl, kind: row.kind === 'SERIES' ? 'SERIES' as const : 'MOVIE' as const, healthySources: row.sources.length })),
       total,
       hasMore: safeOffset + rows.length < total,
     };
@@ -284,6 +288,7 @@ export class VodService {
     return {
       id: row.id,
       title: row.title,
+      kind: row.kind === 'SERIES' ? ('SERIES' as const) : ('MOVIE' as const),
       year: row.year,
       posterUrl: row.posterUrl,
       backdropUrl: row.backdropUrl,
@@ -294,7 +299,7 @@ export class VodService {
       director: row.director,
       cast: row.cast,
       genres: row.genres,
-      sources: row.sources.map((source) => ({ id: source.id, host: source.host, mode: publicExternalSourceMode(source.mode as ExternalSourceMode, source.host), versions: source.versions, playRef: source.finalUrl ?? source.embedUrl })),
+      sources: row.sources.map((source) => ({ id: source.id, host: source.host, mode: publicExternalSourceMode(source.mode as ExternalSourceMode, source.host), versions: source.versions, episode: row.kind === 'SERIES' ? source.sortOrder : null, playRef: source.finalUrl ?? source.embedUrl })),
     };
   }
 }

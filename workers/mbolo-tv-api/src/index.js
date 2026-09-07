@@ -590,6 +590,7 @@ async function route(ctx, url) {
     return ctx.json(
       await external.listExternalTitles(env, {
         q: url.searchParams.get("q") ?? undefined,
+        kind: url.searchParams.get("kind") ?? undefined,
         limit: intParam(url.searchParams.get("limit"), 48, 1, 100),
         offset: intParam(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER),
       }),

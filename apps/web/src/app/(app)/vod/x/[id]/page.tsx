@@ -34,8 +34,35 @@ function ExternalDetailContent() {
   useEffect(() => { clearVod(); }, [clearVod]);
 
   const sources = detailQuery.data?.sources ?? [];
+  // Séries : les sources portent le numéro d'épisode (bot). Sélection par
+  // épisode façon Netflix : on choisit l'épisode, puis la meilleure source
+  // (tri serveur : direct avant iframe, VF d'abord) de CET épisode.
+  const isSeries = detailQuery.data?.kind === 'SERIES';
+  const episodes = useMemo(() => {
+    if (!isSeries) return [];
+    const byNumber = new Map<number, typeof sources>();
+    for (const source of sources) {
+      const key = source.episode ?? 0;
+      const list = byNumber.get(key) ?? [];
+      list.push(source);
+      byNumber.set(key, list);
+    }
+    return [...byNumber.entries()]
+      .filter(([number]) => number > 0)
+      .sort((a, b) => a[0] - b[0])
+      .map(([number, episodeSources]) => ({ number, sources: episodeSources }));
+  }, [isSeries, sources]);
+  // Épisode affiché (null = film, ou série sans numéros exploitables).
+  const [episodeNumber, setEpisodeNumber] = useState<number | null>(null);
+  const activeEpisode = isSeries && episodes.length > 0
+    ? (episodeNumber && episodes.some((entry) => entry.number === episodeNumber) ? episodeNumber : episodes[0].number)
+    : null;
+  // Sources du contexte actif : épisode choisi (série) ou toutes (film).
+  const activeSources = activeEpisode !== null
+    ? (episodes.find((entry) => entry.number === activeEpisode)?.sources ?? sources)
+    : sources;
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const selected = sources[Math.min(selectedIndex, Math.max(0, sources.length - 1))] ?? null;
+  const selected = activeSources[Math.min(selectedIndex, Math.max(0, activeSources.length - 1))] ?? null;
   // Ref de lecture demandée : évite d'afficher un flux résolu pour une
   // sélection précédente après changement de lecteur.
   const [requestedRef, setRequestedRef] = useState<string | null>(null);
@@ -97,7 +124,7 @@ function ExternalDetailContent() {
   // Sélection pilotée par INDEX de la liste triée (VF prioritaire côté API) :
   // le clic Lecture part sur la source d'ordre 0 et descend la liste au besoin.
   const selectedIndexRef = useRef(0);
-  selectedIndexRef.current = Math.min(selectedIndex, Math.max(0, sources.length - 1));
+  selectedIndexRef.current = Math.min(selectedIndex, Math.max(0, activeSources.length - 1));
   const failedRefsRef = useRef<ReadonlySet<string>>(new Set());
   failedRefsRef.current = failedRefs;
   // Position au moment de la bascule de lecteur : un changement de source
@@ -117,9 +144,10 @@ function ExternalDetailContent() {
 
   // Déclaré avant les early-returns (React #310 : nombre de hooks stable).
   const startPlayback = useCallback((): void => {
-    // Le clic Lecture part sur la source d'ordre 0 : l'API trie déjà direct
-    // d'abord puis VF > VOSTFR > default — c'est le « meilleur lecteur ».
-    const source = sources[0];
+    // Le clic Lecture part sur la source d'ordre 0 du contexte actif (épisode
+    // choisi pour une série) : l'API trie déjà direct d'abord puis VF > VOSTFR
+    // > default — c'est le « meilleur lecteur ».
+    const source = activeSources[0];
     if (!source) return;
     if (source.mode === 'iframe') {
       // Un seul lecteur, en iframe : l'utilisateur n'a pas d'alternative.
@@ -138,27 +166,27 @@ function ExternalDetailContent() {
     setAutoSwitching(false);
     launchSource(source, pos);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [sources, progressId, launchSource]);
+  }, [activeSources, progressId, launchSource]);
 
   // Changement de lecteur DEPUIS LE PLAYER (icône serveur) : même position
   // (relue du store, à ~5 s), sans passer par Lecture/Arrêter. Les sources
   // essayées repartent à zéro : c'est un choix explicite de l'utilisateur.
   const handleSourceChange = useCallback((sourceId: string): void => {
-    const source = sources.find((candidate) => candidate.id === sourceId);
+    const source = activeSources.find((candidate) => candidate.id === sourceId);
     if (!source) return;
-    setSelectedIndex(sources.indexOf(source));
+    setSelectedIndex(activeSources.indexOf(source));
     setFailedRefs(new Set());
     setSkippedHost(null);
     setAutoSwitching(false);
     setIframeStarted(false);
     // Purge la résolution du lecteur précédent (playRef obsolète, jetons
     // à usage unique) pour éviter qu'un cache périmé serve au nouveau.
-    for (const played of sources) {
+    for (const played of activeSources) {
       if (played.id !== sourceId) queryClient.removeQueries({ queryKey: ['x-play', played.host, played.playRef] });
     }
     const position = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0;
     launchSource(source, position);
-  }, [sources, progressId, launchSource, queryClient]);
+  }, [activeSources, progressId, launchSource, queryClient]);
 
   const stopPlayback = useCallback((): void => {
     setRequestedRef(null);
@@ -228,7 +256,7 @@ function ExternalDetailContent() {
     const nextFailed = new Set<string>(failedRefsRef.current);
     nextFailed.add(ref);
     // Premier lecteur direct non encore essayé APRÈS celui qui vient d'échouer.
-    const fallback = sources
+    const fallback = activeSources
       .slice(selectedIndexRef.current + 1)
       .find((candidate) => candidate.mode === 'direct' && !nextFailed.has(candidate.playRef)) ?? null;
     setFailedRefs(nextFailed);
@@ -241,10 +269,10 @@ function ExternalDetailContent() {
       return;
     }
     setAutoSwitching(true);
-    setSelectedIndex(sources.indexOf(fallback));
+    setSelectedIndex(activeSources.indexOf(fallback));
     positionAtSwitchRef.current = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0;
     launchSource(fallback, positionAtSwitchRef.current);
-  }, [requestedRef, selected, playQuery.isError, playQuery.isFetching, autoSwitching, sources, progressId, launchSource]);
+  }, [requestedRef, selected, playQuery.isError, playQuery.isFetching, autoSwitching, activeSources, progressId, launchSource]);
 
   if (!id) return <EmptyState title="Contenu introuvable" />;
   if (detailQuery.isLoading) return <div className="flex justify-center py-24"><Spinner /></div>;
@@ -269,7 +297,7 @@ function ExternalDetailContent() {
                 initialTime={startAt}
                 onProgress={handleProgress}
                 onRefreshSource={refreshPlayUrl}
-                sources={sources.map(({ id, host, versions, mode }) => ({ id, host, versions, mode }))}
+                sources={activeSources.map(({ id, host, versions, mode }) => ({ id, host, versions, mode }))}
                 activeSourceId={selected.id}
                 onSourceChange={handleSourceChange}
                 initialVolume={volume}
@@ -358,13 +386,17 @@ function ExternalDetailContent() {
             <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-black/35 to-transparent" />
             <div className="absolute inset-x-0 bottom-0 mx-auto hidden w-full max-w-6xl px-4 pb-6 md:block md:pb-8">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/80">
-                <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">Film</span>
+                <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">{item.kind === 'SERIES' ? 'Série' : 'Film'}</span>
                 {item.year != null && <span>{item.year}</span>}
-                <span>{sources.length} lecteur{sources.length > 1 ? 's' : ''}</span>
+                {activeEpisode !== null ? (
+                  <span>Épisode {activeEpisode} · {activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+                ) : (
+                  <span>{activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+                )}
               </div>
               <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.9),0_0_24px_rgba(0,0,0,0.65)] md:text-5xl">{item.title}</h1>
               <div className="mt-4 flex flex-wrap items-center gap-3">
-                {sources.length > 0 && (
+                {activeSources.length > 0 && (
                   playQuery.isFetching ? (
                     <button type="button" className="btn btn-primary" disabled>
                       <Spinner />
@@ -415,15 +447,52 @@ function ExternalDetailContent() {
       )}
 
       <div className="mx-auto w-full max-w-6xl px-4">
+        {/* SÉRIES : sélecteur d'épisodes façon Netflix — sous le hero, au-dessus
+            des détails. Chaque épisode porte le badge de sa meilleure version
+            (VF d'abord) ; l'épisode en lecture est surligné. Clic = bascule
+            immédiate vers la meilleure source de cet épisode. */}
+        {isSeries && episodes.length > 0 && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Épisodes</h2>
+              <span className="text-xs text-muted">{episodes.length} épisode{episodes.length > 1 ? 's' : ''}</span>
+            </div>
+            <div className="mt-2 grid grid-cols-5 gap-2 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12">
+              {episodes.map((entry) => {
+                const best = entry.sources[0];
+                const active = activeEpisode === entry.number;
+                return (
+                  <button
+                    key={entry.number}
+                    type="button"
+                    onClick={() => { setEpisodeNumber(entry.number); setSelectedIndex(0); setFailedRefs(new Set()); setSkippedHost(null); setAutoSwitching(false); setIframeStarted(false); if (best) { const position = useSettingsStore.getState().vodProgress[progressId]?.position ?? 0; launchSource(best, position); } }}
+                    className={`relative rounded-lg border px-1 py-2.5 text-center text-sm font-bold transition ${active
+                      ? 'border-accent bg-accent text-white'
+                      : 'border-border bg-surface text-foreground hover:border-accent/50'}`}
+                  >
+                    {entry.number}
+                    {best && best.versions.includes('vff') && !active && (
+                      <span className="absolute -right-1 -top-1 rounded-full bg-accent px-1 text-[8px] font-black text-white">VF</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div className="mt-4 md:hidden">
           <p className="text-lg font-bold leading-snug">{item.title}</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             {item.year != null && <span>{item.year}</span>}
-            <span>{sources.length} lecteur{sources.length > 1 ? 's' : ''}</span>
+            {activeEpisode !== null ? (
+              <span>Épisode {activeEpisode} · {activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+            ) : (
+              <span>{activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+            )}
           </div>
           {!playing && (
             <div className="mt-3 flex flex-wrap items-center gap-3">
-              {sources.length > 0 && (
+              {activeSources.length > 0 && (
                 playQuery.isFetching ? (
                   <button type="button" className="btn btn-primary" disabled>
                     <Spinner />

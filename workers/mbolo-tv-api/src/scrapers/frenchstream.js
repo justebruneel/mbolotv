@@ -402,8 +402,9 @@ export function packToPlayers(pack) {
   for (const [packVersion, episodes] of Object.entries(pack)) {
     const version = packVersion === 'vf' ? 'vff' : packVersion === 'vostfr' ? 'vostfr' : 'default';
     if (!episodes || typeof episodes !== 'object') continue;
-    for (const [, hosts] of Object.entries(episodes)) {
+    for (const [episode, hosts] of Object.entries(episodes)) {
       if (!hosts || typeof hosts !== 'object') continue;
+      const episodeNumber = Number(episode) || 0;
       for (const [packHost, embedUrl] of Object.entries(hosts)) {
         if (typeof embedUrl !== 'string' || !/^https?:\/\//.test(embedUrl)) continue;
         const known = EP_HOST_PATTERNS.find((entry) => entry.re.test(embedUrl) || entry.re.test(packHost));
@@ -414,7 +415,7 @@ export function packToPlayers(pack) {
           continue;
         }
         if (merged.length >= 24) continue;
-        merged.push({ host, versions: [version], embedUrl });
+        merged.push({ host, versions: [version], embedUrl, episode: episodeNumber });
       }
     }
   }

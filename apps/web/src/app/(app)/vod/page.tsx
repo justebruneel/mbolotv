@@ -188,7 +188,7 @@ function VodHome({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'
           : kind === 'MOVIE'
             ? <NollywoodOnly />
             : <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />}
-        {kind === 'MOVIE' && <ExternalRail onBrowseAll={onBrowseExternal} />}
+        {<ExternalRail onBrowseAll={onBrowseExternal} kind={kind} />}
       </>
     );
   }
@@ -205,7 +205,7 @@ function VodHome({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'
       {/* Rail « Nouveau sur Mbolo » APRÈS les rangées : il fait écho au hero
           (les derniers ajouts), pas une entrée de catalogue à part. Masqué en
           mode filtré par la page (browseExternal gère la grille complète). */}
-      {kind === 'MOVIE' && <ExternalRail onBrowseAll={onBrowseExternal} />}
+      {<ExternalRail onBrowseAll={onBrowseExternal} kind={kind} />}
     </>
   );
 }
@@ -374,20 +374,20 @@ function MergedYoutubeBrowse({ channelIds, q, hideWhenEmpty = false }: { channel
 // (onglet Films uniquement — pas de kind côté titres externes, tous films
 // v1). « Voir tout » bascule la grille paginée (état local browseExternal,
 // comme browseAll).
-// Rail des titres externes : « Nouveau sur Mbolo » — le nom vend le fait
-// nouveau/ajouté (langage Netflix : « Nouveautés », « Populaire »), pas un
-// jargon interne (« titres externes » ne veut rien dire pour l'utilisateur).
-function ExternalRail({ previewCount = 12, onBrowseAll }: { previewCount?: number; onBrowseAll: () => void }) {
-  const query = useInfiniteExternalTitles('', previewCount);
+// Rail des titres externes : « Nouveau sur Mbolo » (films) / « Séries —
+// Nouveau sur Mbolo » selon l'onglet. Chaque onglet n'affiche que son type.
+function ExternalRail({ previewCount = 12, onBrowseAll, kind }: { previewCount?: number; onBrowseAll: () => void; kind: 'MOVIE' | 'SERIES' }) {
+  const query = useInfiniteExternalTitles('', previewCount, kind);
   if (query.isLoading || query.isError) return null;
   const items = (query.data?.pages[0]?.items ?? []).slice(0, previewCount);
   if (items.length === 0) return null;
-  return <ExternalRow title="Nouveau sur Mbolo" items={items} onSeeAll={onBrowseAll} />;
+  return <ExternalRow title={kind === 'SERIES' ? 'Séries — Nouveau sur Mbolo' : 'Nouveau sur Mbolo'} items={items} onSeeAll={onBrowseAll} />;
 }
 
-// Grille paginée « voir tout » des titres externes (défilement infini).
-function ExternalBrowse({ q }: { q: string }) {
-  const query = useInfiniteExternalTitles(q, PAGE_SIZE);
+// Grille paginée « voir tout » des titres externes (défilement infini),
+// filtrée par le type de l'onglet courant.
+function ExternalBrowse({ q, kind }: { q: string; kind: 'MOVIE' | 'SERIES' }) {
+  const query = useInfiniteExternalTitles(q, PAGE_SIZE, kind);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -420,15 +420,16 @@ function ExternalBrowse({ q }: { q: string }) {
   );
 }
 
-// Section recherche des titres externes (première page, silencieuse si vide).
-function ExternalSearch({ q }: { q: string }) {
-  const query = useInfiniteExternalTitles(q, 12);
+// Section recherche des titres externes (première page, silencieuse si vide),
+// filtrée par le type de l'onglet courant.
+function ExternalSearch({ q, kind }: { q: string; kind: 'MOVIE' | 'SERIES' }) {
+  const query = useInfiniteExternalTitles(q, 12, kind);
   if (query.isLoading || query.isError) return null;
   const items = query.data?.pages[0]?.items ?? [];
   if (items.length === 0) return null;
   return (
     <section className="mt-10" aria-label="Résultats titres externes">
-      <h2 className="mb-3 text-lg font-bold">Titres externes</h2>
+      <h2 className="mb-3 text-lg font-bold">{kind === 'SERIES' ? 'Séries' : 'Films'}</h2>
       <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
         {items.map((item) => <ExternalTile key={item.id} item={item} />)}
       </div>
@@ -616,16 +617,16 @@ function VodPageContent() {
             ? <VodHome kind={tab} onBrowseExternal={() => setBrowseExternal(true)} folders={folders} />
             : browseExternal && !q
               ? <>
-                  <h2 className="mb-4 text-xl font-bold">Titres externes</h2>
-                  <ExternalBrowse q="" />
+                  <h2 className="mb-4 text-xl font-bold">{tab === 'SERIES' ? 'Séries' : 'Films'} — tout le catalogue</h2>
+                  <ExternalBrowse q="" kind={tab} />
                 </>
               : q && (folders.length > 0 || tab === 'MOVIE') ? (
                 // Recherche façon Netflix : le catalogue VOD d'abord, puis les
                 // collections des dossiers (recherche serveur YouTube), puis
-                // les titres externes.
+                // les titres externes du type de l'onglet.
                 <>
                   <VodBrowse kind={tab} category={category} q={q} />
-                  <ExternalSearch q={q} />
+                  <ExternalSearch q={q} kind={tab} />
                   {searchFolders.length > 0
                     ? searchFolders.map((section) => (
                         <section key={section.id} className="mt-10" aria-label={`Résultats ${section.name}`}>
