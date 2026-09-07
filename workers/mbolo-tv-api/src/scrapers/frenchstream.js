@@ -106,12 +106,29 @@ function cleanText(html) {
 
 const MAX_FIELD_LENGTH = 400;
 const MAX_SYNOPSIS_LENGTH = 1_500;
+// Structure réelle de la fiche (vérifiée live sur french-stream.one) :
+//   <li><span>Label:</span> <a>valeur</a>, <a>valeur</a></li>
+// La liste des acteurs dépasse souvent 400 caractères de HTML (liens
+// xfsearch par acteur) : bornes généreuses pour le match, la valeur finale
+// restant bornée par MAX_FIELD_LENGTH au nettoyage.
+const MAX_LI_MATCH = 2_000;
 
-/** Ligne « Label : valeur » dans un <li> de la fiche (valeur = texte nu ou
- *  suite de liens séparés par des virgules). Bornée, null si introuvable. */
+/** Ligne « Label : valeur » d'un <li> de la fiche. Deux formes supportées :
+ *  - <li><span>Label:</span> valeur…</li>  (forme réelle du site) ;
+ *  - <li> Label : valeur…</li>             (variantes DLE).
+ *  Bornée, null si introuvable. */
 function labeledField(source, label) {
+  const spanRe = new RegExp(
+    `<li[^>]*>\\s*<span[^>]*>\\s*${label}\\s*:??\\s*</span>([\\s\\S]{1,${MAX_LI_MATCH}}?)</li>`,
+    'i',
+  );
+  const spanMatch = spanRe.exec(source);
+  if (spanMatch) {
+    const value = cleanText(spanMatch[1]).slice(0, MAX_FIELD_LENGTH);
+    if (value) return value;
+  }
   const re = new RegExp(
-    `<li[^>]*>[\\s\\S]{0,60}?${label}[\\s\\u00a0:]*([\\s\\S]{1,400}?)</li>`,
+    `<li[^>]*>[\\s\\S]{0,60}?${label}[\\s\\u00a0:]*([\\s\\S]{1,${MAX_LI_MATCH}}?)</li>`,
     'i',
   );
   const match = re.exec(source);
@@ -120,8 +137,18 @@ function labeledField(source, label) {
   return value || null;
 }
 
-/** Synopsis : bloc #film-story / .story / .description, repli og:description. */
+/** Synopsis : bloc .fdesc (forme réelle : préfixe SEO « Résumé du film X en
+ *  streaming … sans inscription » avant le vrai texte, à retirer), puis les
+ *  conteneurs #film-story/.story/.description, puis og:description. */
 function parseSynopsis(source) {
+  const fdesc = new RegExp(`<div[^>]+class="[^"]*\\bfdesc\\b[^"]*"[^>]*>([\\s\\S]{1,4000}?)</div>`, 'i').exec(source);
+  if (fdesc) {
+    const text = cleanText(fdesc[1])
+      .slice(0, MAX_SYNOPSIS_LENGTH + 200)
+      .replace(/^Résumé du film .*?sans inscription\s*/i, '')
+      .slice(0, MAX_SYNOPSIS_LENGTH);
+    if (text.length >= 20) return text;
+  }
   for (const selector of ['id="film-story"', 'id="story"', 'class="[^"]*\\bstory\\b[^"]*"', 'class="[^"]*\\bdescription\\b[^"]*"']) {
     const match = new RegExp(`<div[^>]+${selector}[^>]*>([\\s\\S]{1,4000}?)</div>`, 'i').exec(source);
     if (match) {
@@ -171,7 +198,7 @@ export function parseDetails(html, meta) {
     genres: parseGenres(source, meta?.tagz),
     duration: labeledField(source, 'Dur[ée]e') ?? filmDataAttr(source, 'duree'),
     director: labeledField(source, 'R[ée]alisateur') ?? filmDataAttr(source, 'realisateur'),
-    cast: labeledField(source, 'Acteurs|Casting') ?? filmDataAttr(source, 'acteurs'),
+    cast: labeledField(source, '(?:Acteurs|Casting)') ?? filmDataAttr(source, 'acteurs'),
   };
 }
 
