@@ -574,7 +574,14 @@ function VodPageContent() {
           catégories — l'actif blanc + soulignement accent, l'inactif
           atténué. Séparés des catégories par un « | » discret (rôles
           différents : collections vs filtres). */}
-      {!dossier && (folders.length > 0 || (categories.data?.length ?? 0) > 1) && (
+      {/* Barre dossiers + catégories : ACCUEIL de l'onglet uniquement. Dans
+          les vues filtrées (dossier ouvert, catégorie, « voir tout »), ces
+          filtres n'opèrent plus sur le contenu affiché (une grille de
+          dossier n'est pas filtrable par catégorie) — les garder affichés
+          avec un élément actif en surface = un doublon au-dessus de la
+          grille + des boutons sans effet. Le bouton « ← Accueil » en tête
+          de page suffit à revenir. */}
+      {!dossier && !category && !browseAll && !browseExternal && (folders.length > 0 || (categories.data?.length ?? 0) > 1) && (
         <div className="mb-5 flex items-center gap-4 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {folders.map((folder) => (
             <button key={folder.id} type="button" onClick={() => openDossier(folder.slug)}
