@@ -55,6 +55,9 @@ function ExternalDetailContent() {
   // Préfixe x: : espace d'ids propre, sans collision avec les ids VodItem
   // Xtream (ResumeRow route le préfixe vers /vod/x/<id>).
   const progressId = useMemo(() => `x:${id}`, [id]);
+  // Distribution repliée sur mobile (Netflix replie aussi le casting) :
+  // ouverte par défaut sur desktop — les breakpoints gèrent l'affichage.
+  const [castOpen, setCastOpen] = useState(false);
   // Favori titre externe : store local pur (jamais servi — même motif que
   // Nollywood), clé préfixée « x: ».
   const isFavorite = useExternalFavoritesStore((state) => state.ids.includes(externalFavoriteId(id)));
@@ -457,51 +460,73 @@ function ExternalDetailContent() {
             désormais DANS le Player Mbolo (icône serveur, rails + popup
             mobile). Ici, la fiche ne fait qu'afficher le nombre. */}
 
+        {/* Détails façon Netflix. Desktop : poster à gauche, colonne de
+            contenu à droite. Mobile : PAS de poster (il occupait la moitié
+            de l'écran pour rien) — la colonne prend toute la largeur, dans
+            l'ordre Netflix : méta (genres + année + durée) → synopsis →
+            répartition (réalisateur/acteurs) repliable. */}
         <div className="mt-4 flex flex-col gap-4 md:flex-row md:gap-6">
           {!playing && item.posterUrl && (
-            <div className="aspect-[2/3] w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-lg sm:w-40 md:w-44">
+            <div className="hidden aspect-[2/3] w-44 shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-lg md:block">
               <img src={item.posterUrl} alt={`Affiche de ${item.title}`} className="h-full w-full object-cover" />
             </div>
           )}
           <div className="min-w-0 flex-1">
             {item.synopsis || (item.genres?.length ?? 0) > 0 || item.duration || item.director || item.cast || item.originalTitle ? (
               <>
-                {/* Rangée méta façon Netflix : genres en chips + durée —
-                    une seule ligne, cachée si aucune de ces données. */}
-                {(item.genres?.length ?? 0) > 0 || item.duration ? (
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                {/* Méta ligne 1 : genres en chips (scroll horizontal si
+                    débordement — jamais de pile de chips sur 2 lignes mobile). */}
+                {(item.genres?.length ?? 0) > 0 && (
+                  <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0 [&::-webkit-scrollbar]:hidden">
                     {(item.genres ?? []).map((genre) => (
-                      <span key={genre} className="rounded border border-border bg-surface px-2 py-0.5 text-muted">{genre}</span>
+                      <span key={genre} className="shrink-0 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-muted">{genre}</span>
                     ))}
-                    {item.duration && <span className="text-muted">{item.duration}</span>}
                   </div>
-                ) : null}
-                {item.synopsis && (
-                  <p className="mt-3 text-sm leading-relaxed md:text-[15px]">{item.synopsis}</p>
                 )}
-                {/* Rangée production (réalisateur/acteurs/titre original) :
-                    libellés atténués, valeurs normales, façon fiche Netflix. */}
-                {(item.director || item.cast || item.originalTitle) && (
-                  <dl className="mt-4 space-y-1.5 text-xs md:text-sm">
-                    {item.director && (
-                      <div className="flex gap-2">
-                        <dt className="shrink-0 text-muted">Réalisateur :</dt>
-                        <dd>{item.director}</dd>
-                      </div>
-                    )}
-                    {item.cast && (
-                      <div className="flex gap-2">
-                        <dt className="shrink-0 text-muted">Acteurs :</dt>
-                        <dd>{item.cast}</dd>
-                      </div>
-                    )}
-                    {item.originalTitle && (
-                      <div className="flex gap-2">
-                        <dt className="shrink-0 text-muted">Titre original :</dt>
-                        <dd className="italic">{item.originalTitle}</dd>
-                      </div>
-                    )}
-                  </dl>
+                {/* Méta ligne 2 : année · durée · titre original — la ligne
+                    de faits que Netflix met juste au-dessus du synopsis. */}
+                {(item.year != null || item.duration || item.originalTitle) && (
+                  <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                    {item.year != null && <span className="font-semibold text-foreground">{item.year}</span>}
+                    {item.duration && <><span aria-hidden>·</span><span>{item.duration}</span></>}
+                    {item.originalTitle && <><span aria-hidden>·</span><span>Titre original : <span className="italic">{item.originalTitle}</span></span></>}
+                  </div>
+                )}
+                {item.synopsis && (
+                  <>
+                    <h2 className="mt-4 text-sm font-bold uppercase tracking-wide text-muted md:mt-5">Synopsis</h2>
+                    <p className="mt-1.5 text-sm leading-relaxed md:text-[15px]">{item.synopsis}</p>
+                  </>
+                )}
+                {/* Répartition (réalisateur/acteurs) : repliable sur mobile
+                    (Netflix replie aussi le casting), ouverte par défaut en
+                    desktop. Muselée à 3 noms quand repliée. */}
+                {(item.director || item.cast) && (
+                  <div className="mt-4 md:mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setCastOpen((value) => !value)}
+                      className="flex w-full items-center justify-between gap-2 text-left md:pointer-events-none md:cursor-default"
+                      aria-expanded={castOpen}
+                    >
+                      <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Distribution</h2>
+                      <Icon.ChevronDown size={16} className={`text-muted transition-transform md:hidden ${castOpen ? 'rotate-180' : ''}`} aria-hidden />
+                    </button>
+                    <dl className={`mt-2 space-y-1.5 text-sm ${castOpen ? '' : 'hidden md:block'}`}>
+                      {item.director && (
+                        <div className="flex gap-2">
+                          <dt className="w-24 shrink-0 text-xs text-muted md:w-28 md:text-sm">Réalisation</dt>
+                          <dd className="min-w-0">{item.director}</dd>
+                        </div>
+                      )}
+                      {item.cast && (
+                        <div className="flex gap-2">
+                          <dt className="w-24 shrink-0 text-xs text-muted md:w-28 md:text-sm">Acteurs</dt>
+                          <dd className="min-w-0">{castOpen ? item.cast : item.cast.split(',').slice(0, 3).map((name) => name.trim()).join(', ')}</dd>
+                        </div>
+                      )}
+                    </dl>
+                  </div>
                 )}
               </>
             ) : (
