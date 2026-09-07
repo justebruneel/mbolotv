@@ -87,33 +87,92 @@ export function useTrailerEmbed(videoId: string) {
   }, [post]);
   const fail = useCallback((): void => setFailed(true), []);
   // Remontée des événements du player : au premier « playing », `ready`
-  // devient true et le parent fond l'image de fond vers l'iframe. Filet de
-  // sécurité : certains environnements (bloqueurs, restrictions cross-origin,
-  // iOS) n'acheminent pas l'événement — on considère alors le player prêt
-  // après un délai raisonnable, sinon l'image de fond resterait affichée
-  // pendant toute la lecture de la bande-annonce.
+  // devient true et le parent fond l'image de fond vers l'iframe.
+  // Trois garde-fous contre « le lecteur YouTube se voit avant la lecture » :
+  //  1) PAS de filtre sur data.id — le player renvoie tantôt l'id du
+  //     handshake, tantôt « widget » (non déclaré ici) : filtrer jetait le
+  //     message, le fallback seul déclenchait le fondu PENDANT le buffering
+  //     (le lecteur YouTube avec son spinner était visible). L'origine suffit.
+  //  2) info normalisé en Number — « playing » arrive parfois en string
+  //     (« 1 »), le === 1 strict laissait ready faux.
+  //  3) grâce de 800 ms — à l'instant de l'événement la vidéo est déclarée
+  //     « playing » mais la première frame peut mettre un instant à se
+  //     décoder ; sans grâce, le fondu révélait l'écran noir/spinner YouTube.
   useEffect(() => {
     if (!mounted) return;
-    const fallback = setTimeout(() => setReady(true), 12_000);
+    const fallback = setTimeout(() => setReady(true), 15_000);
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
     const onMessage = (event: MessageEvent): void => {
       if (event.origin !== 'https://www.youtube-nocookie.com') return;
-      let data: { event?: string; info?: unknown; id?: string };
+      let data: { event?: string; info?: unknown; channel?: string };
       try { data = JSON.parse(typeof event.data === 'string' ? event.data : ''); } catch { return; }
-      if (data?.id !== TRAILER_LISTENING_ID) return;
-      if (data.event === 'onStateChange' && data.info === 1) { clearTimeout(fallback); setReady(true); }
-      if (data.event === 'onError') { clearTimeout(fallback); setFailed(true); }
+      if (data?.channel && data.channel !== 'widget') return;
+      if (data?.event === 'onStateChange' && Number(data.info) === 1) {
+        if (graceTimer) return;
+        clearTimeout(fallback);
+        graceTimer = setTimeout(() => setReady(true), 800);
+      }
+      if (data?.event === 'onError') { clearTimeout(fallback); if (graceTimer) clearTimeout(graceTimer); setFailed(true); }
     };
     window.addEventListener('message', onMessage);
-    return () => { clearTimeout(fallback); window.removeEventListener('message', onMessage); };
+    return () => {
+      clearTimeout(fallback);
+      if (graceTimer) clearTimeout(graceTimer);
+      window.removeEventListener('message', onMessage);
+    };
   }, [mounted]);
   return { mounted, failed, ready, setReady, setFailed: fail, muted, unmute, mute, frameRef, src: videoId ? embedUrl(videoId) : null };
 }
 
 /**
- * L'iframe muette en boucle, invisible tant que la vidéo ne joue pas
- * (opacity 0 → l'écran de chargement/lecture YouTube ne se voit JAMAIS).
- * La bascule vers l'opacité 1 est pilotée par le parent via l'état `ready`
- * du hook (événement onStateChange « playing » de l'iframe API).
+ * Fond de hero NATIF (voie préférée) : MP4 progressif résolu par la pipeline
+ * Nollywood (/api/yt/play → InnerTube → video-proxy signé) joué par un
+ * <video loop> HTML5. La boucle est réelle : seek interne, zéro rechargement,
+ * et les octets du 2ᵉ passage sortent du cache edge du proxy (immutable 1 h)
+ * plutôt que de Google. Aucune interface YouTube par construction ; mute/unmute
+ * natif via la ref. Repli si toutes les URLs échouent : onFailed() → l'iframe
+ * YouTube (TrailerFrame) prend le relais.
+ */
+export function NativeTrailerFrame({ urls, videoRef, className = '', onReady, onFailed }: {
+  urls: string[];
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  className?: string;
+  onReady: () => void;
+  onFailed: () => void;
+}): React.ReactElement {
+  const [index, setIndex] = useState(0);
+  const indexRef = useRef(0);
+  const handleError = (): void => {
+    const next = indexRef.current + 1;
+    if (next < urls.length) {
+      indexRef.current = next;
+      setIndex(next);
+      return;
+    }
+    onFailed();
+  };
+  return (
+    <video
+      key={urls[index]}
+      ref={videoRef}
+      src={urls[index]}
+      className={className}
+      muted
+      loop
+      playsInline
+      autoPlay
+      preload="auto"
+      disablePictureInPicture
+      aria-hidden
+      onPlaying={onReady}
+      onError={handleError}
+    />
+  );
+}
+/**
+ * Repli iframe (quand le MP4 natif n'a pas pu être résolu) : embed YouTube
+ * muet invisible tant que la vidéo ne joue pas (état `ready` du hook), fondu
+ * piloté par le parent.
  */
 export function TrailerFrame({ src, onFailed, frameRef, className = '' }: {
   src: string;

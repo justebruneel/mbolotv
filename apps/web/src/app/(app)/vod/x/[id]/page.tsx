@@ -14,11 +14,11 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useExternalPlay, useExternalTitle } from '../../../../../shared/api/queries';
+import { useExternalPlay, useExternalTitle, useYoutubePlay } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
 import { externalFavoriteId, useExternalFavoritesStore } from '../../../../../shared/stores/externalFavorites';
-import { TrailerFrame, useTrailerEmbed } from '../../../../../features/vod/components/TrailerHero';
+import { NativeTrailerFrame, TrailerFrame, useTrailerEmbed } from '../../../../../features/vod/components/TrailerHero';
 import type { ExternalSourcePublic } from '@mbolo/contracts';
 
 function ExternalDetailContent() {
@@ -179,10 +179,37 @@ function ExternalDetailContent() {
   const directFailed = selected?.mode === 'direct' && requestedRef !== null && playQuery.isError && directUrls.length === 0;
   const iframePlaying = (selected?.mode === 'iframe' && iframeStarted) || directFailed;
   const playing = directUrls.length > 0 || iframePlaying;
-  // Bande-annonce façon Netflix : iframe YouTube muette en boucle derrière le
-  // hero (différée 2,5 s), son sur geste explicite (bouton / clic image).
-  // Coupée dès que le film joue (videoId vide = pas d'iframe montée).
-  const trailer = useTrailerEmbed(playing ? '' : (detailQuery.data?.trailerYoutubeId ?? ''));
+  // Bande-annonce façon Netflix. Voie PRÉFÉRÉE : lecture native — le MP4
+  // résolu par la pipeline Nollywood (/api/yt/play → InnerTube → proxy signé)
+  // dans un <video loop> HTML5 : boucle réelle sans rechargement, octets du
+  // 2ᵉ passage servis par le cache edge, AUCUNE interface YouTube possible,
+  // mute/unmute natif. L'iframe youtube-nocookie (useTrailerEmbed) n'est que
+  // le REPLI si la résolution native échoue (vidéo restreinte, refus InnerTube) ;
+  // l'image de fond et le lien fiche Nollywood restent les derniers recours.
+  // Coupée dès que le film joue (videoId vide = rien de monté).
+  const trailerVideoId = playing ? '' : (detailQuery.data?.trailerYoutubeId ?? '');
+  const trailerPlayQuery = useYoutubePlay(trailerVideoId, Boolean(trailerVideoId));
+  const [nativeTrailerFailed, setNativeTrailerFailed] = useState(false);
+  const [nativeTrailerReady, setNativeTrailerReady] = useState(false);
+  const [trailerSound, setTrailerSound] = useState(false);
+  const trailerVideoRef = useRef<HTMLVideoElement | null>(null);
+  const nativeTrailerUrls = trailerPlayQuery.data?.urls ?? [];
+  const showNativeTrailer = Boolean(trailerVideoId) && !nativeTrailerFailed && nativeTrailerUrls.length > 0;
+  const trailerIframeId = trailerVideoId && !showNativeTrailer && (nativeTrailerFailed || trailerPlayQuery.isError) ? trailerVideoId : '';
+  const trailer = useTrailerEmbed(trailerIframeId);
+  const trailerActive = showNativeTrailer || (trailer.mounted && !trailer.failed);
+  const trailerMuted = showNativeTrailer ? !trailerSound : trailer.muted;
+  const trailerVisible = showNativeTrailer ? nativeTrailerReady : (trailer.mounted && trailer.ready && !trailer.failed);
+  const unmuteTrailer = useCallback((): void => {
+    const video = trailerVideoRef.current;
+    if (video) { video.muted = false; video.volume = 1; setTrailerSound(true); return; }
+    trailer.unmute();
+  }, [trailer]);
+  const muteTrailer = useCallback((): void => {
+    const video = trailerVideoRef.current;
+    if (video) { video.muted = true; setTrailerSound(false); return; }
+    trailer.mute();
+  }, [trailer]);
 
   // Enchaînement automatique : la résolution du lecteur courant a échoué
   // (extracteur périmé, CDN indisponible…) → on tente le lecteur DIRECT
@@ -262,24 +289,46 @@ function ExternalDetailContent() {
         ) : (
           <>
             {/* Image de fond : affichée tant que la bande-annonce ne joue pas
-                RÉELLEMENT (ready = événement « playing » du player YouTube).
-                Jamais d'écran YouTube de chargement visible : l'iframe reste
-                opacity 0 derrière l'image jusqu'au basculement en fondu. */}
+                RÉELLEMENT (native : premier « playing » du <video> ; iframe :
+                événement onStateChange du player), puis fondu croisé 700 ms. */}
             <img
               key={backdropUrl ?? 'no-backdrop'}
               src={backdropUrl ?? ''}
               alt=""
-              className={`absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-700 ${trailer.ready && trailer.mounted && !trailer.failed ? 'opacity-0' : 'opacity-85'}`}
+              className={`absolute inset-0 h-full w-full object-cover object-top transition-opacity duration-700 ${trailerVisible ? 'opacity-0' : 'opacity-85'}`}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = backdropUrl ? 'visible' : 'hidden'; }}
             />
             {!backdropUrl && <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />}
-            {/* Bande-annonce muette en fond : invisible (opacity 0) tant que
-                la vidéo ne joue pas, puis fondu au-dessus de l'image. L'iframe
-                est dézoomée (scale 1,25) et recentrée : l'interface YouTube
-                (plein écran, recommandations, barre titre) est coupée hors
-                cadre — seul le film se voit, façon Netflix. */}
-            {trailer.mounted && !trailer.failed && trailer.src && (
-              <div className="absolute inset-0 overflow-hidden" onClick={trailer.unmute} role="presentation">
+            {/* Bande-annonce native (MP4 du proxy, loop HTML5) : aucune
+                interface YouTube par construction ; object-cover remplit le
+                hero sans dézoom ni cadre. Clic = activer le son. */}
+            {showNativeTrailer && (
+              <div className="absolute inset-0 overflow-hidden" onClick={unmuteTrailer} role="presentation">
+                <NativeTrailerFrame
+                  urls={nativeTrailerUrls}
+                  videoRef={trailerVideoRef}
+                  onReady={() => setNativeTrailerReady(true)}
+                  onFailed={() => setNativeTrailerFailed(true)}
+                  className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${nativeTrailerReady ? 'opacity-100' : 'opacity-0'}`}
+                />
+                {trailerSound && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); muteTrailer(); }}
+                    aria-label="Couper le son de la bande-annonce"
+                    className="absolute right-3 top-3 z-20 rounded-full bg-black/70 p-1.5 text-white backdrop-blur"
+                  >
+                    <Icon.Volume2 size={13} aria-hidden />
+                  </button>
+                )}
+              </div>
+            )}
+            {/* Repli iframe YouTube (vidéo native non résolue) : invisible
+                (opacity 0) tant que la vidéo ne joue pas, puis fondu. L'iframe
+                est dézoomée (scale 1,25) et recentrée pour couper le chrome
+                YouTube hors cadre. */}
+            {!showNativeTrailer && trailer.mounted && !trailer.failed && trailer.src && (
+              <div className="absolute inset-0 overflow-hidden" onClick={unmuteTrailer} role="presentation">
                 <TrailerFrame
                   src={trailer.src}
                   onFailed={trailer.setFailed}
@@ -289,7 +338,7 @@ function ExternalDetailContent() {
                 {!trailer.muted && (
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); trailer.mute(); }}
+                    onClick={(e) => { e.stopPropagation(); muteTrailer(); }}
                     aria-label="Couper le son de la bande-annonce"
                     className="absolute right-3 top-3 z-20 rounded-full bg-black/70 p-1.5 text-white backdrop-blur"
                   >
@@ -326,9 +375,9 @@ function ExternalDetailContent() {
                   )
                 )}
                 {item.trailerYoutubeId && (
-                  trailer.mounted && !trailer.failed ? (
-                    <button type="button" className="btn" onClick={trailer.unmute}>
-                      <Icon.VolumeX size={14} /> {trailer.muted ? 'Activer le son' : 'Couper le son'}
+                  trailerActive ? (
+                    <button type="button" className="btn" onClick={trailerMuted ? unmuteTrailer : muteTrailer}>
+                      {trailerMuted ? <><Icon.VolumeX size={14} /> Activer le son</> : <><Icon.Volume2 size={14} /> Couper le son</>}
                     </button>
                   ) : (
                     <Link href={`/vod/yt/${item.trailerYoutubeId}`} className="btn">
