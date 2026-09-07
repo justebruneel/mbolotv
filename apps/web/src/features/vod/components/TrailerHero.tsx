@@ -87,19 +87,24 @@ export function useTrailerEmbed(videoId: string) {
   }, [post]);
   const fail = useCallback((): void => setFailed(true), []);
   // Remontée des événements du player : au premier « playing », `ready`
-  // devient true et le parent fond l'image de fond vers l'iframe.
+  // devient true et le parent fond l'image de fond vers l'iframe. Filet de
+  // sécurité : certains environnements (bloqueurs, restrictions cross-origin,
+  // iOS) n'acheminent pas l'événement — on considère alors le player prêt
+  // après un délai raisonnable, sinon l'image de fond resterait affichée
+  // pendant toute la lecture de la bande-annonce.
   useEffect(() => {
     if (!mounted) return;
+    const fallback = setTimeout(() => setReady(true), 12_000);
     const onMessage = (event: MessageEvent): void => {
       if (event.origin !== 'https://www.youtube-nocookie.com') return;
       let data: { event?: string; info?: unknown; id?: string };
       try { data = JSON.parse(typeof event.data === 'string' ? event.data : ''); } catch { return; }
       if (data?.id !== TRAILER_LISTENING_ID) return;
-      if (data.event === 'onStateChange' && data.info === 1) setReady(true);
-      if (data.event === 'onError') setFailed(true);
+      if (data.event === 'onStateChange' && data.info === 1) { clearTimeout(fallback); setReady(true); }
+      if (data.event === 'onError') { clearTimeout(fallback); setFailed(true); }
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    return () => { clearTimeout(fallback); window.removeEventListener('message', onMessage); };
   }, [mounted]);
   return { mounted, failed, ready, setReady, setFailed: fail, muted, unmute, mute, frameRef, src: videoId ? embedUrl(videoId) : null };
 }
