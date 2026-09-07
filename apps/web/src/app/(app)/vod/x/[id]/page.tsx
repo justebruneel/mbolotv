@@ -405,6 +405,17 @@ function ExternalDetailContent() {
 
   const item = detailQuery.data;
   const backdropUrl = item.backdropUrl ?? item.posterUrl;
+  // Fenêtre d'intro saisie en console (titre entier, tous épisodes) : ne sert
+  // qu'en lecture directe (Player maison avec seek). En iframe (embed tiers
+  // sans API de position) aucun bouton n'est affiché.
+  const introWindow = (() => {
+    const start = item.introStartSec ?? null;
+    const end = item.introEndSec ?? null;
+    if (start === null || end === null) return null;
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (start < 0 || end <= start) return null;
+    return { start, end };
+  })();
   // Épisode en reprise + pourcentage pour la liste (legacy sans épisode = masqué).
   const progressEpisode = savedProgress && savedProgress.duration > 0 && savedProgress.position > 30 && savedProgress.position < savedProgress.duration - 30
     ? (savedProgress.episode ?? null)
@@ -427,6 +438,7 @@ function ExternalDetailContent() {
                 initialTime={startAt}
                 onProgress={handleProgress}
                 onEnded={activeEpisode !== null ? handleEpisodeEnded : undefined}
+                intro={directUrls.length > 0 ? introWindow : undefined}
                 onRefreshSource={refreshPlayUrl}
                 sources={playerSources}
                 activeSourceId={selected.id}
@@ -602,6 +614,7 @@ function ExternalDetailContent() {
             progressEpisode={progressEpisode}
             progressPct={progressPct}
             watched={watchedEpisodes}
+            posterUrl={item.posterUrl}
             onSelect={selectEpisode}
             onPlay={playEpisode}
           />

@@ -27,6 +27,7 @@ export function ExternalEpisodeList({
   progressEpisode,
   progressPct,
   watched,
+  posterUrl,
   onSelect,
   onPlay,
 }: {
@@ -35,6 +36,7 @@ export function ExternalEpisodeList({
   progressEpisode?: number | null;
   progressPct?: number | null;
   watched: number[];
+  posterUrl?: string | null;
   onSelect: (episode: number) => void;
   onPlay: (episode: number) => void;
 }) {
@@ -89,11 +91,25 @@ export function ExternalEpisodeList({
                   className="flex min-w-0 flex-1 items-center gap-3 text-left"
                 >
                   <span
-                    className={`flex h-10 w-12 shrink-0 items-center justify-center rounded-lg text-sm font-black tabular-nums ${
-                      active ? 'bg-accent text-white' : 'bg-surface-2 text-foreground'
+                    className={`relative flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg tabular-nums ${
+                      active ? 'bg-accent text-white ring-2 ring-accent' : 'bg-surface-2 text-foreground'
                     }`}
                   >
-                    {entry.number}
+                    {posterUrl ? (
+                      <img
+                        src={posterUrl}
+                        alt=""
+                        loading="lazy"
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-sm font-black">{entry.number}</span>
+                    )}
+                    {posterUrl && (
+                      <span className="absolute bottom-0.5 right-1 rounded bg-black/70 px-1 text-[10px] font-black leading-tight text-white">
+                        {entry.number}
+                      </span>
+                    )}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className={`block truncate text-sm font-semibold ${active ? 'text-accent' : ''}`}>
