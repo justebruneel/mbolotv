@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import type { ExternalSourcePublic } from '@mbolo/contracts';
 
 export interface ExternalEpisodeEntry {
@@ -14,9 +15,12 @@ function versionLabel(versions: string[]): string | null {
   return null;
 }
 
-// Liste d'épisodes façon Netflix (sans vignettes v1) : lignes pleine largeur
-// avec badge E, titre, méta langue/lecteurs et reprise. Sélection douce au
-// clic sur la ligne, lecture immédiate sur le bouton play.
+// Liste d'épisodes façon Netflix (sans vignettes v1) : lignes complètes avec
+// badge E, titre, méta langue/lecteurs et reprise. Sélection douce au clic
+// sur la ligne, lecture immédiate sur le bouton play.
+// Mobile : rail horizontal scrollable (une carte + aperçu de la suivante),
+// l'épisode actif est maintenu en vue en défilement doux. Desktop (md+) :
+// liste verticale classique.
 export function ExternalEpisodeList({
   episodes,
   activeEpisode,
@@ -34,6 +38,24 @@ export function ExternalEpisodeList({
   onSelect: (episode: number) => void;
   onPlay: (episode: number) => void;
 }) {
+  const itemRefs = useRef(new Map<number, HTMLLIElement>());
+  const firstRevealRef = useRef(true);
+
+  // Maintien de l'épisode actif en vue (mobile uniquement : en md+ la liste
+  // est verticale et entièrement visible). Premier cadrage instantané (pas
+  // d'animation au chargement), suivants en smooth. block:'nearest' pour ne
+  // pas faire sauter le scroll vertical de la page.
+  useEffect(() => {
+    if (activeEpisode === null) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) return;
+    const el = itemRefs.current.get(activeEpisode);
+    if (!el) return;
+    const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const behavior: ScrollBehavior = !reduced && !firstRevealRef.current ? 'smooth' : 'auto';
+    firstRevealRef.current = false;
+    el.scrollIntoView({ behavior, inline: 'center', block: 'nearest' });
+  }, [activeEpisode, episodes.length]);
+
   if (episodes.length === 0) return null;
   return (
     <div className="mt-4">
@@ -41,7 +63,9 @@ export function ExternalEpisodeList({
         <h2 className="text-sm font-bold uppercase tracking-wide text-muted">Épisodes</h2>
         <span className="text-xs text-muted">{episodes.length} épisode{episodes.length > 1 ? 's' : ''}</span>
       </div>
-      <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border">
+      <ul
+        className="mt-2 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] md:mt-2 md:block md:space-y-0 md:divide-y md:divide-border md:overflow-visible md:rounded-xl md:border md:border-border md:pb-0 [&::-webkit-scrollbar]:hidden"
+      >
         {episodes.map((entry) => {
           const best = entry.sources[0];
           const active = activeEpisode === entry.number;
@@ -49,7 +73,14 @@ export function ExternalEpisodeList({
           const showProgress = progressEpisode === entry.number && progressPct !== null && progressPct !== undefined && progressPct > 0 && progressPct < 100;
           const label = versionLabel(best?.versions ?? []);
           return (
-            <li key={entry.number} className={active ? 'bg-accent/5' : ''}>
+            <li
+              key={entry.number}
+              ref={(el) => {
+                if (el) itemRefs.current.set(entry.number, el);
+                else itemRefs.current.delete(entry.number);
+              }}
+              className={`w-[86%] shrink-0 snap-center overflow-hidden rounded-xl border border-border bg-surface md:w-auto md:shrink md:rounded-none md:border-0 md:bg-transparent ${active ? 'border-accent/60 md:border-0 md:bg-accent/5' : ''}`}
+            >
               <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
                 <button
                   type="button"
