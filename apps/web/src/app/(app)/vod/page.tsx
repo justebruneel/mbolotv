@@ -589,28 +589,36 @@ function VodPageContent() {
         )}
       </div>
       {!q && <ResumeRow />}
-      {!dossier && folders.length > 0 && (
-        <div className="mb-3 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Dossiers façon Netflix : texte seul dans la même barre que les
+          catégories — l'actif blanc + soulignement accent, l'inactif
+          atténué. Séparés des catégories par un « | » discret (rôles
+          différents : collections vs filtres). */}
+      {!dossier && (folders.length > 0 || (categories.data?.length ?? 0) > 1) && (
+        <div className="mb-5 flex items-center gap-4 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {folders.map((folder) => (
             <button key={folder.id} type="button" onClick={() => openDossier(folder.slug)}
-              className="shrink-0 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent transition hover:bg-accent/20">
+              className={`relative shrink-0 pb-0.5 text-sm font-bold transition ${dossier === folder.slug ? 'text-foreground' : 'text-muted hover:text-foreground/70'}`}>
               {folder.name}
+              {dossier === folder.slug && <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-accent" aria-hidden />}
             </button>
           ))}
-        </div>
-      )}
-      {!dossier && categories.data && categories.data.length > 1 && (
-        <div className="mb-5 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <button type="button" onClick={() => setCategory(null)}
-            className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${category === null ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:text-text'}`}>
-            Tout
-          </button>
-          {categories.data.map((entry) => (
-            <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); setBrowseExternal(false); }}
-              className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${category === entry.name ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:text-text'}`}>
-              {entry.name} <span className="opacity-60">{entry.count}</span>
-            </button>
-          ))}
+          {folders.length > 0 && (categories.data?.length ?? 0) > 1 && <span className="h-4 w-px shrink-0 bg-border" aria-hidden />}
+          {!dossier && categories.data && categories.data.length > 1 && (
+            <>
+              <button type="button" onClick={() => setCategory(null)}
+                className={`relative shrink-0 pb-0.5 text-sm font-bold transition ${category === null ? 'text-foreground' : 'text-muted hover:text-foreground/70'}`}>
+                Tout
+                {category === null && <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-accent" aria-hidden />}
+              </button>
+              {categories.data.map((entry) => (
+                <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); setBrowseExternal(false); }}
+                  className={`relative shrink-0 pb-0.5 text-sm font-bold transition ${category === entry.name ? 'text-foreground' : 'text-muted hover:text-foreground/70'}`}>
+                  {entry.name}
+                  {category === entry.name && <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-accent" aria-hidden />}
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
       <Suspense fallback={<div className="flex justify-center py-16"><Spinner /></div>}>
