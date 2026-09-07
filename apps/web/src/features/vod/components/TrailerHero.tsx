@@ -27,6 +27,11 @@ function embedUrl(videoId: string): string {
     fs: '0',
     iv_load_policy: '3',
     playsinline: '1',
+    // Rendu « fond de hero » : le lecteur YouTube ne doit PAS se voir —
+    // pas de barre titre (modestbranding), pas de logo, et l'iframe est
+    // dézoomée par le parent (échelle 1,33) pour couper le plein écran
+    // YouTube et les chips de recommandation visibles en bas de la vidéo.
+    modestbranding: '1',
   });
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
 }

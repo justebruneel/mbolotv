@@ -261,17 +261,17 @@ function ExternalDetailContent() {
             ) : (
               !backdropUrl && <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
             )}
-            {/* Bande-annonce muette en fond : l'image reste dessous (la
-                miniature YouTube couvre l'iframe le temps de charger), le son
-                s'active au clic. Le dégradé sombre passe par-dessus pour que
-                les textes restent lisibles, comme sur Netflix. */}
+            {/* Bande-annonce muette en fond : l'image reste dessous, le son
+                s'active au clic. L'iframe est dézoomée (scale 1,33) et recentrée
+                : l'interface YouTube (plein écran, recommandations, barre titre)
+                est coupée hors cadre — seul le film se voit, façon Netflix. */}
             {trailer.mounted && !trailer.failed && trailer.src && (
-              <div className="absolute inset-0" onClick={trailer.unmute} role="presentation">
+              <div className="absolute inset-0 overflow-hidden" onClick={trailer.unmute} role="presentation">
                 <TrailerFrame
                   src={trailer.src}
                   onFailed={trailer.setFailed}
                   frameRef={trailer.frameRef}
-                  className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-80"
+                  className="pointer-events-none absolute left-1/2 top-1/2 aspect-video w-full -translate-x-1/2 -translate-y-1/2 scale-125 opacity-90"
                 />
                 {!trailer.muted && (
                   <button
@@ -363,9 +363,15 @@ function ExternalDetailContent() {
                 )
               )}
               {item.trailerYoutubeId && (
-                <Link href={`/vod/yt/${item.trailerYoutubeId}`} className="btn">
-                  <Icon.Film size={14} /> Bande-annonce
-                </Link>
+                trailer.mounted && !trailer.failed ? (
+                  <button type="button" className="btn" onClick={trailer.unmute}>
+                    <Icon.VolumeX size={14} /> {trailer.muted ? 'Activer le son' : 'Couper le son'}
+                  </button>
+                ) : (
+                  <Link href={`/vod/yt/${item.trailerYoutubeId}`} className="btn">
+                    <Icon.Film size={14} /> Bande-annonce
+                  </Link>
+                )
               )}
             </div>
           )}
