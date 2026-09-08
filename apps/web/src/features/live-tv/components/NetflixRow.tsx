@@ -2,7 +2,7 @@
 
 import type { Channel } from '@mbolo/contracts';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { FavoriteButton, ProgrammeProgress, Skeleton } from '@mbolo/ui';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { useChannelRow } from '../../../shared/api/queries';
@@ -171,7 +171,7 @@ export function NetflixRow({
           className="flex snap-x gap-3 overflow-x-auto px-4 pb-6 pt-2 md:gap-4 md:px-10 [scroll-snap-type:x_proximity] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {isLoading
-            ? Array.from({ length: 7 }).map((_, index) => (
+            ? Array.from({ length: 5 }).map((_, index) => (
                 <div key={index} className="shrink-0 snap-start">
                   <Skeleton width={248} height={140} className="rounded-xl" />
                 </div>
@@ -186,7 +186,7 @@ export function NetflixRow({
   );
 }
 
-function RowCard({ channel, highlight }: { channel: Channel; highlight?: boolean }) {
+const RowCard = memo(function RowCard({ channel, highlight }: { channel: Channel; highlight?: boolean }) {
   const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
   const toggle = useFavoritesStore((state) => state.toggle);
   const badge = channelBadge(channel.name);
@@ -275,4 +275,4 @@ function RowCard({ channel, highlight }: { channel: Channel; highlight?: boolean
       </Link>
     </article>
   );
-}
+});

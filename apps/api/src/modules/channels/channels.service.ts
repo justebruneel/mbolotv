@@ -24,7 +24,14 @@ function extractNowPlayingEnriched(metadata: unknown): Partial<NowPlaying> {
 @Injectable()
 export class ChannelsService {
   private readonly publicApiUrl: string; private readonly storageDriver: string; private readonly logoUrlTtlSeconds: number;
+  // Cache des catégories masquées : le calcul DFS est coûteux et appelé sur
+  // presque chaque endpoint public (list, countries, findOne, epg, play).
+  // TTL 60 s — la console owner invalide explicitement via invalidate().
+  private hiddenCache: { ids: Set<string>; expiry: number } | null = null;
+  private countriesCache: { data: CountryOption[] | null; expiry: number } = { data: null, expiry: 0 };
   constructor(private readonly prisma: PrismaService, private readonly streaming: StreamingService, private readonly storage: StorageService, config: ConfigService) { this.publicApiUrl = (config.get<string>('PUBLIC_API_URL') ?? config.get<string>('API_URL') ?? 'http://localhost:4000').replace(/\/+$/, ''); const configuredDriver = config.get<string>('STORAGE_DRIVER', 'local').trim().toLowerCase(); this.storageDriver = configuredDriver === 's3' || configuredDriver === 'cloudinary' || Boolean(config.get<string>('S3_ENDPOINT') && config.get<string>('S3_BUCKET')) ? 's3' : 'local'; this.logoUrlTtlSeconds = Math.min(Math.max(config.get<number>('S3_LOGO_URL_TTL_SECONDS', 300), 60), 3600); }
+  /** Invalidation explicite après modification des catégories (console owner). */
+  invalidateHiddenCategories(): void { this.hiddenCache = null; this.countriesCache = { data: null, expiry: 0 }; }
   async list(query: ChannelQuery): Promise<ChannelListResponse> {
     const hiddenIds = await this.hiddenCategoryIds();
     const categoryFilter = query.category
@@ -37,6 +44,13 @@ export class ChannelsService {
     return { items, total, hasMore: (query.offset ?? 0) + items.length < total };
   }
   async countries(): Promise<CountryOption[]> {
+    const now = Date.now();
+    if (this.countriesCache.data && this.countriesCache.expiry > now) return this.countriesCache.data;
+    const result = await this.computeCountries();
+    this.countriesCache = { data: result, expiry: now + 60_000 };
+    return result;
+  }
+  private async computeCountries(): Promise<CountryOption[]> {
     const hiddenIds = await this.hiddenCategoryIds();
     const categoryClause = hiddenIds.size ? { OR: [{ categoryId: null }, { categoryId: { notIn: [...hiddenIds] } }] } : {};
     const rows = await this.prisma.channel.groupBy({ by: ['country'], where: { isVisible: true, ...categoryClause, country: { not: null }, variants: { some: { isActive: true, OR: [{ healthStatus: null }, { healthStatus: 'OK' }] } } }, _count: { country: true } });
@@ -97,6 +111,8 @@ export class ChannelsService {
     return this.streaming.createPlay(id, deviceId, eco);
   }
   private async hiddenCategoryIds(): Promise<Set<string>> {
+    const now = Date.now();
+    if (this.hiddenCache && this.hiddenCache.expiry > now) return this.hiddenCache.ids;
     const cats = await this.prisma.category.findMany({ select: { id: true, parentId: true, isVisible: true } });
     const byId = new Map(cats.map((category) => [category.id, category] as const));
     const effective = new Map<string, boolean>();
@@ -115,7 +131,9 @@ export class ChannelsService {
       return result;
     };
     cats.forEach((category) => compute(category.id));
-    return new Set(cats.filter((category) => !effective.get(category.id)).map((category) => category.id));
+    const ids = new Set(cats.filter((category) => !effective.get(category.id)).map((category) => category.id));
+    this.hiddenCache = { ids, expiry: now + 60_000 };
+    return ids;
   }
   private async findNowPlaying(channelIds: string[]): Promise<Map<string, NowPlaying>> {
     if (channelIds.length === 0) return new Map();

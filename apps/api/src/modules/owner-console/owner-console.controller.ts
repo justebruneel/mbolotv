@@ -8,6 +8,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { AuditService } from '../../common/audit/audit.service';
 import { HealthCheckService } from '../channel-health/channel-health.service';
+import { ChannelsService } from '../channels/channels.service';
 import { slugify } from '../../common/normalize/slugify';
 import { z } from 'zod';
 
@@ -22,7 +23,7 @@ type OwnerCategoryRow = { id: string; slug: string; name: string; parentId: stri
 @UseGuards(OwnerAuthGuard)
 @Controller('owner')
 export class OwnerConsoleController {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly health: HealthCheckService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly health: HealthCheckService, private readonly channels: ChannelsService) {}
 
   @Get('overview')
   async overview(@Req() request: FastifyRequest): Promise<Overview> {
@@ -143,6 +144,7 @@ export class OwnerConsoleController {
     const maxSort = await this.prisma.category.aggregate({ _max: { sortOrder: true } });
     const created = await this.prisma.category.create({ data: { name: input.name.trim(), slug, parentId: input.parentId ?? null, sortOrder: (maxSort._max.sortOrder ?? 0) + 1 } });
     await this.audit.log(ownerId, 'catalog.category_create', 'category', created.id, { name: created.name, parentId: created.parentId });
+    this.channels.invalidateHiddenCategories();
     return this.catalog(request);
   }
 
@@ -182,6 +184,7 @@ export class OwnerConsoleController {
     }
 
     await this.audit.log(ownerId, 'catalog.category_update', 'category', id, input);
+    this.channels.invalidateHiddenCategories();
     return this.catalog(_request);
   }
 

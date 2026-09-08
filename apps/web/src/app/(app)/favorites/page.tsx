@@ -161,7 +161,7 @@ function LiveFavorites() {
 
       {favoritesQuery.isLoading && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
-          {Array.from({ length: 8 }).map((_, index) => (
+{Array.from({ length: 5 }).map((_, index) => (
             <div key={index}>
               <Skeleton className="aspect-[4/3] w-full rounded-xl sm:aspect-[16/10]" />
               <Skeleton className="mt-2 h-3.5 w-3/4 rounded" />
@@ -226,7 +226,7 @@ function VodFavorites() {
   if (vodFavoritesQuery.isLoading) {
     return (
       <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-        {Array.from({ length: 8 }).map((_, index) => (
+        {Array.from({ length: 5 }).map((_, index) => (
           <div key={index}>
             <Skeleton className="aspect-[2/3] w-full rounded-xl" />
             <Skeleton className="mt-2 h-3.5 w-3/4 rounded" />

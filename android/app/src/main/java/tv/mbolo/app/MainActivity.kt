@@ -3,6 +3,7 @@ package tv.mbolo.app
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -129,6 +130,17 @@ class MainActivity : Activity() {
     override fun onPause() {
         webView.onPause()
         super.onPause()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // Appareils à RAM limitée : sous pression mémoire, on vide le cache en
+        // mémoire de la WebView (le cache disque survit, le service worker du
+        // site ré-hydrate au besoin). La lecture vidéo, elle, continue tant qu'Android
+        // ne l'entraîne pas dans le trim lui-même.
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE) {
+            webView.clearCache(false)
+        }
     }
 
     override fun onDestroy() {

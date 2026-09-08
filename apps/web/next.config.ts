@@ -29,6 +29,28 @@ if (process.env.NODE_ENV === 'production') {
 
 const nextConfig: NextConfig = {
   transpilePackages: ['@mbolo/ui'],
+  poweredByHeader: false,
+  images: {
+    // Prêt pour next/image quand les tuiles basculeront : AVIF/WebP servis et
+    // cache 24 h. PAS de remotePatterns ici : posters (TMDB, YouTube, uploads
+    // API) et logos (URLs signées S3 à expiry courte) mélangent les hôtes —
+    // un allowlist trop large les enverrait dans l'optimizer et pourrait
+    // servir des images périmées restreintes par signature.
+    formats: ['image/avif', 'image/webp'],
+    minimumCacheTTL: 86_400,
+  },
+  experimental: {
+    optimizePackageImports: ['lucide-react'],
+  },
+  async headers() {
+    return [
+      // Les assets /_next/static ont des noms à hash de contenu : cache long
+      // immutable → aucun re-fetch entre déploiements.
+      { source: '/_next/static/:path*', headers: [{ key: 'cache-control', value: 'public, max-age=31536000, immutable' }] },
+      // Favicon / icônes : versionnées à la main, cache court + revalidation.
+      { source: '/favicon.ico', headers: [{ key: 'cache-control', value: 'public, max-age=86400' }] },
+    ];
+  },
   async redirects() {
     return [
       // La page Documentation a été remplacée par « À propos » : les liens

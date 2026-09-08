@@ -166,8 +166,10 @@ export function useActiveUsers() {
   return useQuery({
     queryKey: ['active-users'],
     queryFn: () => apiGet<ActiveCountsResponse>('/activity/counts'),
-    refetchInterval: 15_000,
-    staleTime: 10_000,
+    // Appareils faibles : 30 s au lieu de 15 s — le compteur « actifs » est une
+    // donnée de confort, pas temps réel critique pour la lecture.
+    refetchInterval: 30_000,
+    staleTime: 20_000,
   });
 }
 
@@ -184,8 +186,8 @@ export function useChannelViewers(channelId: string, enabled = true) {
   return useQuery({
     queryKey: ['channel-viewers', channelId],
     queryFn: () => apiGet<ChannelViewersResponse>(`/activity/viewers/${channelId}`),
-    refetchInterval: 15_000,
-    staleTime: 10_000,
+    refetchInterval: 30_000,
+    staleTime: 20_000,
     enabled,
   });
 }
@@ -253,7 +255,7 @@ export function useActivityHeartbeat(channelId?: string) {
       void apiPost('/activity/heartbeat', { channelId }).catch(() => {});
     };
     send();
-    const interval = setInterval(send, 30_000);
+    const interval = setInterval(send, 60_000);
     return () => clearInterval(interval);
   }, [channelId]);
 }

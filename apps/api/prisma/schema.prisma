@@ -95,6 +95,7 @@ model Channel {
   epgMappings ChannelEpgMapping[]
   @@index([categoryId, isVisible])
   @@index([tvgId])
+  @@index([country])
 }
 model StreamVariant {
   id String @id @default(cuid())
@@ -112,6 +113,7 @@ model StreamVariant {
   matchStreams MatchStream[]
   @@index([channelId, isActive, healthScore])
   @@index([lastPlayedAt])
+  @@index([healthStatus, healthCheckedAt])
 }
 model EpgProgramme {
   id String @id @default(cuid())
@@ -124,6 +126,8 @@ model EpgProgramme {
   metadata Json?
   channel Channel @relation(fields:[channelId], references:[id], onDelete:Cascade)
   @@index([channelId, startsAt])
+  @@index([channelId, startsAt, endsAt])
+  @@index([startsAt, endsAt])
 }
 model Match {
   id String @id @default(cuid())

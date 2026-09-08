@@ -3,6 +3,7 @@ package tv.mbolo.tv
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -155,6 +156,16 @@ class MainActivity : Activity() {
     override fun onPause() {
         if (geckoSession != null) geckoSession?.setActive(false) else webView.onPause()
         super.onPause()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // Box TV à 1-2 Go de RAM : sous pression mémoire, on vide le cache en
+        // mémoire de la WebView (le cache disque survit, le service worker
+        // ré-hydrate au besoin). GeckoView gère sa pression mémoire en interne.
+        if (geckoSession == null && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_MODERATE) {
+            webView.clearCache(false)
+        }
     }
 
     override fun onDestroy() {

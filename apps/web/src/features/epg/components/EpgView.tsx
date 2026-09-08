@@ -27,7 +27,7 @@ export function EpgView({
   if (isLoading || !data) {
     return (
       <div className="flex flex-col gap-3">
-        {Array.from({ length: 10 }).map((_, index) => (
+        {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} height={56} />
         ))}
       </div>

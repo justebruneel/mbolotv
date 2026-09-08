@@ -155,7 +155,7 @@ function YoutubeDetailContent() {
         ) : (
           <>
             {backdropUrl ? (
-              <img src={backdropUrl} alt="" className="absolute inset-0 h-full w-full object-cover object-top opacity-85" />
+              <img src={backdropUrl} alt="" className="absolute inset-0 h-full w-full object-cover object-top opacity-85" fetchPriority="high" />
             ) : (
               <div className="absolute inset-0 bg-gradient-to-br from-surface-2 to-surface" />
             )}

@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 
-const TTL_MS = 60_000;
+// L'app envoie son heartbeat toutes les 60 s : un TTL de 90 s laisse une
+// marge de jitter réseau sans compter le device comme inactif entre deux beats.
+const TTL_MS = 90_000;
 
 @Injectable()
 export class ActivityService {

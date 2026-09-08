@@ -2,10 +2,13 @@
 
 import { AppShell, Icon, Logo } from '@mbolo/ui';
 import { usePathname } from 'next/navigation';
-import { ReactNode, Suspense } from 'react';
+import { ReactNode, Suspense, lazy } from 'react';
 import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
-import { GlobalPlayer } from '../../shared/components/GlobalPlayer';
+
+const GlobalPlayer = lazy(() =>
+  import('../../shared/components/GlobalPlayer').then((m) => ({ default: m.GlobalPlayer })),
+);
 import { useActiveUsers, useActivityHeartbeat, useFavoritesSync, useRemindersSync, useUnreadAnnouncements } from '../../shared/api/queries';
 import { useReminderScheduler } from '../../features/epg/hooks/useReminderScheduler';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';

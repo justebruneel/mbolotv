@@ -121,6 +121,7 @@ export function FeaturedAuto() {
               alt=""
               loading={position === 0 ? 'eager' : 'lazy'}
               decoding="async"
+              fetchPriority={position === 0 ? 'high' : undefined}
               className={`absolute inset-0 h-full w-full object-cover brightness-110 transition-opacity duration-700 ${position === index ? `opacity-100 ${isPoster ? 'md:opacity-65' : 'md:opacity-85'}` : 'opacity-0'}`}
             />
           );

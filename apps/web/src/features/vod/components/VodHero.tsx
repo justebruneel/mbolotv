@@ -54,6 +54,7 @@ export function VodHero({ items }: { items: VodItem[] }) {
             className="absolute inset-0 h-full w-full scale-110 object-cover object-top opacity-90"
             loading="eager"
             decoding="async"
+            fetchPriority="high"
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-transparent" />

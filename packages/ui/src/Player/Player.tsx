@@ -282,40 +282,30 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
   // Si le composant démonte pendant le pseudo-plein écran, ne pas laisser le
   // scroll du body verrouillé.
   useEffect(() => () => { document.body.style.overflow = ''; }, []);
-  // Progression live + stats buffer : un tick de 500 ms suffit largement (un
-  // rAF re-rendererait tout le player ~60×/s pour des valeurs quasi statiques).
+  // Progression live + stats buffer : tick 1 s (au lieu de 500 ms) pour réduire
+  // les re-renders sur TV faibles. Les seuils (threshold) évitent les
+  // re-renders quand les valeurs n'ont pas changé de façon significative.
   useEffect(() => {
     if (status !== 'ready') return;
     const video = videoRef.current;
     if (!video) return;
     const tick = (): void => {
       // VOD : progression currentTime/duration pour la barre seekable +
-      // remontée de position (reprise de lecture, throttlée au tick 500 ms).
-      // SANS garde buffered : un MP4 progressif peut mettre plusieurs secondes
-      // à remplir le premier bloc — currentTime est déjà fiable, on doit
-      // persister la reprise dès le démarrage (sinon stop précoce = perte).
+      // remontée de position (reprise de lecture, throttlée au tick 1 s).
       if (isVod) {
-        // Position en ref (l'état ne suffit pas) : destroy() la relit entre
-        // deux ticks, loadCurrent() la relit après un reload destructeur.
-        // Pas de gate sur duration : un MP4 progressif la donne tard,
-        // currentTime est déjà fiable.
         if (video.currentTime > 0) lastPositionRef.current = video.currentTime;
         setVodPosition(video.currentTime);
-        // Fin du buffer téléchargé : affichée sur la seekbar (zone grise)
-        // pour que l'utilisateur voie ce qui est déjà chargé.
+        // Fin du buffer : threshold 0.5 s — pas de re-render si le buffer
+        // a bougé de moins de 0.5 s (invisibile sur la seekbar).
         if (video.buffered.length > 0) {
           const end = video.buffered.end(video.buffered.length - 1);
           setVodBuffered((c) => (Math.abs(c - end) < 0.5 ? c : end));
         }
         if (video.duration > 0 && Number.isFinite(video.duration)) {
-          setVodDuration(video.duration);
+          setVodDuration((c) => (Math.abs(c - video.duration) < 1 ? c : video.duration));
           onProgressRef.current?.(video.currentTime, video.duration);
         }
-        // Chien de garde VOD : un hôte qui gèle sa connexion (CDN qui bride,
-        // TCP mort) laisse « Mise en mémoire tampon » indéfiniment — le
-        // <video> natif n'a aucun retry, contrairement à hls.js/mpegts.
-        // 10 s en lecture demandée (non pause) avec readyState insuffisant →
-        // rafraîchir l'URL via la page (nouvelle résolution signée).
+        // Chien de garde VOD stall : même logique, tick 1 s.
         if (!video.paused && video.readyState < 3) {
           if (vodStallSinceRef.current === 0) vodStallSinceRef.current = Date.now();
           else if (Date.now() - vodStallSinceRef.current > 10_000 && !refreshingRef.current) {
@@ -334,18 +324,17 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       const ahead = Math.max(0, bufferedEnd - video.currentTime);
       const edge = Math.max(liveEdgeRef.current, bufferedEnd);
       liveEdgeRef.current = edge;
-      // Jauge de latence au direct : pleine = collé au edge, se vide quand on
-      // prend du retard (la pseudo-progression currentTime/edge restait
-      // figée ~100 % sur des flux sans DVR).
       const latency = Math.max(0, edge - video.currentTime);
-      setLiveProgress(clamp((1 - latency / LIVE_LATENCY_WINDOW_SECONDS) * 100, 0, 100));
-      setStats((c) => (c.bufferAhead === ahead && c.latency === latency ? c : { ...c, bufferAhead: ahead, latency }));
-      // Chien de garde flux TS « mort » : les panels envoient des segments
-      // finis — une fois consommé, la vidéo se fige (stall natif = paused,
-      // buffer vide) sans qu'aucune erreur mpegts ne soit émise. Si le temps
-      // ne progresse plus depuis 8 s avec un buffer vide, on force un
-      // rafraîchissement de l'URL. Une pause utilisateur garde le buffer
-      // plein (ahead >= 1) : elle ne déclenche jamais le refresh.
+      // Threshold 1 % sur la jauge live — pas de re-render si < 1 % de mouvement.
+      setLiveProgress((prev) => {
+        const next = clamp((1 - latency / LIVE_LATENCY_WINDOW_SECONDS) * 100, 0, 100);
+        return Math.abs(prev - next) < 1 ? prev : next;
+      });
+      // Threshold 0.5 s sur buffer/latence — pas de re-render si stables.
+      const roundedAhead = Math.round(ahead * 2) / 2;
+      const roundedLatency = Math.round(latency * 2) / 2;
+      setStats((c) => (c.bufferAhead === roundedAhead && c.latency === roundedLatency ? c : { ...c, bufferAhead: roundedAhead, latency: roundedLatency }));
+      // Chien de garde flux TS « mort » : même logique, tick 1 s.
       if (mpegtsRef.current) {
         if (video.currentTime > lastProgressRef.current + 0.1) {
           lastProgressRef.current = video.currentTime;
@@ -362,7 +351,7 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
         }
       }
     };
-    const interval = setInterval(tick, 500);
+    const interval = setInterval(tick, 1_000);
     return () => clearInterval(interval);
   }, [status, isVod]);
   // Onglet/appareil en arrière-plan : on stoppe le chargement des segments

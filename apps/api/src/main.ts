@@ -37,8 +37,9 @@ async function bootstrap(): Promise<void> {
   // accepte les deux formes) au lieu d'un 415 bloquant.
   instance.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, payload, done) => done(null, payload));
 
+  const cors = resolveCors(config);
   app.enableCors({
-    origin: corsOrigins(config),
+    origin: cors.origins,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['content-type', 'authorization', 'range', 'x-requested-with', 'x-device-id'],
@@ -74,17 +75,22 @@ function installProcessSafetyNet(): void {
   process.on('unhandledRejection', (reason) => log('unhandledRejection', reason));
 }
 
-function corsOrigins(config: ConfigService): string[] | true {
-  // Render peut conserver une ancienne valeur CORS_ALLOWED_ORIGINS qui ne
-  // correspond pas au domaine Vercel actif. Le mode permissif est volontaire:
-  // l’API catalogue et le proxy de lecture sont publics, et SameSite=strict
-  // protège les cookies de la console owner contre les requêtes cross-site.
-  const mode = (config.get<string>('CORS_MODE', 'permissive') ?? 'permissive').trim().toLowerCase();
-  if (mode !== 'strict') return true;
+function resolveCors(config: ConfigService): { origins: string[] | boolean } {
+  const isProd = (config.get<string>('NODE_ENV') ?? 'development').trim().toLowerCase() === 'production';
+  const mode = (config.get<string>('CORS_MODE') ?? (isProd ? 'strict' : 'permissive')).trim().toLowerCase();
+  if (mode === 'permissive') return { origins: true };
 
   const origins = (config.get<string>('CORS_ALLOWED_ORIGINS', '') ?? '')
     .split(',')
     .map((origin) => origin.trim().replace(/\/$/, ''))
     .filter(Boolean);
-  return origins.length > 0 ? origins : true;
+  if (origins.length === 0) {
+    // Refuser CORS plutôt que de retomber silencieusement sur un mode permissif :
+    // une liste vide en mode strict est une erreur de configuration qui ne doit
+    // pas devenir une faille. La console owner fonctionne en same-origin (proxy
+    // reverse) : seul le navigateur cross-origin nécessite CORS_ALLOWED_ORIGINS.
+    console.error(`[cors] CORS_MODE=strict mais CORS_ALLOWED_ORIGINS est vide → CORS refusé. Configurez CORS_ALLOWED_ORIGINS (ex: https://mbolo.tv).`);
+    return { origins: false };
+  }
+  return { origins };
 }

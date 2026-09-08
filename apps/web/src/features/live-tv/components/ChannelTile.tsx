@@ -1,16 +1,16 @@
 'use client';
 
 import type { Channel, PlayResponse } from '@mbolo/contracts';
-import { FavoriteButton, ProgrammeProgress, warmStream } from '@mbolo/ui';
+import { FavoriteButton, ProgrammeProgress } from '@mbolo/ui';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiGet } from '../../../shared/api/client';
 import { useSettingsStore } from '../../../shared/stores/settings';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { channelBadge, channelInitials, channelMonogramStyle, buildWatchHref, type WatchContext } from '../utils';
 
-export function ChannelTile({ channel, watchContext, highlight }: { channel: Channel; watchContext?: WatchContext; highlight?: boolean }) {
+export const ChannelTile = memo(function ChannelTile({ channel, watchContext, highlight }: { channel: Channel; watchContext?: WatchContext; highlight?: boolean }) {
   const queryClient = useQueryClient();
   const isFavorite = useFavoritesStore((state) => state.ids.includes(channel.id));
   const toggle = useFavoritesStore((state) => state.toggle);
@@ -53,9 +53,7 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
           // survol réchauffe réellement le cache utilisé par la page watch.
           staleTime: 60_000,
         })
-        .then((data) => {
-          if (data?.url) warmStream(data.url);
-        });
+        .catch(() => undefined);
     }
   };
 
@@ -201,4 +199,4 @@ export function ChannelTile({ channel, watchContext, highlight }: { channel: Cha
       </div>
     </article>
   );
-}
+});

@@ -253,6 +253,11 @@ function BrowseView() {
     router.replace(params.toString() ? `/live?${params}` : '/live', { scroll: false });
   };
 
+  // Référence stable : watchContext est passé à toutes les ChannelTile — un
+  // nouvel objet par render déferait le memo des cartes (re-render de toute la
+  // grille à chaque tick de requête).
+  const watchContext = useMemo(() => ({ category, q: deferredQuery.trim() || undefined }), [category, deferredQuery]);
+
   return (
     <div className="min-h-screen animate-fade-in">
       <div className="mx-auto max-w-[1600px] px-4 pt-6 md:px-10">
@@ -323,7 +328,7 @@ function BrowseView() {
             <ResultsGrid
               channels={channels}
               total={total}
-              watchContext={{ category, q: deferredQuery.trim() || undefined }}
+              watchContext={watchContext}
               viewMode={viewMode}
               highlightId={highlightId}
             />

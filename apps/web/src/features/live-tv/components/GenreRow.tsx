@@ -42,7 +42,7 @@ export function GenreRow({
 
       {isLoading ? (
         <div className="flex gap-3 overflow-hidden">
-          {Array.from({ length: 6 }).map((_, index) => (
+          {Array.from({ length: 4 }).map((_, index) => (
             <Skeleton key={index} width={128} height={128} className="rounded-xl shrink-0" />
           ))}
         </div>
