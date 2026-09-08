@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { ExternalSourceMode, ExternalTitleDetail, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
 import { editorialCategoryLabel, publicExternalSourceMode } from '@mbolo/contracts';
@@ -65,6 +65,46 @@ export class VodService {
       this.prisma.vodItem.count({ where }),
     ]);
     return { items: rows.map(serializeVodItem), total, hasMore: safeOffset + rows.length < total };
+  }
+
+  private device(deviceId: string | undefined): string {
+    if (!deviceId) throw new BadRequestException('En-tête x-device-id requis');
+    return deviceId;
+  }
+
+  // Favoris VOD par appareil — miroir de workers/mbolo-tv-api/src/vod.js :
+  // liste triée du plus récent au plus ancien, items actifs+visibles seuls
+  // (un item purgé du catalogue disparaît simplement de la réponse).
+  async listFavorites(deviceId: string | undefined): Promise<{ items: VodItem[] }> {
+    const rows = await this.prisma.vodFavorite.findMany({ where: { deviceId: this.device(deviceId) }, orderBy: { createdAt: 'desc' } });
+    if (rows.length === 0) return { items: [] };
+    const items = await this.prisma.vodItem.findMany({ where: { id: { in: rows.map((row) => row.vodItemId) }, ...VISIBLE } });
+    const order = new Map(rows.map((row, index) => [row.vodItemId, index] as const));
+    const sorted = [...items].sort((a, b) => (order.get(a.id) ?? items.length) - (order.get(b.id) ?? items.length));
+    return { items: sorted.map(serializeVodItem) };
+  }
+
+  async addFavorite(deviceId: string | undefined, vodItemId: string): Promise<{ ok: true }> {
+    const id = this.device(deviceId);
+    const exists = await this.prisma.vodItem.findFirst({ where: { id: vodItemId, ...VISIBLE }, select: { id: true } });
+    if (!exists) throw new NotFoundException('Item VOD introuvable');
+    try {
+      await this.prisma.vodFavorite.create({ data: { deviceId: id, vodItemId } });
+    } catch (error) {
+      // P2002 : déjà favori (idempotent).
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error;
+    }
+    return { ok: true };
+  }
+
+  async removeFavorite(deviceId: string | undefined, vodItemId: string): Promise<{ ok: true }> {
+    try {
+      await this.prisma.vodFavorite.delete({ where: { deviceId_vodItemId: { deviceId: this.device(deviceId), vodItemId } } });
+    } catch (error) {
+      // P2025 : favori absent — suppression idempotente.
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')) throw error;
+    }
+    return { ok: true };
   }
 
   async categories(kind?: VodKind): Promise<VodCategory[]> {

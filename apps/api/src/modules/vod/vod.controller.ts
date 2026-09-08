@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Delete, Get, Headers, Param, Put, Query, UseGuards } from '@nestjs/common';
 import type { VodKind } from '@mbolo/contracts';
 import { AccessGuard } from '../access/access.guard';
 import { VodService } from './vod.service';
@@ -78,6 +78,23 @@ export class VodController {
   @Get('youtube/channels')
   youtubeChannels(): ReturnType<VodService['youtubeChannels']> {
     return this.vod.youtubeChannels();
+  }
+
+  // Favoris VOD par appareil (miroir Worker). Déclarés avant ':id' pour ne
+  // pas être absorbés comme un identifiant d'item.
+  @Get('favorites')
+  favorites(@Headers('x-device-id') deviceId: string | undefined): ReturnType<VodService['listFavorites']> {
+    return this.vod.listFavorites(deviceId);
+  }
+
+  @Put(':id/favorite')
+  addFavorite(@Headers('x-device-id') deviceId: string | undefined, @Param('id') id: string): ReturnType<VodService['addFavorite']> {
+    return this.vod.addFavorite(deviceId, id);
+  }
+
+  @Delete(':id/favorite')
+  removeFavorite(@Headers('x-device-id') deviceId: string | undefined, @Param('id') id: string): ReturnType<VodService['removeFavorite']> {
+    return this.vod.removeFavorite(deviceId, id);
   }
 
   @Get(':id')
