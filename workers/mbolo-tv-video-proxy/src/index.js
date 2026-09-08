@@ -295,16 +295,26 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
     const stableKey = `https://cache.internal${url.pathname}?url=${encodeURIComponent(target)}&maxh=${maxHeightParam ?? ""}${directParam ? "&direct=1" : ""}${referer ? `&x-ref=${encodeURIComponent(referer)}` : ""}`;
     const cacheKey = new Request(stableKey, { method: "GET" });
 
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      metrics.cacheHits = 1;
-      return cached;
+    // Requête Range (MP4 progressif : le lecteur navigue par blocs) : la
+    // réponse dépend du Range demandé — elle n'est NI lue NI écrite dans le
+    // cache, dont la clé ne porte pas le Range. Sans ce garde, une 200
+    // complète reçue malgré un Range (CDN qui l'ignore) s'installerait sous
+    // la clé et serait resservie à tous les seeks suivants (200 au lieu de
+    // 206 → le navigateur repart de l'octet 0 = mise en mémoire tampon
+    // interminable). Les segments HLS (GET sans Range) gardent le cache.
+    const rangeHeader = request.headers.get("Range");
+    if (!rangeHeader) {
+      const cached = await cache.match(cacheKey);
+      if (cached) {
+        metrics.cacheHits = 1;
+        return cached;
+      }
     }
 
     const headers = {
       "User-Agent": "Mozilla/5.0",
       ...(referer ? { Referer: referer } : {}),
-      ...(request.headers.get("Range") ? { Range: request.headers.get("Range") } : {}),
+      ...(rangeHeader ? { Range: rangeHeader } : {}),
     };
 
     // Un fournisseur non cartographié (RELAY_MAP / RELAY_DOMAIN_MAP) sort par
@@ -315,10 +325,11 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
     // ---- Mutualisation single-flight (Durable Object par chaîne) ----
     // Premier arrivé sur un cache-miss = fetcher ; les requêtes simultanées
     // attendent la mise en cache par le fetcher (waitForPeer) au lieu de
-    // déclencher chacune leur propre requête fournisseur.
+    // déclencher chacune leur propre requête fournisseur. Sans objet pour
+    // les requêtes Range (jamais mises en cache — voir ci-dessus).
     let claimed = false;
     let coord = null;
-    if (env.SEGMENT_COORDINATOR) {
+    if (env.SEGMENT_COORDINATOR && !rangeHeader) {
       coord = coordinatorStub(env, channelKeyOf(target));
       for (let round = 0; round < CLAIM_ROUNDS && coord; round += 1) {
         const claim = await coord.call("claim", { key: stableKey });
@@ -426,6 +437,14 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
       }
       const responseHeaders = new Headers(outcome.resp.headers);
       responseHeaders.set("access-control-allow-origin", "*");
+      // Accept-Ranges : les CDN tiers l'omettent parfois derrière une 200.
+      // Sans lui, le navigateur considère le MP4 « non seekable » et attend
+      // de gros tronçons avant de démarrer (lenteur de mise en mémoire
+      // tampon constatée) ; l'annonce + la gestion du Range ci-dessus
+      // rétablissent la lecture progressive par blocs (réponses 206).
+      if (directParam && !responseHeaders.has("accept-ranges")) {
+        responseHeaders.set("accept-ranges", "bytes");
+      }
       // TTL aligné sur la durée réelle du segment (3 × target duration) :
       // un segment terminé est immutable, mais un redémarrage de session
       // fournisseur réutilise les mêmes noms de fichier — un TTL court évite
@@ -439,7 +458,11 @@ async function handleProxy(request, env, ctx, url, secret, metrics) {
       });
       // La Cache API rejette les réponses partielles (206, requêtes Range).
       // Cache SYNCHRONE : même logique de passation que pour les playlists.
-      if (outcome.resp.status === 200) {
+      // JAMAIS sur une requête Range : le corps reçu correspond au Range
+      // demandé (ou un CDN a ignoré le Range) — l'installer sous la clé
+      // sans Range servirait un fragment comme fichier complet aux prochains
+      // viewers (corps tronqué = mise en mémoire tampon interminable).
+      if (outcome.resp.status === 200 && !rangeHeader) {
         try { await cache.put(cacheKey, response.clone()); } catch {}
       }
       return { response };

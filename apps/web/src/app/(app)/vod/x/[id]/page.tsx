@@ -452,7 +452,7 @@ function ExternalDetailContent() {
                 <iframe
                   key={selected.playRef}
                   src={selected.playRef}
-                  title={`Lecteur ${selected.host} — ${item.title}`}
+                  title={`Mbolo TV — ${item.title}`}
                   className="h-full w-full"
                   allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
                   allowFullScreen
@@ -532,9 +532,9 @@ function ExternalDetailContent() {
                 <span className="rounded bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wide backdrop-blur">{item.kind === 'SERIES' ? 'Série' : 'Film'}</span>
                 {item.year != null && <span>{item.year}</span>}
                 {activeEpisode !== null ? (
-                  <span>Épisode {activeEpisode} · {activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+                  <span>Épisode {activeEpisode} · Mbolo TV</span>
                 ) : (
-                  <span>{activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+                  <span>Mbolo TV</span>
                 )}
               </div>
               <h1 className="mt-2 max-w-3xl text-3xl font-black leading-tight text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.9),0_0_24px_rgba(0,0,0,0.65)] md:text-5xl">{item.title}</h1>
@@ -587,7 +587,7 @@ function ExternalDetailContent() {
           )}
           {skippedHost && (
             <span className="text-xs text-muted">
-              Lecteur {skippedHost} indisponible{directFailed ? ' — lecteur source utilisé' : ' — lecteur suivant essayé'}
+              {directFailed ? 'Lecteur indisponible — lecture via la source d’origine' : 'Lecteur indisponible — lecteur suivant essayé'}
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">
@@ -624,9 +624,9 @@ function ExternalDetailContent() {
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             {item.year != null && <span>{item.year}</span>}
             {activeEpisode !== null ? (
-              <span>Épisode {activeEpisode} · {activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+              <span>Épisode {activeEpisode} · Mbolo TV</span>
             ) : (
-              <span>{activeSources.length} lecteur{activeSources.length > 1 ? 's' : ''}</span>
+              <span>Mbolo TV</span>
             )}
           </div>
           {!playing && (
