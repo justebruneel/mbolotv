@@ -19,7 +19,7 @@ const NEWSID_PATTERN = /^\d{4,12}$/;
 const VERSIONS = ['default', 'vostfr', 'vfq', 'vff'];
 // Base des listings (bot d'import) : le domaine courant du site. Les fiches
 // collées à la main gardent leur propre base (matchUrl).
-const FS_DEFAULT_BASE = 'https://french-stream.one';
+export const FS_DEFAULT_BASE = 'https://french-stream.one';
 
 /** Domaines reconnus : french-stream.one/.club/…, base = origin de l'URL collée. */
 export function matchUrl(url) {
@@ -430,9 +430,12 @@ async function fetchEpData(env, base, newsid) {
 }
 
 /** Fiche saison (#serie-data) : métas + lecteurs issus du pack d'épisodes.
- *  Les fiches série n'ont PAS les lignes « Genre/Acteurs » des films : les
- *  genres viennent des liens xfsearch/genre-1/ du fil d'ariane, l'année de
- *  xfsearch/date-de-sortie, le casting du champ meta.bkp de film_api
+ *  Les fiches série n'ont PAS les lignes « Genre/Acteurs » des films ni de
+ *  fil d'Ariane renseigné : les genres éventuels viennent des liens
+ *  xfsearch/genre-1/ PRÉSENTS DANS L'ARTICLE (à partir de #dle-content —
+ *  le menu du site liste tous les genres et son entrée « Spectacle », seule
+ *  en xfsearch, polluait chaque fiche avec ce faux positif unique), l'année
+ *  de xfsearch/date-de-sortie, le casting du champ meta.bkp de film_api
  *  (« Nom (Rôle) - https://img… » enchaînés). */
 async function scrapeSerieSeason(env, newsid, base, fiche) {
   const html = fiche.text;
@@ -451,7 +454,13 @@ async function scrapeSerieSeason(env, newsid, base, fiche) {
     const names = [...cleanText(meta.bkp).matchAll(/([A-ZÀ-Ý][\wÀ-ÿ'’\- ]{2,40}?)\s*\(/g)].map((match) => match[1].trim());
     if (names.length > 0) cast = [...new Set(names)].slice(0, 12).join(', ');
   }
-  const genres = [...new Set([...html.matchAll(/xfsearch\/genre-1\/([^"'/]+)/g)].map((match) => decodeURIComponent(match[1]).replace(/\+/g, ' ').trim()))].slice(0, 6);
+  // Genres : scan borné à l'article (#dle-content) — sur la page entière, le
+  // seul lien xfsearch/genre-1/ est l'entrée « Spectacle » du menu, héritée
+  // à tort par toutes les séries. Les fiches série n'exposent sinon aucun
+  // genre : la carte des catégories du site (external-genres.js) les complète.
+  const articleStart = html.search(/id=['"]dle-content['"]/);
+  const article = articleStart === -1 ? html : html.slice(articleStart);
+  const genres = [...new Set([...article.matchAll(/xfsearch\/genre-1\/([^"'/]+)/g)].map((match) => decodeURIComponent(match[1]).replace(/\+/g, ' ').trim()))].slice(0, 6);
   const yearMatch = /xfsearch\/date-de-sortie\/(\d{4})/.exec(html);
   // Suivi des wrappers kakaflix/kokoflix (embed voe réel).
   const enriched = await Promise.all(
