@@ -1,11 +1,11 @@
 'use client';
 
-import { FavoriteButton, Icon } from '@mbolo/ui';
+import { Icon } from '@mbolo/ui';
 import type { YoutubeVideo } from '@mbolo/contracts';
 import Link from 'next/link';
 import { useState } from 'react';
-import { useYoutubeFavoritesStore, youtubeProgressId } from '../../../shared/stores/youtubeFavorites';
 import { useSettingsStore } from '../../../shared/stores/settings';
+import { youtubeProgressId } from '../../../shared/stores/youtubeFavorites';
 import { formatPublishedRelative } from '../../../shared/utils/formatPublishedRelative';
 
 // Fiche joignable même si l'API détail est injoignable : la tuile embarque
@@ -19,11 +19,10 @@ export function youtubeDetailHref(item: Pick<YoutubeVideo, 'id' | 'title' | 'pos
 }
 
 // Tuile affiche 16:9 (miniature YouTube) — même langage que VodTile
-// (2:3 poster) : hover play, favori local, barre de reprise.
+// (2:3 poster) : hover play, barre de reprise. Pas de bouton favori sur la
+// carte : il vit dans la fiche, à côté du bouton Lecture.
 export function YoutubeTile({ item }: { item: YoutubeVideo }) {
   const progressId = youtubeProgressId(item.id);
-  const isFavorite = useYoutubeFavoritesStore((state) => state.ids.includes(progressId));
-  const toggle = useYoutubeFavoritesStore((state) => state.toggle);
   const [posterError, setPosterError] = useState(false);
   const progress = useSettingsStore((state) => state.vodProgress[progressId]);
   const publishedLabel = item.publishedAt ? formatPublishedRelative(item.publishedAt) : null;
@@ -51,13 +50,6 @@ export function YoutubeTile({ item }: { item: YoutubeVideo }) {
             </div>
           </div>
         </Link>
-        <span className="absolute right-2 top-2 z-20" onClick={(event) => event.stopPropagation()}>
-          <FavoriteButton
-            label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
-            isActive={isFavorite}
-            onToggle={() => toggle(progressId)}
-          />
-        </span>
       </div>
       <div className="mt-2 px-0.5">
         <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-foreground transition-colors duration-200 group-hover:text-accent">{item.title}</p>

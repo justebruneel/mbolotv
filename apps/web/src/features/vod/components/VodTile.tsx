@@ -1,18 +1,17 @@
 'use client';
 
-import { FavoriteButton, Icon } from '@mbolo/ui';
+import { Icon } from '@mbolo/ui';
 import type { VodItem } from '@mbolo/contracts';
 import Link from 'next/link';
 import { useState } from 'react';
-import { useVodFavoritesStore } from '../../../shared/stores/vodFavorites';
 import { useSettingsStore } from '../../../shared/stores/settings';
 
 // Tuile affiche 2:3 (poster) — contre 4:3 pour les chaînes live : le VOD se
 // choisit à l'affiche, le live au logo. La barre de reprise lit vodProgress
 // (localStorage) : aucun fetch, le server component n'a rien à fournir.
+// Pas de bouton favori sur la carte : il vit dans la fiche, à côté du bouton
+// Lecture (les rails/grilles ne doivent pas être parsées de cœurs).
 export function VodTile({ item }: { item: VodItem }) {
-  const isFavorite = useVodFavoritesStore((state) => state.ids.includes(item.id));
-  const toggle = useVodFavoritesStore((state) => state.toggle);
   const [posterError, setPosterError] = useState(false);
   const progress = useSettingsStore((state) => state.vodProgress[item.id]);
 
@@ -44,13 +43,6 @@ export function VodTile({ item }: { item: VodItem }) {
             </div>
           </div>
         </Link>
-        <span className="absolute right-2 top-2 z-20" onClick={(event) => event.stopPropagation()}>
-          <FavoriteButton
-            label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
-            isActive={isFavorite}
-            onToggle={() => toggle(item.id)}
-          />
-        </span>
       </div>
       <div className="mt-2 px-0.5">
         <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-foreground transition-colors duration-200 group-hover:text-accent">{item.title}</p>
