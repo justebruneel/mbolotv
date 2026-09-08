@@ -67,8 +67,11 @@ html {
 /* ---------- Comportement natif (PWA iOS) ----------
    L'app doit garder sa forme : pas de sélection de texte ni de menu
    d'appui-long (copier / enregistrer l'image) comme dans un navigateur,
-   pas de zoom double-tap. La sélection reste permise dans les champs et
-   sur les pages de contenu (<article> : docs, contact…). */
+   pas de zoom double-tap. La sélection reste permise dans les champs de
+   formulaire uniquement (saisie d'un code d'accès, recherche…) — comme
+   dans une vraie app native. Les tuiles sont des <article> : elles ne
+   doivent JAMAIS réautoriser la sélection, surtout pendant le glisser
+   vers la corbeille de la page Favoris. */
 body {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
@@ -80,8 +83,7 @@ body {
 input,
 textarea,
 select,
-[contenteditable='true'],
-article {
+[contenteditable='true'] {
   -webkit-touch-callout: auto;
   user-select: text;
 }
