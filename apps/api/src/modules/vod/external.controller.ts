@@ -2,6 +2,19 @@ import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AccessGuard } from '../access/access.guard';
 import { VodService } from './vod.service';
 
+// Genres du catalogue externe : /api/x/genres (contrat du Worker, ne PAS
+// ranger sous /x/titles — le front appelle useExternalGenres sur ce chemin).
+@UseGuards(AccessGuard)
+@Controller('x')
+export class ExternalGenresController {
+  constructor(private readonly vod: VodService) {}
+
+  @Get('genres')
+  genres(@Query('kind') kind?: string): ReturnType<VodService['listExternalGenres']> {
+    return this.vod.listExternalGenres(kind === 'MOVIE' || kind === 'SERIES' ? kind : undefined);
+  }
+}
+
 // Titres externes publics (lecteurs tiers) : mêmes routes que le Worker
 // (/api/x/titles*). La résolution/lecture reste côté Worker (/api/x/play).
 @UseGuards(AccessGuard)
@@ -26,11 +39,6 @@ export class ExternalController {
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });
-  }
-
-  @Get('genres')
-  genres(@Query('kind') kind?: string): ReturnType<VodService['listExternalGenres']> {
-    return this.vod.listExternalGenres(kind === 'MOVIE' || kind === 'SERIES' ? kind : undefined);
   }
 
   @Get(':id')
