@@ -21,7 +21,7 @@ export const ChannelTile = memo(function ChannelTile({ channel, watchContext, hi
   const prefetchTimer = useRef(0);
   useEffect(() => () => window.clearTimeout(prefetchTimer.current), []);
   const schedulePrefetch = (): void => {
-    if (down) return;
+    if (down || useSettingsStore.getState().dataSaver) return;
     window.clearTimeout(prefetchTimer.current);
     prefetchTimer.current = window.setTimeout(prefetch, 300);
   };
@@ -35,26 +35,25 @@ export const ChannelTile = memo(function ChannelTile({ channel, watchContext, hi
     isLive?.imageUrl;
 
   const prefetch = (): void => {
-    if (!down) {
-      void queryClient.prefetchQuery({
-        queryKey: ['channel', channel.id],
-        queryFn: () => apiGet<Channel>(`/channels/${channel.id}`),
-        staleTime: 30 * 60_000,
-      });
-      void queryClient
-        .fetchQuery({
-          queryKey: ['play', channel.id],
-          queryFn: () =>
-            apiGet<PlayResponse>(
-              `/channels/${channel.id}/play`,
-              useSettingsStore.getState().dataSaver ? { eco: 1 } : undefined,
-            ),
-          // Aligné sur usePlayUrl (même clé, même politique) pour que le
-          // survol réchauffe réellement le cache utilisé par la page watch.
-          staleTime: 60_000,
-        })
-        .catch(() => undefined);
-    }
+    if (down || useSettingsStore.getState().dataSaver) return;
+    void queryClient.prefetchQuery({
+      queryKey: ['channel', channel.id],
+      queryFn: () => apiGet<Channel>(`/channels/${channel.id}`),
+      staleTime: 30 * 60_000,
+    });
+    void queryClient
+      .fetchQuery({
+        queryKey: ['play', channel.id],
+        queryFn: () =>
+          apiGet<PlayResponse>(
+            `/channels/${channel.id}/play`,
+            useSettingsStore.getState().dataSaver ? { eco: 1 } : undefined,
+          ),
+        // Aligné sur usePlayUrl (même clé, même politique) pour que le
+        // survol réchauffe réellement le cache utilisé par la page watch.
+        staleTime: 60_000,
+      })
+      .catch(() => undefined);
   };
 
   const badge = channelBadge(channel.name);

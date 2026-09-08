@@ -1,12 +1,10 @@
 'use client';
 
-import { Icon } from '@mbolo/ui';
 import type { YoutubeVideo } from '@mbolo/contracts';
-import Link from 'next/link';
-import { useState } from 'react';
 import { useSettingsStore } from '../../../shared/stores/settings';
 import { youtubeProgressId } from '../../../shared/stores/youtubeFavorites';
 import { formatPublishedRelative } from '../../../shared/utils/formatPublishedRelative';
+import { MediaTile } from './MediaTile';
 
 // Fiche joignable même si l'API détail est injoignable : la tuile embarque
 // titre/affiche/date en params (repli n°3 après API puis cache React Query).
@@ -18,43 +16,23 @@ export function youtubeDetailHref(item: Pick<YoutubeVideo, 'id' | 'title' | 'pos
   return `/vod/yt/${item.id}?${search.toString()}`;
 }
 
-// Tuile affiche 16:9 (miniature YouTube) — même langage que VodTile
-// (2:3 poster) : hover play, barre de reprise. Pas de bouton favori sur la
-// carte : il vit dans la fiche, à côté du bouton Lecture.
+// Tuile miniature 16:9 (YouTube) — même langage que VodTile (2:3 poster) :
+// hover play, barre de reprise. Pas de bouton favori sur la carte : il vit
+// dans la fiche, à côté du bouton Lecture.
 export function YoutubeTile({ item }: { item: YoutubeVideo }) {
   const progressId = youtubeProgressId(item.id);
-  const [posterError, setPosterError] = useState(false);
   const progress = useSettingsStore((state) => state.vodProgress[progressId]);
   const publishedLabel = item.publishedAt ? formatPublishedRelative(item.publishedAt) : null;
 
   return (
-    <article className="group relative min-w-0">
-      <div className="relative aspect-video overflow-hidden rounded-xl border border-border bg-surface transition-[transform,border-color,box-shadow] duration-300 group-hover:-translate-y-1 group-hover:border-accent/50 group-hover:shadow-lg">
-        <Link href={youtubeDetailHref(item)} aria-label={`Ouvrir la fiche de ${item.title}`} className="block h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset">
-          {item.posterUrl && !posterError ? (
-            <img src={item.posterUrl} alt="" loading="lazy" decoding="async" onError={() => setPosterError(true)} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
-          ) : (
-            <div className="flex h-full items-center justify-center bg-gradient-to-br from-surface-2 to-surface text-muted/40">
-              <Icon.Film size={36} />
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-          {progress && progress.duration > 0 && (
-            <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
-              <div className="h-full bg-accent" style={{ width: `${Math.min(100, (progress.position / progress.duration) * 100)}%` }} />
-            </div>
-          )}
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-accent text-on-accent shadow-lg transition-transform duration-200 group-hover:scale-110">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-            </div>
-          </div>
-        </Link>
-      </div>
-      <div className="mt-2 px-0.5">
-        <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-foreground transition-colors duration-200 group-hover:text-accent">{item.title}</p>
-        {item.publishedAt && publishedLabel && <p className="mt-0.5 truncate text-[11px] text-muted">{publishedLabel}</p>}
-      </div>
-    </article>
+    <MediaTile
+      href={youtubeDetailHref(item)}
+      ariaLabel={`Ouvrir la fiche de ${item.title}`}
+      aspect="video"
+      imageUrl={item.posterUrl}
+      title={item.title}
+      subtitle={publishedLabel}
+      progress={progress && progress.duration > 0 ? progress : undefined}
+    />
   );
 }
