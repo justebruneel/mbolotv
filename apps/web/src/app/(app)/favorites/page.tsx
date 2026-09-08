@@ -16,23 +16,29 @@ import { MediaTile } from '../../../features/vod/components/MediaTile';
 import { VodTile } from '../../../features/vod/components/VodTile';
 import { YoutubeTile } from '../../../features/vod/components/YoutubeTile';
 
-type Tab = 'live' | 'vod' | 'external';
+type Tab = 'live' | 'vod';
 
 // Onglet + recherche pilotés par l'URL (?tab=, ?q=) : HeaderSearch écrit q
 // (debounce) en préservant tab — le retour navigateur restaure la vue exacte.
-function isFavoritesTab(value: string | null): value is Tab {
+function isFavoritesTab(value: string | null): value is Tab | 'external' {
   return value === 'live' || value === 'vod' || value === 'external';
+}
+
+// « external » = ancien onglet Mbolo TV, fusionné dans « vod » : les anciens
+// liens ?tab=external continuent d'ouvrir Films & Séries.
+function normalizeTab(value: string | null): Tab {
+  return value === 'live' ? 'live' : 'vod';
 }
 
 function FavoritesContent() {
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const [tab, setTab] = useState<Tab>(() => (isFavoritesTab(tabParam) ? tabParam : 'live'));
+  const [tab, setTab] = useState<Tab>(() => normalizeTab(isFavoritesTab(tabParam) ? tabParam : null));
 
   // Retour/avant navigateur : l'onglet suit ?tab= (replaceState ne bascule pas
   // tout seul l'état, mais un vrai retour arrière restaure la vue exacte).
   useEffect(() => {
-    if (isFavoritesTab(tabParam)) setTab(tabParam);
+    if (isFavoritesTab(tabParam)) setTab(normalizeTab(tabParam));
   }, [tabParam]);
 
   return (
@@ -48,16 +54,9 @@ function FavoritesContent() {
       >
         <TabButton active={tab === 'live'} label="Chaînes" icon={<Icon.Tv size={15} className="mr-1.5 inline align-[-2px]" />} onClick={() => { setTab('live'); setTabUrl('live'); }} />
         <TabButton active={tab === 'vod'} label="Films & Séries" icon={<Icon.Film size={15} className="mr-1.5 inline align-[-2px]" />} onClick={() => { setTab('vod'); setTabUrl('vod'); }} />
-        <TabButton active={tab === 'external'} label="Mbolo TV" icon={<Icon.Heart size={15} className="mr-1.5 inline align-[-2px]" />} onClick={() => { setTab('external'); setTabUrl('external'); }} />
       </div>
 
-      {tab === 'live' ? (
-        <LiveFavorites />
-      ) : tab === 'vod' ? (
-        <VodFavorites />
-      ) : (
-        <ExternalFavorites />
-      )}
+      {tab === 'live' ? <LiveFavorites /> : <VodFavorites />}
     </main>
   );
 }
@@ -202,6 +201,10 @@ function VodFavorites() {
   const ids = useVodFavoritesStore((state) => state.ids);
   const queryClient = useQueryClient();
   const ytEntries = useYoutubeFavoritesStore((state) => state.entries);
+  // Favoris Mbolo TV (titres externes, fiche /vod/x) : 100 % locaux, aucune
+  // requête — affichés dans ce même onglet puisque le catalogue Films & Séries
+  // est porté par les titres externes (le catalogue serveur VodItem coexiste).
+  const externalEntries = useExternalFavoritesStore((state) => state.entries);
   const query = useFavoritesQuery().trim().toLowerCase();
   const isSearching = query.length > 0;
 
@@ -210,6 +213,12 @@ function VodFavorites() {
     if (!isSearching) return sorted;
     return sorted.filter((entry) => entry.title.toLowerCase().includes(query));
   }, [ytEntries, query, isSearching]);
+
+  const externalFavorites = useMemo(() => {
+    const sorted = [...externalEntries].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
+    if (!isSearching) return sorted;
+    return sorted.filter((entry) => entry.title.toLowerCase().includes(query));
+  }, [externalEntries, query, isSearching]);
 
   const favorites = useMemo(() => {
     const server = vodFavoritesQuery.data?.items ?? [];
@@ -232,6 +241,11 @@ function VodFavorites() {
     return ytFavorites.filter((entry) => entry.title.toLowerCase().includes(query));
   }, [ytFavorites, query, isSearching]);
 
+  const visibleExternals = useMemo(() => {
+    if (!isSearching) return externalFavorites;
+    return externalFavorites.filter((entry) => entry.title.toLowerCase().includes(query));
+  }, [externalFavorites, query, isSearching]);
+
   if (vodFavoritesQuery.isLoading) {
     return (
       <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
@@ -245,7 +259,7 @@ function VodFavorites() {
     );
   }
 
-  const hasAny = favorites.length > 0 || ytFavorites.length > 0;
+  const hasAny = favorites.length > 0 || ytFavorites.length > 0 || externalFavorites.length > 0;
 
   // Nollywood (favoris YouTube locaux) sous le catalogue VOD — section
   // muette si vide (le reste de l'onglet reste lisible seul).
@@ -269,9 +283,10 @@ function VodFavorites() {
   }
 
   const summary = isSearching
-    ? summaryLabel(visibleFavs.length + visibleYt.length, favorites.length + ytFavorites.length, 'favori', 'favoris')
+    ? summaryLabel(visibleFavs.length + visibleYt.length + visibleExternals.length, favorites.length + ytFavorites.length + externalFavorites.length, 'favori', 'favoris')
     : [
         favorites.length > 0 && `${favorites.length} film${favorites.length > 1 ? 's' : ''} & série${favorites.length > 1 ? 's' : ''}`,
+        externalFavorites.length > 0 && `${externalFavorites.length} titre${externalFavorites.length > 1 ? 's' : ''}`,
         ytFavorites.length > 0 && `${ytFavorites.length} Nollywood`,
       ].filter(Boolean).join(' · ');
 
@@ -285,8 +300,26 @@ function VodFavorites() {
           ))}
         </div>
       )}
+      {visibleExternals.length > 0 && (
+        <section className={visibleFavs.length > 0 ? 'mt-8' : ''} aria-label="Favoris Mbolo TV">
+          <h2 className="mb-3 text-lg font-bold">Mbolo TV</h2>
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+            {visibleExternals.map((entry) => (
+              <MediaTile
+                key={entry.id}
+                href={`/vod/x/${entry.id}`}
+                ariaLabel={`Ouvrir la fiche de ${entry.title}`}
+                aspect="poster"
+                imageUrl={entry.posterUrl}
+                title={entry.title}
+                subtitle={entry.year != null ? String(entry.year) : undefined}
+              />
+            ))}
+          </div>
+        </section>
+      )}
       {visibleYt.length > 0 && (
-        <section className={visibleFavs.length > 0 ? 'mt-8' : ''} aria-label="Favoris Nollywood">
+        <section className={visibleFavs.length > 0 || visibleExternals.length > 0 ? 'mt-8' : ''} aria-label="Favoris Nollywood">
           <h2 className="mb-3 text-lg font-bold">Nollywood</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {visibleYt.map((entry) => (
@@ -302,61 +335,6 @@ function VodFavorites() {
   );
 }
 
-// Favoris Mbolo TV (titres externes) : rendus depuis les métadonnées du
-// store local — aucun fetch, disponible hors ligne. Recherche par titre,
-// pilotée par ?q= (HeaderSearch de la barre).
-function ExternalFavorites() {
-  const entries = useExternalFavoritesStore((state) => state.entries);
-  const query = useFavoritesQuery().trim().toLowerCase();
-  const isSearching = query.length > 0;
-
-  const favorites = useMemo(() => {
-    const sorted = [...entries].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
-    if (!isSearching) return sorted;
-    return sorted.filter((entry) => entry.title.toLowerCase().includes(query));
-  }, [entries, query, isSearching]);
-
-  return (
-    <>
-      <p className="mb-5 text-sm text-muted">
-        {isSearching ? `${favorites.length} résultat${favorites.length > 1 ? 's' : ''}` : entries.length === 0 ? 'Aucun titre enregistré' : `${entries.length} titre${entries.length > 1 ? 's' : ''}`}
-      </p>
-
-      {entries.length === 0 && (
-        <div className="mx-auto max-w-md animate-scale-in py-16 text-center">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-surface-2">
-            <Icon.Heart size={36} className="text-muted" />
-          </div>
-          <h2 className="text-xl font-bold">Aucun favori</h2>
-          <p className="mt-2 text-sm text-muted">Sur une fiche Films & Séries, touche le cœur à côté du bouton Lecture pour garder le titre ici.</p>
-          <Link
-            href="/vod"
-            className="mt-6 inline-flex items-center gap-2 rounded-full bg-accent px-6 py-3 text-sm font-bold text-on-accent transition hover:bg-accent/90"
-          >
-            <Icon.Film size={16} aria-hidden /> Parcourir les films & séries
-          </Link>
-        </div>
-      )}
-
-      {entries.length > 0 && favorites.length === 0 && (
-        <EmptyState title="Aucun résultat" hint={`Aucun titre ne correspond à « ${query.trim()} ».`} />
-      )}
-
-      {favorites.length > 0 && (
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-          {favorites.map((entry) => (
-            <MediaTile
-              key={entry.id}
-              href={`/vod/x/${entry.id}`}
-              ariaLabel={`Ouvrir la fiche de ${entry.title}`}
-              aspect="poster"
-              imageUrl={entry.posterUrl}
-              title={entry.title}
-              subtitle={entry.year != null ? String(entry.year) : undefined}
-            />
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
+// Favoris Mbolo TV (titres externes) fusionnés dans l'onglet Films & Séries
+// (VodFavorites) : c'est là que les cœurs posés sur les fiches /vod/x
+// atterrissent réellement — l'onglet séparé rendait la liste invisible.
