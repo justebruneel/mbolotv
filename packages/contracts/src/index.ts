@@ -120,11 +120,45 @@ export const vodItemSchema = z.object({
 export type VodItem = z.infer<typeof vodItemSchema>;
 export const vodListResponseSchema = z.object({ items: z.array(vodItemSchema), total: z.number(), hasMore: z.boolean() });
 export type VodListResponse = z.infer<typeof vodListResponseSchema>;
-export const vodCategorySchema = z.object({ name: z.string(), count: z.number() });
+export const vodCategorySchema = z.object({
+  // Clé brute de filtrage (categoryTitle exact en base) — ne jamais afficher
+  // telle quelle, les catalogues Xtream exposent des libellés techniques.
+  name: z.string(),
+  // Libellé d'affichage nettoyé (repli = brut quand non nettoyable).
+  label: z.string().optional(),
+  count: z.number(),
+});
 export type VodCategory = z.infer<typeof vodCategorySchema>;
 // Accueil façon Netflix : rangées horizontales par catégorie + héros.
-export const vodRowSchema = z.object({ name: z.string(), count: z.number().nullable(), items: z.array(vodItemSchema) });
+// `category` = clé brute de filtrage (null = rangée transversale type
+// Nouveautés) ; `name` = titre d'affichage (éventuellement nettoyé).
+export const vodRowSchema = z.object({ name: z.string(), category: z.string().nullable().optional(), count: z.number().nullable(), items: z.array(vodItemSchema) });
 export type VodRow = z.infer<typeof vodRowSchema>;
+// Clé de rapprochement dossier ↔ item (règles VodFolderRule) : même
+// normalisation partout (import API, import Worker, console, backfill
+// 20260905000000) — sinon les règles ne matchent rien.
+export function vodCategoryKey(title: string | null | undefined): string | null {
+  const trimmed = String(title ?? '').trim().toLowerCase();
+  return trimmed ? trimmed : null;
+}
+// Libellé éditorial d'une catégorie brute Xtream (« SRS | FR - DRAME »,
+// « VOD - Action », « FR Films 2024 ») : nettoie les préfixes/segments
+// techniques et titre par genre. Retourne null quand il ne reste rien
+// d'affichable (la rangée est alors masquée, pas de bruit technique).
+export function editorialCategoryLabel(rawName: string | null | undefined): string | null {
+  const value = String(rawName ?? '').trim();
+  if (!value) return null;
+  const cleaned = value
+    .replace(/^(SRS|VOD|VIVD|VIVID|XTC|MYTF1|TFX|TF1\+?)\s*[|:\-–]\s*/i, '')
+    .replace(/^(FR|EN|ENG|US|UK|AR|ES|DE|IT|PT|JP|KR|IN|NG|ZA)\s*[|:\-–]\s*/gi, '')
+    .replace(/\b(FR|VF|VFF|VFQ|VOSTFR|VOST|SUB-FR|MULTI|ENG|EN|FHD|HD|4K|SD|CAMRIP|WEBRIP|WEB-DL|BluRay)\b/gi, '')
+    .replace(/\s*[|:–\-]\s*$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\s*[|:–\-]\s*/, '')
+    .trim();
+  if (cleaned.length < 2) return null;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
 export const vodRowsResponseSchema = z.object({ rows: z.array(vodRowSchema) });
 export type VodRowsResponse = z.infer<typeof vodRowsResponseSchema>;
 export const vodHeroResponseSchema = z.object({ items: z.array(vodItemSchema) });
@@ -225,6 +259,16 @@ export const externalTitlesResponseSchema = z.object({
   hasMore: z.boolean(),
 });
 export type ExternalTitlesResponse = z.infer<typeof externalTitlesResponseSchema>;
+// Tri du catalogue : `recent` = ajouts récents (défaut), `year` = nouveautés
+// par date de sortie (année DESC, nulls en fin).
+export const externalTitlesSortSchema = z.enum(['recent', 'year']);
+export type ExternalTitlesSort = z.infer<typeof externalTitlesSortSchema>;
+// GET /api/x/genres?kind= : genres présents dans le catalogue visible, avec
+// compteurs — alimente les rails par genre des onglets Films/Séries.
+export const externalGenreSchema = z.object({ name: z.string(), count: z.number() });
+export type ExternalGenre = z.infer<typeof externalGenreSchema>;
+export const externalGenresResponseSchema = z.object({ genres: z.array(externalGenreSchema) });
+export type ExternalGenresResponse = z.infer<typeof externalGenresResponseSchema>;
 export const externalSourceModeSchema = z.enum(['direct', 'iframe']);
 export type ExternalSourceMode = z.infer<typeof externalSourceModeSchema>;
 // Hosts disposant d'un extracteur côté /api/x/play. Tout autre host exposé

@@ -608,6 +608,12 @@ export async function ingestEntries(q, cryptoKey, source, entries, metrics, seen
 // la purge VOD balaie seenVodKeys rempli au fil des lots.
 export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, persistMetrics, baseHash, seenVodKeys) {
   if (!entries || entries.length === 0) return;
+  // Clé de rapprochement dossier ↔ item — même normalisation que
+  // `vodCategoryKey` (@mbolo/contracts) et le backfill 20260905000000.
+  const categoryKey = (title) => {
+    const trimmed = String(title ?? '').trim().toLowerCase();
+    return trimmed ? trimmed : null;
+  };
   const metas = [];
 
   for (const entry of entries) {
@@ -625,12 +631,13 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
 
   const existingByKey = new Map();
   for (const part of chunks(metas.map((meta) => meta.key), QUERY_BATCH)) {
-    const rows = await q(`SELECT id, kind, title, "normalizedKey", "posterUrl", description, rating, "categoryTitle", "containerExt", "addedAt", "isActive", "encryptedLocator" FROM "VodItem" WHERE "normalizedKey" = ANY($1::text[])`, [part]);
+    const rows = await q(`SELECT id, kind, title, "normalizedKey", "posterUrl", description, rating, "categoryTitle", "categoryKey", "containerExt", "addedAt", "isActive", "encryptedLocator" FROM "VodItem" WHERE "normalizedKey" = ANY($1::text[])`, [part]);
     for (const row of rows.rows) existingByKey.set(row.normalizedKey, row);
   }
 
   const creates = [];
   const updates = [];
+  const keyUpdates = [];
   const reactivations = [];
   const locatorUpdates = [];
   const decryptPairs = [];
@@ -651,7 +658,16 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
     if ((existing.posterUrl ?? null) !== entry.posterUrl) { update.posterUrl = entry.posterUrl; changed = true; }
     if ((existing.description ?? null) !== (entry.description ?? null)) { update.description = entry.description ?? null; changed = true; }
     if ((existing.rating ?? null) !== entry.rating) { update.rating = entry.rating; changed = true; }
-    if ((existing.categoryTitle ?? null) !== entry.categoryTitle) { update.categoryTitle = entry.categoryTitle; changed = true; }
+    if ((existing.categoryTitle ?? null) !== entry.categoryTitle) {
+      // Libellé + clé posés ensemble (SET direct plus bas : COALESCE ne sait
+      // pas écrire null). La clé suit toujours le libellé, y compris vers
+      // null quand le fournisseur ne classe plus l'item.
+      keyUpdates.push({ id: existing.id, categoryTitle: entry.categoryTitle, categoryKey: categoryKey(entry.categoryTitle) });
+      changed = true;
+    } else if ((existing.categoryKey ?? null) !== categoryKey(entry.categoryTitle)) {
+      // Rattrapage des items importés avant l'écriture de la clé.
+      keyUpdates.push({ id: existing.id, categoryTitle: entry.categoryTitle, categoryKey: categoryKey(entry.categoryTitle) });
+    }
     if ((existing.containerExt ?? null) !== entry.containerExt) { update.containerExt = entry.containerExt; changed = true; }
     const existingAdded = existing.addedAt ? new Date(existing.addedAt).getTime() : null;
     if (existingAdded !== (entry.addedAt ? entry.addedAt.getTime() : null)) { update.addedAt = entry.addedAt; changed = true; }
@@ -674,12 +690,12 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
     const values = [];
     const params = [];
     part.forEach((entry, position) => {
-      const base = position * 12;
-      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12})`);
-      params.push(crypto.randomUUID(), entry.kind, entry.title, entry.key, entry.posterUrl, entry.description ?? null, entry.rating, entry.categoryTitle, entry.containerExt, entry.addedAt, source.id, locators[position]);
+      const base = position * 13;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13})`);
+      params.push(crypto.randomUUID(), entry.kind, entry.title, entry.key, entry.posterUrl, entry.description ?? null, entry.rating, entry.categoryTitle, categoryKey(entry.categoryTitle), entry.containerExt, entry.addedAt, source.id, locators[position]);
     });
     const inserted = await q(
-      `INSERT INTO "VodItem" (id, kind, title, "normalizedKey", "posterUrl", description, rating, "categoryTitle", "containerExt", "addedAt", "sourceId", "encryptedLocator") VALUES ${values.join(', ')}
+      `INSERT INTO "VodItem" (id, kind, title, "normalizedKey", "posterUrl", description, rating, "categoryTitle", "categoryKey", "containerExt", "addedAt", "sourceId", "encryptedLocator") VALUES ${values.join(', ')}
        ON CONFLICT ("normalizedKey") DO NOTHING RETURNING id`,
       params,
     );
@@ -712,6 +728,23 @@ export async function ingestVodPhase(q, cryptoKey, source, entries, metrics, per
     );
   }
   metrics.vodUpdated += updates.length;
+
+  // Libellés + clés de catégories en SET direct (y compris null) : le bulk
+  // COALESCE ci-dessus ne sait pas écrire null.
+  for (const part of chunks(keyUpdates, 1000)) {
+    const values = [];
+    const params = [];
+    part.forEach((update, position) => {
+      values.push(`($${position * 3 + 1}::text, $${position * 3 + 2}::text, $${position * 3 + 3}::text)`);
+      params.push(update.id, update.categoryTitle, update.categoryKey);
+    });
+    await q(
+      `UPDATE "VodItem" AS v SET "categoryTitle" = v2."categoryTitle", "categoryKey" = v2."categoryKey", "isActive" = true
+       FROM (VALUES ${values.join(', ')}) AS v2(id, "categoryTitle", "categoryKey")
+       WHERE v.id = v2.id`,
+      params,
+    );
+  }
 
   // Réactivation en masse des items revenus sans aucun changement.
   for (const part of chunks(reactivations, 500)) {

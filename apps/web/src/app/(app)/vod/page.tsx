@@ -4,7 +4,7 @@ import { EmptyState, Icon, Spinner } from '@mbolo/ui';
 import type { VodFolderSummary, VodKind, YoutubeVideo } from '@mbolo/contracts';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteExternalTitles, useInfiniteMergedYoutube, useInfiniteVod, useInfiniteVodFolderItems, useInfiniteYoutube, useVodCategories, useVodFolderRows, useVodFolders, useVodHero, useVodRows } from '../../../shared/api/queries';
+import { YOUTUBE_AFOREVO_CHANNEL_ID, useExternalGenres, useInfiniteExternalTitles, useInfiniteMergedYoutube, useInfiniteVod, useInfiniteVodFolderItems, useInfiniteYoutube, useVodCategories, useVodFolderRows, useVodFolders, useVodHero, useVodRows } from '../../../shared/api/queries';
 import { VodTile } from '../../../features/vod/components/VodTile';
 import { VodHero } from '../../../features/vod/components/VodHero';
 import { VodRow } from '../../../features/vod/components/VodRow';
@@ -174,11 +174,14 @@ function NollywoodOnly({ suppressEmpty = false }: { suppressEmpty?: boolean }) {
 // résultat » Xtream ne doit jamais s'afficher AU-DESSUS d'un rail qui a du
 // contenu — sinon message en haut + séries en bas. L'état vide global n'est
 // montré que quand tout est définitivement vide.
-function VodHomeEmpty({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseExternal: () => void; folders: VodFolderSummary[] }) {
-  const externalPreview = useInfiniteExternalTitles('', 12, kind);
+function VodHomeEmpty({ kind, onBrowseExternal, onBrowseGenre, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseExternal: () => void; onBrowseGenre: (genre: string) => void; folders: VodFolderSummary[] }) {
+  const externalPreview = useInfiniteExternalTitles('', 12, kind, undefined, 'year');
   const externalItems = (externalPreview.data?.pages[0]?.items ?? []).slice(0, 12);
   const hasExternal = externalItems.length > 0;
   const isExternalLoading = externalPreview.isLoading;
+  const genresQuery = useExternalGenres(kind);
+  const hasGenres = (genresQuery.data?.genres ?? []).length > 0;
+  const isGenresLoading = genresQuery.isLoading;
   const externalTitle = kind === 'SERIES' ? 'Séries — Nouveau sur Mbolo' : 'Nouveau sur Mbolo';
 
   // Dossiers console : ils portent la page seuls, pas de « vide » Xtream.
@@ -188,15 +191,16 @@ function VodHomeEmpty({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SE
       <>
         <FolderOnly folders={folders} tab={kind} />
         {hasExternal && <ExternalRow title={externalTitle} items={externalItems} onSeeAll={onBrowseExternal} />}
+        <ExternalGenreRails kind={kind} onBrowseGenre={onBrowseGenre} />
       </>
     );
   }
 
   // Onglet Films sans dossiers : Nollywood + externes se partagent la page.
-  // Le vide Nollywood est supprimé dès que les externes chargent ou ont du
-  // contenu, pour éviter le flash « vide » puis l'apparition du rail.
+  // Le vide Nollywood est supprimé dès que les externes/genres chargent ou
+  // ont du contenu, pour éviter le flash « vide » puis l'apparition du rail.
   if (kind === 'MOVIE') {
-    const suppressNollywoodEmpty = isExternalLoading || hasExternal;
+    const suppressNollywoodEmpty = isExternalLoading || isGenresLoading || hasExternal || hasGenres;
     return (
       <>
         <NollywoodOnly suppressEmpty={suppressNollywoodEmpty} />
@@ -205,14 +209,20 @@ function VodHomeEmpty({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SE
           : isExternalLoading
             ? <div className="flex justify-center py-16"><Spinner /></div>
             : null}
+        <ExternalGenreRails kind={kind} onBrowseGenre={onBrowseGenre} />
       </>
     );
   }
 
   // Onglet Séries sans dossiers : seuls les externes peuvent porter la page.
-  if (isExternalLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
-  if (hasExternal) {
-    return <ExternalRow title={externalTitle} items={externalItems} onSeeAll={onBrowseExternal} />;
+  if (isExternalLoading || isGenresLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (hasExternal || hasGenres) {
+    return (
+      <>
+        {hasExternal && <ExternalRow title={externalTitle} items={externalItems} onSeeAll={onBrowseExternal} />}
+        <ExternalGenreRails kind={kind} onBrowseGenre={onBrowseGenre} />
+      </>
+    );
   }
   return <EmptyState title="Aucun résultat" hint="Ce catalogue est vide pour le moment." />;
 }
@@ -221,7 +231,7 @@ function VodHomeEmpty({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SE
 // dossiers gérés dans la console, puis rangées horizontales éditoriales.
 // PAS de bouton « Parcourir tout » : on navigue par rangées et par la
 // barre de catégories (browseAll reste pour les modes filtrés).
-function VodHome({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseExternal: () => void; folders: VodFolderSummary[] }) {
+function VodHome({ kind, onBrowseExternal, onBrowseGenre, folders }: { kind: 'MOVIE' | 'SERIES'; onBrowseExternal: () => void; onBrowseGenre: (genre: string) => void; folders: VodFolderSummary[] }) {
   const heroQuery = useVodHero(kind);
   const rowsQuery = useVodRows(kind);
 
@@ -233,7 +243,7 @@ function VodHome({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'
   if (rows.length === 0 && hero.length === 0) {
     // Catalogue Xtream vide : délégué à VodHomeEmpty qui ne montre le vide
     // que si dossiers + externes sont aussi définitivement vides.
-    return <VodHomeEmpty kind={kind} onBrowseExternal={onBrowseExternal} folders={folders} />;
+    return <VodHomeEmpty kind={kind} onBrowseExternal={onBrowseExternal} onBrowseGenre={onBrowseGenre} folders={folders} />;
   }
 
   return (
@@ -243,12 +253,15 @@ function VodHome({ kind, onBrowseExternal, folders }: { kind: 'MOVIE' | 'SERIES'
         ? folders.map((folder) => <FolderRail key={folder.id} folder={folder} tab={kind} />)
         : kind === 'MOVIE' && <NollywoodRail />}
       {rows.map((row) => (
-        <VodRow key={row.name} title={row.name} count={row.count} items={row.items} seeAllKind={kind} seeAllCategory={row.name === 'Nouveautés' ? '' : row.name} />
+        <VodRow key={`${row.category ?? row.name}`} title={row.name} count={row.count} items={row.items} seeAllKind={kind} seeAllCategory={row.category ?? (row.name === 'Nouveautés' ? '' : row.name)} />
       ))}
       {/* Rail « Nouveau sur Mbolo » APRÈS les rangées : il fait écho au hero
-          (les derniers ajouts), pas une entrée de catalogue à part. Masqué en
-          mode filtré par la page (browseExternal gère la grille complète). */}
+          (les dernières sorties), pas une entrée de catalogue à part. Puis un
+          rail par genre présent dans l'onglet (comme les dossiers). Masqués en
+          mode filtré par la page (browseExternal/browseGenre gèrent les
+          grilles complètes). */}
       {<ExternalRail onBrowseAll={onBrowseExternal} kind={kind} />}
+      {<ExternalGenreRails kind={kind} onBrowseGenre={onBrowseGenre} />}
     </>
   );
 }
@@ -413,24 +426,49 @@ function MergedYoutubeBrowse({ channelIds, q, hideWhenEmpty = false }: { channel
   );
 }
 
-// Rail d'accueil des titres externes (lecteurs tiers) : aperçu silencieux
-// (onglet Films uniquement — pas de kind côté titres externes, tous films
-// v1). « Voir tout » bascule la grille paginée (état local browseExternal,
-// comme browseAll).
-// Rail des titres externes : « Nouveau sur Mbolo » (films) / « Séries —
-// Nouveau sur Mbolo » selon l'onglet. Chaque onglet n'affiche que son type.
+// Rail d'accueil des titres externes (lecteurs tiers) : aperçu silencieux.
+// « Nouveau sur Mbolo » (films) / « Séries — Nouveau sur Mbolo » selon
+// l'onglet — trié par date de sortie (année DESC) : les sorties récentes,
+// pas les derniers imports. « Voir tout » bascule la grille paginée (état
+// local browseExternal, comme browseAll).
 function ExternalRail({ previewCount = 12, onBrowseAll, kind }: { previewCount?: number; onBrowseAll: () => void; kind: 'MOVIE' | 'SERIES' }) {
-  const query = useInfiniteExternalTitles('', previewCount, kind);
+  const query = useInfiniteExternalTitles('', previewCount, kind, undefined, 'year');
   if (query.isLoading || query.isError) return null;
   const items = (query.data?.pages[0]?.items ?? []).slice(0, previewCount);
   if (items.length === 0) return null;
   return <ExternalRow title={kind === 'SERIES' ? 'Séries — Nouveau sur Mbolo' : 'Nouveau sur Mbolo'} items={items} onSeeAll={onBrowseAll} />;
 }
 
+// Rail d'un genre (titres externes) : même coquille que les rails de dossiers
+// (titre + « Voir tout »), silencieux si vide/en erreur.
+function ExternalGenreRail({ kind, genre, onSeeAll }: { kind: 'MOVIE' | 'SERIES'; genre: string; onSeeAll: () => void }) {
+  const query = useInfiniteExternalTitles('', 12, kind, genre);
+  if (query.isLoading || query.isError) return null;
+  const items = (query.data?.pages[0]?.items ?? []).slice(0, 12);
+  if (items.length === 0) return null;
+  return <ExternalRow title={genre} items={items} onSeeAll={onSeeAll} />;
+}
+
+// Rails de tous les genres présents dans l'onglet (dynamique via /x/genres,
+// par kind) — comme les rails de dossiers, un par genre avec son Voir tout.
+function ExternalGenreRails({ kind, onBrowseGenre }: { kind: 'MOVIE' | 'SERIES'; onBrowseGenre: (genre: string) => void }) {
+  const query = useExternalGenres(kind);
+  if (query.isLoading || query.isError) return null;
+  const genres = query.data?.genres ?? [];
+  if (genres.length === 0) return null;
+  return (
+    <>
+      {genres.map((entry) => (
+        <ExternalGenreRail key={entry.name} kind={kind} genre={entry.name} onSeeAll={() => onBrowseGenre(entry.name)} />
+      ))}
+    </>
+  );
+}
+
 // Grille paginée « voir tout » des titres externes (défilement infini),
-// filtrée par le type de l'onglet courant.
-function ExternalBrowse({ q, kind }: { q: string; kind: 'MOVIE' | 'SERIES' }) {
-  const query = useInfiniteExternalTitles(q, PAGE_SIZE, kind);
+// filtrée par le type de l'onglet courant et, optionnellement, par genre.
+function ExternalBrowse({ q, kind, genre }: { q: string; kind: 'MOVIE' | 'SERIES'; genre?: string }) {
+  const query = useInfiniteExternalTitles(q, PAGE_SIZE, kind, genre);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -523,6 +561,8 @@ function VodPageContent() {
   const [browseAll, setBrowseAll] = useState(false);
   // Grille « voir tout » des titres externes (état local comme browseAll).
   const [browseExternal, setBrowseExternal] = useState(false);
+  // Grille « voir tout » d'un genre externe (depuis le Voir tout du rail).
+  const [browseGenre, setBrowseGenre] = useState<string | null>(null);
 
   const kindParam = searchParams.get('kind');
   const dossierParam = searchParams.get('dossier');
@@ -548,7 +588,7 @@ function VodPageContent() {
     }
     if (isVodKind(kindParam)) setTab(kindParam);
   }, [kindParam]);
-  useEffect(() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); }, [tab]);
+  useEffect(() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); setBrowseGenre(null); }, [tab]);
 
   const categories = useVodCategories(tab);
   // Dossiers de la console ; erreur ou liste vide = comportement historique.
@@ -558,6 +598,7 @@ function VodPageContent() {
   const switchTab = (next: Tab): void => {
     setTab(next);
     setBrowseExternal(false);
+    setBrowseGenre(null);
     const url = new URL(window.location.href);
     url.searchParams.set('kind', next);
     url.searchParams.delete('dossier');
@@ -604,8 +645,8 @@ function VodPageContent() {
             </button>
           ))}
         </nav>
-        {(category || browseAll || browseExternal || dossier) && (
-          <button type="button" onClick={() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); openDossier(null); }} className="btn">
+        {(category || browseAll || browseExternal || browseGenre || dossier) && (
+          <button type="button" onClick={() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); setBrowseGenre(null); openDossier(null); }} className="btn">
             <Icon.ChevronLeft size={14} /> Accueil {tab === 'MOVIE' ? 'films' : 'séries'}
           </button>
         )}
@@ -613,7 +654,7 @@ function VodPageContent() {
       {/* Reprendre : accueil uniquement — dans les vues filtrées (« voir
           tout », dossier, catégorie, recherche) la grille EST le contenu,
           une rangée de reprise décalerait tout vers le bas sans servir. */}
-      {!q && !dossier && !category && !browseAll && !browseExternal && <ResumeRow />}
+      {!q && !dossier && !category && !browseAll && !browseExternal && !browseGenre && <ResumeRow />}
       {/* Dossiers façon Netflix : texte seul dans la même barre que les
           catégories — l'actif blanc + soulignement accent, l'inactif
           atténué. Séparés des catégories par un « | » discret (rôles
@@ -625,7 +666,7 @@ function VodPageContent() {
           avec un élément actif en surface = un doublon au-dessus de la
           grille + des boutons sans effet. Le bouton « ← Accueil » en tête
           de page suffit à revenir. */}
-      {!dossier && !category && !browseAll && !browseExternal && (folders.length > 0 || (categories.data?.length ?? 0) > 1) && (
+      {!dossier && !category && !browseAll && !browseExternal && !browseGenre && (folders.length > 0 || (categories.data?.length ?? 0) > 1) && (
         <div className="mb-5 flex items-center gap-4 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {folders.map((folder) => (
             <button key={folder.id} type="button" onClick={() => openDossier(folder.slug)}
@@ -643,9 +684,10 @@ function VodPageContent() {
                 {category === null && <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-accent" aria-hidden />}
               </button>
               {categories.data.map((entry) => (
-                <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); setBrowseExternal(false); }}
+                <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); setBrowseExternal(false); setBrowseGenre(null); }}
                   className={`relative shrink-0 pb-0.5 text-sm font-bold transition ${category === entry.name ? 'text-foreground' : 'text-muted hover:text-foreground/70'}`}>
-                  {entry.name}
+                  {/* Libellé nettoyé à l'écran, clé brute pour le filtre. */}
+                  {entry.label ?? entry.name}
                   {category === entry.name && <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-accent" aria-hidden />}
                 </button>
               ))}
@@ -656,13 +698,18 @@ function VodPageContent() {
       <Suspense fallback={<div className="flex justify-center py-16"><Spinner /></div>}>
         {dossier
           ? <DossierView slug={dossier} q={q} folder={dossierFolder ?? (foldersQuery.isPending ? undefined : null)} />
-          : !q && !category && !browseAll && !browseExternal
-            ? <VodHome kind={tab} onBrowseExternal={() => setBrowseExternal(true)} folders={folders} />
+          : !q && !category && !browseAll && !browseExternal && !browseGenre
+            ? <VodHome kind={tab} onBrowseExternal={() => setBrowseExternal(true)} onBrowseGenre={(genre) => setBrowseGenre(genre)} folders={folders} />
             : browseExternal && !q
               ? <>
                   <h2 className="mb-4 text-xl font-bold">{tab === 'SERIES' ? 'Séries' : 'Films'} — tout le catalogue</h2>
                   <ExternalBrowse q="" kind={tab} />
                 </>
+              : browseGenre && !q
+                ? <>
+                    <h2 className="mb-4 text-xl font-bold">{browseGenre} — tout le catalogue</h2>
+                    <ExternalBrowse q="" kind={tab} genre={browseGenre} />
+                  </>
               : q && (folders.length > 0 || tab === 'MOVIE') ? (
                 // Recherche façon Netflix : le catalogue VOD d'abord, puis les
                 // collections des dossiers (recherche serveur YouTube), puis

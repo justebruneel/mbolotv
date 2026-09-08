@@ -31,7 +31,7 @@ function serializeSource(row) {
   };
 }
 
-export async function listExternalTitles(env, { q, kind, limit = 48, offset = 0 } = {}) {
+export async function listExternalTitles(env, { q, kind, genre, sort, limit = 48, offset = 0 } = {}) {
   const params = [];
   const conditions = [`t."isVisible" = true`];
   // Filtre MOVIE/SERIES : les onglets Films et Séries de l'app ne doivent pas
@@ -40,11 +40,20 @@ export async function listExternalTitles(env, { q, kind, limit = 48, offset = 0 
     params.push(kind);
     conditions.push(`t.kind = $${params.length}`);
   }
+  // Filtre exact sur le tableau genres (orthographe scraper, stable).
+  if (genre && String(genre).trim()) {
+    params.push(String(genre).trim());
+    conditions.push(`$${params.length} = ANY(t."genres")`);
+  }
   if (q && String(q).trim()) {
     params.push(`%${String(q).trim()}%`);
     conditions.push(`t.title ILIKE $${params.length}`);
   }
   const where = `WHERE ${conditions.join(' AND ')}`;
+  // Tri `year` = nouveautés par date de sortie (année DESC, nulls en fin).
+  const order = sort === 'year'
+    ? `ORDER BY t.year DESC NULLS LAST, t."createdAt" DESC`
+    : `ORDER BY t."sortOrder" ASC, t."createdAt" DESC`;
   const limitParam = Math.min(Math.max(1, Number(limit) || 48), 100);
   const offsetParam = Math.max(0, Number(offset) || 0);
   const [rows, counts] = await Promise.all([
@@ -54,7 +63,7 @@ export async function listExternalTitles(env, { q, kind, limit = 48, offset = 0 
         (SELECT COUNT(*)::int FROM "ExternalSource" s
           WHERE s."titleId" = t.id AND s."isActive" AND s."lastStatus" IN ('OK','UNKNOWN')) AS "healthySources"
        FROM "ExternalTitle" t ${where}
-       ORDER BY t."sortOrder" ASC, t."createdAt" DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+       ${order} LIMIT ${limitParam} OFFSET ${offsetParam}`,
       params,
     ),
     env.db.query(env, `SELECT COUNT(*)::int AS count FROM "ExternalTitle" t ${where}`, params),
@@ -72,6 +81,26 @@ export async function listExternalTitles(env, { q, kind, limit = 48, offset = 0 
     total,
     hasMore: offsetParam + rows.rows.length < total,
   };
+}
+
+// Genres présents dans le catalogue visible (par kind) avec compteurs :
+// alimente les rails par genre des onglets Films/Séries.
+export async function listExternalGenres(env, kind) {
+  const params = [];
+  const conditions = [`t."isVisible" = true`];
+  if (kind === 'MOVIE' || kind === 'SERIES') {
+    params.push(kind);
+    conditions.push(`t.kind = $${params.length}`);
+  }
+  const rows = await env.db.query(
+    env,
+    `SELECT g AS name, COUNT(*)::int AS count FROM "ExternalTitle" t
+     CROSS JOIN UNNEST(t."genres") AS g
+     WHERE ${conditions.join(' AND ')}
+     GROUP BY g ORDER BY count DESC, name ASC`,
+    params,
+  );
+  return { genres: rows.rows.map((row) => ({ name: row.name, count: row.count })) };
 }
 
 // (listExternalTitles ci-dessous inclut le champ kind par titre.)

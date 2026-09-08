@@ -135,13 +135,15 @@ export async function vodRows(env, { kind, rowsCount = 8, perRow = 20, q = null 
     params,
   );
   const settled = await Promise.all([recent, ...queries]);
-  const rows = [{ name: 'Nouveautés', count: null, items: settled[0].rows.map(serializeVodItem) }];
+  const rows = [{ name: 'Nouveautés', category: null, count: null, items: settled[0].rows.map(serializeVodItem) }];
   categories.forEach((category, index) => {
     // Titre éditorial (catégories brutes type « SRS | FR - DRAME » nettoyées)
-    // ; null => rangée masquée plutôt qu'un libellé technique en accueil.
+    // + clé brute pour le « Voir tout » (filtrer sur le libellé nettoyé ne
+    // matcherait rien en base) ; null => rangée masquée plutôt qu'un libellé
+    // technique en accueil.
     const label = editorialRowTitle(category.name);
     if (!label) return;
-    rows.push({ name: label, count: category.count, items: settled[index + 1].rows.map(serializeVodItem) });
+    rows.push({ name: label, category: category.name, count: category.count, items: settled[index + 1].rows.map(serializeVodItem) });
   });
   return rows.filter((row) => row.items.length > 0);
 }
@@ -183,7 +185,9 @@ export async function vodCategories(env, kind) {
     `SELECT "categoryTitle" AS name, COUNT(*)::int AS count FROM "VodItem" ${kindFilter} AND "categoryTitle" IS NOT NULL GROUP BY "categoryTitle" ORDER BY count DESC, name ASC`,
     params,
   );
-  return rows.rows.map((row) => ({ name: row.name, count: row.count }));
+  // `name` = clé brute de filtrage, `label` = affichage (repli brut quand non
+  // nettoyable, pour garder la catégorie atteignable).
+  return rows.rows.map((row) => ({ name: row.name, label: editorialRowTitle(row.name) ?? row.name, count: row.count }));
 }
 
 export async function findVodItemById(env, id) {

@@ -591,10 +591,15 @@ async function route(ctx, url) {
       await external.listExternalTitles(env, {
         q: url.searchParams.get("q") ?? undefined,
         kind: url.searchParams.get("kind") ?? undefined,
+        genre: url.searchParams.get("genre") ?? undefined,
+        sort: url.searchParams.get("sort") ?? undefined,
         limit: intParam(url.searchParams.get("limit"), 48, 1, 100),
         offset: intParam(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER),
       }),
     );
+
+  if (path === "/api/x/genres" && method === "GET")
+    return ctx.json(await external.listExternalGenres(env, url.searchParams.get("kind") ?? undefined));
 
   const externalTitleMatch = path.match(/^\/api\/x\/titles\/([^/]+)$/);
   if (externalTitleMatch && method === "GET") {

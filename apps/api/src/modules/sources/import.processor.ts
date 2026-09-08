@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { SourceKind } from '@mbolo/contracts';
+import { vodCategoryKey } from '@mbolo/contracts';
 import { AuditService } from '../../common/audit/audit.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { detectCountry } from '../../common/normalize/country';
@@ -188,9 +189,9 @@ export class ImportProcessor implements OnModuleInit {
       metrics.vodRead += 1;
       metas.push({ entry, key });
     }
-    const existingByKey = new Map<string, { id: string; title: string; posterUrl: string | null; description: string | null; rating: number | null; categoryTitle: string | null; containerExt: string | null; addedAt: Date | null; isActive: boolean; encryptedLocator: Uint8Array }>();
+    const existingByKey = new Map<string, { id: string; title: string; posterUrl: string | null; description: string | null; rating: number | null; categoryTitle: string | null; categoryKey: string | null; containerExt: string | null; addedAt: Date | null; isActive: boolean; encryptedLocator: Uint8Array }>();
     for (const part of chunks(metas.map(({ key }) => key), QUERY_BATCH)) {
-      const rows = await this.prisma.vodItem.findMany({ where: { normalizedKey: { in: part } }, select: { id: true, normalizedKey: true, title: true, posterUrl: true, description: true, rating: true, categoryTitle: true, containerExt: true, addedAt: true, isActive: true, encryptedLocator: true } });
+      const rows = await this.prisma.vodItem.findMany({ where: { normalizedKey: { in: part } }, select: { id: true, normalizedKey: true, title: true, posterUrl: true, description: true, rating: true, categoryTitle: true, categoryKey: true, containerExt: true, addedAt: true, isActive: true, encryptedLocator: true } });
       for (const row of rows) existingByKey.set(row.normalizedKey, row as never);
     }
     const creates: VodEntry[] = []; const updates: Array<{ id: string; data: Record<string, unknown> }> = []; const reactivations: string[] = []; const locatorUpdates: Array<{ id: string; locator: string }> = [];
@@ -205,7 +206,15 @@ export class ImportProcessor implements OnModuleInit {
       if ((existing.posterUrl ?? null) !== entry.posterUrl) data['posterUrl'] = entry.posterUrl;
       if ((existing.description ?? null) !== (entry.description ?? null)) data['description'] = entry.description ?? null;
       if ((existing.rating ?? null) !== entry.rating) data['rating'] = entry.rating;
-      if ((existing.categoryTitle ?? null) !== entry.categoryTitle) data['categoryTitle'] = entry.categoryTitle;
+      if ((existing.categoryTitle ?? null) !== entry.categoryTitle) {
+        data['categoryTitle'] = entry.categoryTitle;
+        // La clé suit toujours le libellé (règles de dossiers) — y compris
+        // vers null quand le fournisseur ne classe plus l'item.
+        data['categoryKey'] = vodCategoryKey(entry.categoryTitle);
+      } else if ((existing.categoryKey ?? null) !== vodCategoryKey(entry.categoryTitle)) {
+        // Rattrapage des items importés avant l'écriture de la clé.
+        data['categoryKey'] = vodCategoryKey(entry.categoryTitle);
+      }
       if ((existing.containerExt ?? null) !== entry.containerExt) data['containerExt'] = entry.containerExt;
       const existingAdded = existing.addedAt ? existing.addedAt.getTime() : null;
       if (existingAdded !== (entry.addedAt ? entry.addedAt.getTime() : null)) data['addedAt'] = entry.addedAt;
@@ -213,7 +222,7 @@ export class ImportProcessor implements OnModuleInit {
       if (this.decryptLocator(existing.encryptedLocator) !== entry.locator) locatorUpdates.push({ id: existing.id, locator: entry.locator });
     }
     for (const part of chunks(creates, VOD_BATCH)) {
-      await this.prisma.vodItem.createMany({ data: part.map((entry) => ({ kind: entry.kind, title: entry.title, normalizedKey: vodNormalizedKey(entry.kind, entry.externalId, baseHash), posterUrl: entry.posterUrl, description: entry.description ?? null, rating: entry.rating, categoryTitle: entry.categoryTitle, containerExt: entry.containerExt, addedAt: entry.addedAt, sourceId: source.id, encryptedLocator: this.crypto.encrypt(entry.locator) })) });
+      await this.prisma.vodItem.createMany({ data: part.map((entry) => ({ kind: entry.kind, title: entry.title, normalizedKey: vodNormalizedKey(entry.kind, entry.externalId, baseHash), posterUrl: entry.posterUrl, description: entry.description ?? null, rating: entry.rating, categoryTitle: entry.categoryTitle, categoryKey: vodCategoryKey(entry.categoryTitle), containerExt: entry.containerExt, addedAt: entry.addedAt, sourceId: source.id, encryptedLocator: this.crypto.encrypt(entry.locator) })) });
       metrics.vodCreated += part.length;
     }
     for (const part of chunks(updates, 1000)) await this.prisma.$transaction(part.map((update) => this.prisma.vodItem.update({ where: { id: update.id }, data: update.data })));

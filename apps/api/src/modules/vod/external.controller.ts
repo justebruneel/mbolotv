@@ -13,15 +13,24 @@ export class ExternalController {
   list(
     @Query('q') q?: string,
     @Query('kind') kind?: 'MOVIE' | 'SERIES',
+    @Query('genre') genre?: string,
+    @Query('sort') sort?: 'recent' | 'year',
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): ReturnType<VodService['listExternalTitles']> {
     return this.vod.listExternalTitles({
       q: q ?? undefined,
       kind: kind === 'MOVIE' || kind === 'SERIES' ? kind : undefined,
+      genre: genre?.trim() ? genre.trim() : undefined,
+      sort: sort === 'year' ? 'year' : undefined,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });
+  }
+
+  @Get('genres')
+  genres(@Query('kind') kind?: string): ReturnType<VodService['listExternalGenres']> {
+    return this.vod.listExternalGenres(kind === 'MOVIE' || kind === 'SERIES' ? kind : undefined);
   }
 
   @Get(':id')

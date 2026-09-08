@@ -11,6 +11,7 @@ import type {
   ExternalPlayResponse,
   ExternalTitleDetail,
   ExternalTitlesResponse,
+  ExternalGenresResponse,
   MatchListResponse,
   PlayResponse,
   Programme,
@@ -518,15 +519,19 @@ export function useExternalPlay(host: string, id: string, enabled = true) {
 }
 
 // Titres externes (lecteurs tiers) : catalogue public visible + détail.
-// Miroir de useInfiniteVod (pagination par offset serveur).
-export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' | 'SERIES') {
+// Miroir de useInfiniteVod (pagination par offset serveur). `genre` filtre
+// exact sur le tableau genres, `sort=year` trie par date de sortie.
+export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' | 'SERIES', genre?: string, sort?: 'recent' | 'year') {
   const trimmed = q.trim();
+  const cleanGenre = genre?.trim() ?? '';
   return useInfiniteQuery({
-    queryKey: ['x-titles', trimmed, kind ?? 'all'],
+    queryKey: ['x-titles', trimmed, kind ?? 'all', cleanGenre, sort ?? 'recent'],
     queryFn: ({ pageParam }) =>
       apiGet<ExternalTitlesResponse>('/x/titles', {
         ...(trimmed ? { q: trimmed } : {}),
         ...(kind ? { kind } : {}),
+        ...(cleanGenre ? { genre: cleanGenre } : {}),
+        ...(sort === 'year' ? { sort: 'year' } : {}),
         limit: pageSize,
         offset: pageParam,
       }),
@@ -534,6 +539,16 @@ export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' 
     getNextPageParam: (lastPage, allPages) =>
       lastPage.hasMore ? allPages.reduce((count, page) => count + page.items.length, 0) : undefined,
     placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
+  });
+}
+
+// Genres présents dans le catalogue externe visible (par kind) : alimente
+// les rails par genre des onglets Films/Séries.
+export function useExternalGenres(kind?: 'MOVIE' | 'SERIES') {
+  return useQuery({
+    queryKey: ['x-genres', kind ?? 'all'],
+    queryFn: () => apiGet<ExternalGenresResponse>('/x/genres', { ...(kind ? { kind } : {}) }),
     staleTime: 5 * 60_000,
   });
 }

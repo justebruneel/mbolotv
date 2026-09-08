@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import type { ExternalSourceMode, ExternalTitleDetail, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
-import { publicExternalSourceMode } from '@mbolo/contracts';
+import { editorialCategoryLabel, publicExternalSourceMode } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { MetadataService } from '../metadata/metadata.service';
@@ -56,7 +57,9 @@ export class VodService {
   async list({ kind, category, q, limit = 48, offset = 0 }: { kind?: VodKind; category?: string; q?: string; limit?: number; offset?: number }): Promise<VodListResponse> {
     const safeLimit = Math.min(Math.max(1, Number(limit) || 48), 100);
     const safeOffset = Math.max(0, Number(offset) || 0);
-    const where = { ...VISIBLE, ...(kind ? { kind } : {}), ...(category ? { categoryTitle: category } : {}), ...(q ? { title: { contains: q } } : {}) };
+    // `category` = clé brute exacte (jamais le libellé éditorial affiché) ;
+    // `q` insensible à la casse comme le Worker (ILIKE).
+    const where = { ...VISIBLE, ...(kind ? { kind } : {}), ...(category ? { categoryTitle: category } : {}), ...(q ? { title: { contains: q, mode: 'insensitive' as const } } : {}) };
     const [rows, total] = await Promise.all([
       this.prisma.vodItem.findMany({ where, orderBy: [{ addedAt: 'desc' }, { title: 'asc' }], take: safeLimit, skip: safeOffset }),
       this.prisma.vodItem.count({ where }),
@@ -69,24 +72,31 @@ export class VodService {
       by: ['categoryTitle'],
       where: { ...VISIBLE, ...(kind ? { kind } : {}), categoryTitle: { not: null } },
       _count: { categoryTitle: true },
-      orderBy: { _count: { categoryTitle: 'desc' } },
+      orderBy: [{ _count: { categoryTitle: 'desc' } }, { categoryTitle: 'asc' }],
     });
     return rows
       .filter((row) => row.categoryTitle)
-      .map((row) => ({ name: row.categoryTitle as string, count: row._count.categoryTitle }));
+      .map((row) => {
+        const name = row.categoryTitle as string;
+        // Libellé nettoyé pour l'affichage, clé brute conservée pour le filtre.
+        return { name, label: editorialCategoryLabel(name) ?? name, count: row._count.categoryTitle };
+      });
   }
 
   // Accueil façon Netflix : top catégories × N titres récents, en parallèle
   // (Promise.all), plus la rangée « Nouveautés » toutes catégories.
+  // Les rangées portent le libellé éditorial + la clé brute (`category`) pour
+  // le « Voir tout » — filtrer sur le libellé nettoyé ne matcherait rien en
+  // base. Les catégories non nettoyables sont masquées (miroir du Worker).
   async rows({ kind, rowsCount = 8, perRow = 20, q }: { kind?: VodKind; rowsCount?: number; perRow?: number; q?: string }): Promise<VodRowsResponse> {
     const safeRows = Math.min(Math.max(1, Number(rowsCount) || 8), 20);
     const safePerRow = Math.min(Math.max(1, Number(perRow) || 20), 50);
-    const where = { ...VISIBLE, ...(kind ? { kind } : {}), ...(q ? { title: { contains: q } } : {}) };
+    const where = { ...VISIBLE, ...(kind ? { kind } : {}), ...(q ? { title: { contains: q, mode: 'insensitive' as const } } : {}) };
     const top = await this.prisma.vodItem.groupBy({
       by: ['categoryTitle'],
       where: { ...where, categoryTitle: { not: null } },
       _count: { categoryTitle: true },
-      orderBy: { _count: { categoryTitle: 'desc' } },
+      orderBy: [{ _count: { categoryTitle: 'desc' } }, { categoryTitle: 'asc' }],
       take: safeRows,
     });
     const categories = top.map((row) => row.categoryTitle).filter((name): name is string => Boolean(name));
@@ -96,9 +106,11 @@ export class VodService {
         this.prisma.vodItem.findMany({ where: { ...where, categoryTitle: name }, orderBy: [{ addedAt: 'desc' }, { title: 'asc' }], take: safePerRow }),
       ),
     ]);
-    const rows: VodRowsResponse['rows'] = [{ name: 'Nouveautés', count: null, items: recent.map(serializeVodItem) }];
+    const rows: VodRowsResponse['rows'] = [{ name: 'Nouveautés', category: null, count: null, items: recent.map(serializeVodItem) }];
     categories.forEach((name, index) => {
-      rows.push({ name, count: top.find((row) => row.categoryTitle === name)?._count.categoryTitle ?? null, items: perCategory[index].map(serializeVodItem) });
+      const label = editorialCategoryLabel(name);
+      if (!label) return;
+      rows.push({ name: label, category: name, count: top.find((row) => row.categoryTitle === name)?._count.categoryTitle ?? null, items: perCategory[index].map(serializeVodItem) });
     });
     return { rows: rows.filter((row) => row.items.length > 0) };
   }
@@ -254,19 +266,25 @@ export class VodService {
 
   // Titres externes publics (lecteurs tiers) : miroir du Worker (external.js).
   // La résolution/lecture reste côté Worker (/api/x/play).
-  async listExternalTitles({ q, kind, limit = 48, offset = 0 }: { q?: string; kind?: 'MOVIE' | 'SERIES'; limit?: number; offset?: number }): Promise<ExternalTitlesResponse> {
+  // `genre` = filtre exact sur le tableau genres ; `sort=year` = nouveautés
+  // par date de sortie (année DESC, nulls en fin).
+  async listExternalTitles({ q, kind, genre, sort, limit = 48, offset = 0 }: { q?: string; kind?: 'MOVIE' | 'SERIES'; genre?: string; sort?: 'recent' | 'year'; limit?: number; offset?: number }): Promise<ExternalTitlesResponse> {
     const safeLimit = Math.min(Math.max(1, Number(limit) || 48), 100);
     const safeOffset = Math.max(0, Number(offset) || 0);
     const where = {
       isVisible: true,
       ...(kind === 'MOVIE' || kind === 'SERIES' ? { kind } : {}),
+      ...(genre?.trim() ? { genres: { has: genre.trim() } } : {}),
       ...(q?.trim() ? { title: { contains: q.trim(), mode: 'insensitive' as const } } : {}),
     };
+    const orderBy = sort === 'year'
+      ? [{ year: { sort: 'desc', nulls: 'last' } as const }, { createdAt: 'desc' as const }]
+      : [{ sortOrder: 'asc' as const }, { createdAt: 'desc' as const }];
     const [rows, total] = await Promise.all([
       this.prisma.externalTitle.findMany({
         where,
         include: { sources: { where: { isActive: true, lastStatus: { in: ['OK', 'UNKNOWN'] } }, select: { id: true } } },
-        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        orderBy,
         take: safeLimit,
         skip: safeOffset,
       }),
@@ -277,6 +295,19 @@ export class VodService {
       total,
       hasMore: safeOffset + rows.length < total,
     };
+  }
+
+  // Genres présents dans le catalogue visible (par kind) avec compteurs :
+  // alimente les rails par genre des onglets Films/Séries. Prisma ne groupe
+  // pas par élément de tableau → UNNEST en brut.
+  async listExternalGenres(kind?: 'MOVIE' | 'SERIES'): Promise<{ genres: Array<{ name: string; count: number }> }> {
+    const kindFilter = kind === 'MOVIE' || kind === 'SERIES' ? Prisma.sql`AND t.kind = ${kind}` : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<Array<{ name: string; count: number }>>`
+      SELECT g AS name, COUNT(*)::int AS count
+      FROM "ExternalTitle" t CROSS JOIN UNNEST(t."genres") AS g
+      WHERE t."isVisible" = true ${kindFilter}
+      GROUP BY g ORDER BY count DESC, name ASC`;
+    return { genres: rows };
   }
 
   async externalTitleDetail(id: string): Promise<ExternalTitleDetail> {
