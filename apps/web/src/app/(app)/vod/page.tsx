@@ -3,7 +3,7 @@
 import { EmptyState, Icon, Spinner } from '@mbolo/ui';
 import type { VodFolderSummary, VodKind, YoutubeVideo } from '@mbolo/contracts';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { YOUTUBE_AFOREVO_CHANNEL_ID, useExternalGenres, useInfiniteExternalTitles, useInfiniteMergedYoutube, useInfiniteVod, useInfiniteVodFolderItems, useInfiniteYoutube, useVodCategories, useVodFolderRows, useVodFolders, useVodHero, useVodRows } from '../../../shared/api/queries';
 import { VodTile } from '../../../features/vod/components/VodTile';
 import { VodHero } from '../../../features/vod/components/VodHero';
@@ -266,7 +266,16 @@ function VodHome({ kind, onBrowseExternal, onBrowseGenre, folders }: { kind: 'MO
   );
 }
 
-function VodBrowse({ kind, category, q }: { kind: VodKind; category: string | null; q: string }) {
+// Signale au parent (recherche unifiée) qu'une section a répondu, vide ou
+// non. Idempotent : marquer la même valeur ne re-render pas (le parent garde
+// prev si rien ne change).
+function useSectionSettled(onSettled: ((empty: boolean) => void) | undefined, settled: boolean, empty: boolean): void {
+  useEffect(() => {
+    if (settled) onSettled?.(empty);
+  }, [onSettled, settled, empty]);
+}
+
+function VodBrowse({ kind, category, q, hideWhenEmpty = false, onSettled }: { kind: VodKind; category: string | null; q: string; hideWhenEmpty?: boolean; onSettled?: (empty: boolean) => void }) {
   const query = useInfiniteVod({ kind, category: category ?? undefined, q: q || undefined }, PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -284,10 +293,15 @@ function VodBrowse({ kind, category, q }: { kind: VodKind; category: string | nu
     return () => observer.disconnect();
   }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage, loadingMore]);
 
-  if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
-  if (query.isError) return <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
-  if (items.length === 0) return <EmptyState title="Aucun résultat" hint={q ? `Aucun titre ne correspond à « ${q} ».` : 'Ce catalogue est vide pour le moment.'} />;
+  useSectionSettled(onSettled, !query.isLoading && !query.isPlaceholderData, query.isError || items.length === 0);
+
+  if (query.isLoading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (query.isError) return hideWhenEmpty ? null : <EmptyState title="Catalogue indisponible" hint="Réessayez dans quelques instants." />;
+  // hideWhenEmpty (mode recherche) : le catalogue Xtream est aujourd'hui
+  // vide (0 import) — sa grille muette laisse la place aux sections qui ont
+  // du contenu ; l'état vide global est rendu par le parent.
+  if (items.length === 0) return hideWhenEmpty ? null : <EmptyState title="Aucun résultat" hint={q ? `Aucun titre ne correspond à « ${q} ».` : 'Ce catalogue est vide pour le moment.'} />;
 
   return (
     <>
@@ -503,10 +517,11 @@ function ExternalBrowse({ q, kind, genre }: { q: string; kind: 'MOVIE' | 'SERIES
 
 // Section recherche des titres externes (première page, silencieuse si vide),
 // filtrée par le type de l'onglet courant.
-function ExternalSearch({ q, kind }: { q: string; kind: 'MOVIE' | 'SERIES' }) {
+function ExternalSearch({ q, kind, onSettled }: { q: string; kind: 'MOVIE' | 'SERIES'; onSettled?: (empty: boolean) => void }) {
   const query = useInfiniteExternalTitles(q, 12, kind);
-  if (query.isLoading || query.isError) return null;
   const items = query.data?.pages[0]?.items ?? [];
+  useSectionSettled(onSettled, !query.isLoading && !query.isPlaceholderData, query.isError || items.length === 0);
+  if (query.isLoading || query.isError) return null;
   if (items.length === 0) return null;
   return (
     <section className="mt-10" aria-label="Résultats titres externes">
@@ -515,6 +530,85 @@ function ExternalSearch({ q, kind }: { q: string; kind: 'MOVIE' | 'SERIES' }) {
         {items.map((item) => <ExternalTile key={item.id} item={item} />)}
       </div>
     </section>
+  );
+}
+
+// Section YouTube d'un dossier en mode recherche : le titre de section ne
+// s'affiche QUE si la recherche a des résultats (en-tête « Afrique » vide
+// au-dessus de « aucun résultat » = exactly the misleading render we're fixing).
+function FolderSearchSection({ section, q, onSettled }: { section: { id: string; name: string; channelIds: string[] }; q: string; onSettled?: (empty: boolean) => void }) {
+  const query = useInfiniteMergedYoutube(section.channelIds, 25, q);
+  const items = dedupeYoutubeItems(query.data?.pages.flatMap((page) => page.items) ?? []);
+  useSectionSettled(onSettled, !query.isLoading && !query.isPlaceholderData, query.isError || items.length === 0);
+  if (items.length === 0) return null;
+  return (
+    <section className="mt-10" aria-label={`Résultats ${section.name}`}>
+      <h2 className="mb-3 text-lg font-bold">{section.name}</h2>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        {items.map((item) => <YoutubeTile key={item.id} item={item} />)}
+      </div>
+    </section>
+  );
+}
+
+// Section Nollywood (repli hors dossier) en mode recherche — muette si vide.
+function NollywoodSearchSection({ q, onSettled }: { q: string; onSettled?: (empty: boolean) => void }) {
+  const query = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25, q);
+  const items = dedupeYoutubeItems(query.data?.pages.flatMap((page) => page.items) ?? []);
+  useSectionSettled(onSettled, !query.isLoading && !query.isPlaceholderData, query.isError || items.length === 0);
+  if (items.length === 0) return null;
+  return (
+    <section className="mt-10" aria-label="Résultats Nollywood">
+      <h2 className="mb-3 text-lg font-bold">Nollywood</h2>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        {items.map((item) => <YoutubeTile key={item.id} item={item} />)}
+      </div>
+    </section>
+  );
+}
+
+// Recherche unifiée Films & Séries : quatre sources potentielles (catalogue
+// Xtream, titres externes, un rail YouTube par dossier — ou Nollywood en
+// repli). Chacune est MUETTE quand elle ne trouve rien, y compris son
+// en-tête : l'ancien rendu affichait « Aucun résultat » du catalogue Xtream
+// (vide aujourd'hui — les titres importés sont externes) EN TÊTE de page,
+// par-dessus les vrais résultats plus bas — d'où l'impression que la
+// recherche ne marche jamais. L'état vide n'est plus que GLOBAL : affiché
+// uniquement quand TOUTES les sources attendues ont répondu vides.
+function VodSearch({ kind, category, q, folders, searchFolders }: {
+  kind: Tab;
+  category: string | null;
+  q: string;
+  folders: VodFolderSummary[];
+  searchFolders: Array<{ id: string; name: string; channelIds: string[] }>;
+}) {
+  // État « vide/non-vide » par source attendue. Réinitialisé à chaque mot
+  // (sinon un « Aucun résultat » resterait affiché pendant la frappe
+  // suivante, le temps que les sources re-répondent).
+  const [empties, setEmpties] = useState<Record<string, boolean>>({});
+  useEffect(() => { setEmpties({}); }, [q, kind]);
+  const markEmpty = useCallback((key: string, empty: boolean) => {
+    setEmpties((previous) => (previous[key] === empty ? previous : { ...previous, [key]: empty }));
+  }, []);
+
+  const showYoutubeSections = folders.length > 0 || kind === 'MOVIE';
+  const youtubeKeys = showYoutubeSections
+    ? (searchFolders.length > 0 ? searchFolders.map((section) => `yt:${section.id}`) : ['yt:nollywood'])
+    : [];
+  const expectedKeys = ['vod', 'external', ...youtubeKeys];
+  const allEmpty = expectedKeys.every((key) => empties[key] === true);
+
+  return (
+    <>
+      <VodBrowse kind={kind} category={category} q={q} hideWhenEmpty onSettled={(empty) => markEmpty('vod', empty)} />
+      <ExternalSearch q={q} kind={kind} onSettled={(empty) => markEmpty('external', empty)} />
+      {showYoutubeSections && (searchFolders.length > 0
+        ? searchFolders.map((section) => (
+            <FolderSearchSection key={section.id} section={section} q={q} onSettled={(empty) => markEmpty(`yt:${section.id}`, empty)} />
+          ))
+        : <NollywoodSearchSection q={q} onSettled={(empty) => markEmpty('yt:nollywood', empty)} />)}
+      {allEmpty && <EmptyState title="Aucun résultat" hint={`Aucun titre ne correspond à « ${q} ».`} />}
+    </>
   );
 }
 
@@ -740,27 +834,7 @@ function VodPageContent() {
                     <ExternalBrowse q="" kind={tab} genre={browseGenre} />
                   </>
               : q ? (
-                // Recherche façon Netflix : le catalogue VOD d'abord, puis les
-                // titres externes du type de l'onglet (MOVIE comme SERIES),
-                // puis les collections des dossiers (recherche serveur
-                // YouTube — dossiers seulement, l'onglet Films en repli).
-                <>
-                  <VodBrowse kind={tab} category={category} q={q} />
-                  <ExternalSearch q={q} kind={tab} />
-                  {(folders.length > 0 || tab === 'MOVIE') && (searchFolders.length > 0
-                    ? searchFolders.map((section) => (
-                        <section key={section.id} className="mt-10" aria-label={`Résultats ${section.name}`}>
-                          <h2 className="mb-3 text-lg font-bold">{section.name}</h2>
-                          <MergedYoutubeBrowse channelIds={section.channelIds} q={q} hideWhenEmpty />
-                        </section>
-                      ))
-                    : (
-                      <section className="mt-10" aria-label="Résultats Nollywood">
-                        <h2 className="mb-3 text-lg font-bold">Nollywood</h2>
-                        <YoutubeBrowse channelId={YOUTUBE_AFOREVO_CHANNEL_ID} q={q} hideWhenEmpty />
-                      </section>
-                    ))}
-                </>
+                <VodSearch kind={tab} category={category} q={q} folders={folders} searchFolders={searchFolders} />
               )
               : <VodBrowse kind={tab} category={category} q={q} />}
       </Suspense>
