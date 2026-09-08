@@ -557,12 +557,30 @@ function VodPageContent() {
     if (param) return param;
     return searchParams.get('kind') === 'NOLLYWOOD' ? 'nollywood' : null;
   });
-  const [category, setCategory] = useState<string | null>(null);
-  const [browseAll, setBrowseAll] = useState(false);
-  // Grille « voir tout » des titres externes (état local comme browseAll).
-  const [browseExternal, setBrowseExternal] = useState(false);
-  // Grille « voir tout » d'un genre externe (depuis le Voir tout du rail).
-  const [browseGenre, setBrowseGenre] = useState<string | null>(null);
+  // Filtres portés par l'URL (?cat=, ?ext=1, ?genre=) : le retour navigateur
+  // (remontée depuis une fiche) restaure la vue exacte laissée — même motif
+  // que tab/dossier ci-dessus. Les setters écrivent le state (rendu
+  // immédiat) ET l'URL (historique).
+  const [category, setCategoryState] = useState<string | null>(() => searchParams.get('cat'));
+  const [browseExternal, setBrowseExternalState] = useState<boolean>(() => searchParams.get('ext') === '1');
+  const [browseGenre, setBrowseGenreState] = useState<string | null>(() => searchParams.get('genre'));
+  const writeVodParams = (mutate: (params: URLSearchParams) => void): void => {
+    const url = new URL(window.location.href);
+    mutate(url.searchParams);
+    window.history.replaceState(null, '', url.toString());
+  };
+  const setCategory = (value: string | null): void => {
+    setCategoryState(value);
+    writeVodParams((params) => (value ? params.set('cat', value) : params.delete('cat')));
+  };
+  const setBrowseExternal = (value: boolean): void => {
+    setBrowseExternalState(value);
+    writeVodParams((params) => (value ? params.set('ext', '1') : params.delete('ext')));
+  };
+  const setBrowseGenre = (value: string | null): void => {
+    setBrowseGenreState(value);
+    writeVodParams((params) => (value ? params.set('genre', value) : params.delete('genre')));
+  };
 
   const kindParam = searchParams.get('kind');
   const dossierParam = searchParams.get('dossier');
@@ -588,7 +606,14 @@ function VodPageContent() {
     }
     if (isVodKind(kindParam)) setTab(kindParam);
   }, [kindParam]);
-  useEffect(() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); setBrowseGenre(null); }, [tab]);
+  const prevTabRef = useRef(tab);
+  useEffect(() => {
+    if (prevTabRef.current === tab) return;
+    prevTabRef.current = tab;
+    setCategory(null);
+    setBrowseExternal(false);
+    setBrowseGenre(null);
+  }, [tab]);
 
   const categories = useVodCategories(tab);
   // Dossiers de la console ; erreur ou liste vide = comportement historique.
@@ -599,9 +624,13 @@ function VodPageContent() {
     setTab(next);
     setBrowseExternal(false);
     setBrowseGenre(null);
+    setCategory(null);
     const url = new URL(window.location.href);
     url.searchParams.set('kind', next);
     url.searchParams.delete('dossier');
+    url.searchParams.delete('cat');
+    url.searchParams.delete('ext');
+    url.searchParams.delete('genre');
     window.history.replaceState(null, '', url.toString());
   };
 
@@ -645,8 +674,8 @@ function VodPageContent() {
             </button>
           ))}
         </nav>
-        {(category || browseAll || browseExternal || browseGenre || dossier) && (
-          <button type="button" onClick={() => { setCategory(null); setBrowseAll(false); setBrowseExternal(false); setBrowseGenre(null); openDossier(null); }} className="btn">
+        {(category || browseExternal || browseGenre || dossier) && (
+          <button type="button" onClick={() => { setCategory(null); setBrowseExternal(false); setBrowseGenre(null); openDossier(null); }} className="btn">
             <Icon.ChevronLeft size={14} /> Accueil {tab === 'MOVIE' ? 'films' : 'séries'}
           </button>
         )}
@@ -654,7 +683,7 @@ function VodPageContent() {
       {/* Reprendre : accueil uniquement — dans les vues filtrées (« voir
           tout », dossier, catégorie, recherche) la grille EST le contenu,
           une rangée de reprise décalerait tout vers le bas sans servir. */}
-      {!q && !dossier && !category && !browseAll && !browseExternal && !browseGenre && <ResumeRow />}
+      {!q && !dossier && !category && !browseExternal && !browseGenre && <ResumeRow />}
       {/* Dossiers façon Netflix : texte seul dans la même barre que les
           catégories — l'actif blanc + soulignement accent, l'inactif
           atténué. Séparés des catégories par un « | » discret (rôles
@@ -666,7 +695,7 @@ function VodPageContent() {
           avec un élément actif en surface = un doublon au-dessus de la
           grille + des boutons sans effet. Le bouton « ← Accueil » en tête
           de page suffit à revenir. */}
-      {!dossier && !category && !browseAll && !browseExternal && !browseGenre && (folders.length > 0 || (categories.data?.length ?? 0) > 1) && (
+      {!dossier && !category && !browseExternal && !browseGenre && (folders.length > 0 || (categories.data?.length ?? 0) > 1) && (
         <div className="mb-5 flex items-center gap-4 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {folders.map((folder) => (
             <button key={folder.id} type="button" onClick={() => openDossier(folder.slug)}
@@ -684,7 +713,7 @@ function VodPageContent() {
                 {category === null && <span className="absolute inset-x-0 -bottom-0.5 h-0.5 rounded-full bg-accent" aria-hidden />}
               </button>
               {categories.data.map((entry) => (
-                <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseAll(false); setBrowseExternal(false); setBrowseGenre(null); }}
+                <button key={entry.name} type="button" onClick={() => { setCategory(category === entry.name ? null : entry.name); setBrowseExternal(false); setBrowseGenre(null); }}
                   className={`relative shrink-0 pb-0.5 text-sm font-bold transition ${category === entry.name ? 'text-foreground' : 'text-muted hover:text-foreground/70'}`}>
                   {/* Libellé nettoyé à l'écran, clé brute pour le filtre. */}
                   {entry.label ?? entry.name}
@@ -698,7 +727,7 @@ function VodPageContent() {
       <Suspense fallback={<div className="flex justify-center py-16"><Spinner /></div>}>
         {dossier
           ? <DossierView slug={dossier} q={q} folder={dossierFolder ?? (foldersQuery.isPending ? undefined : null)} />
-          : !q && !category && !browseAll && !browseExternal && !browseGenre
+          : !q && !category && !browseExternal && !browseGenre
             ? <VodHome kind={tab} onBrowseExternal={() => setBrowseExternal(true)} onBrowseGenre={(genre) => setBrowseGenre(genre)} folders={folders} />
             : browseExternal && !q
               ? <>
@@ -710,14 +739,15 @@ function VodPageContent() {
                     <h2 className="mb-4 text-xl font-bold">{browseGenre} — tout le catalogue</h2>
                     <ExternalBrowse q="" kind={tab} genre={browseGenre} />
                   </>
-              : q && (folders.length > 0 || tab === 'MOVIE') ? (
+              : q ? (
                 // Recherche façon Netflix : le catalogue VOD d'abord, puis les
-                // collections des dossiers (recherche serveur YouTube), puis
-                // les titres externes du type de l'onglet.
+                // titres externes du type de l'onglet (MOVIE comme SERIES),
+                // puis les collections des dossiers (recherche serveur
+                // YouTube — dossiers seulement, l'onglet Films en repli).
                 <>
                   <VodBrowse kind={tab} category={category} q={q} />
                   <ExternalSearch q={q} kind={tab} />
-                  {searchFolders.length > 0
+                  {(folders.length > 0 || tab === 'MOVIE') && (searchFolders.length > 0
                     ? searchFolders.map((section) => (
                         <section key={section.id} className="mt-10" aria-label={`Résultats ${section.name}`}>
                           <h2 className="mb-3 text-lg font-bold">{section.name}</h2>
@@ -729,7 +759,7 @@ function VodPageContent() {
                         <h2 className="mb-3 text-lg font-bold">Nollywood</h2>
                         <YoutubeBrowse channelId={YOUTUBE_AFOREVO_CHANNEL_ID} q={q} hideWhenEmpty />
                       </section>
-                    )}
+                    ))}
                 </>
               )
               : <VodBrowse kind={tab} category={category} q={q} />}
