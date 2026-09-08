@@ -61,7 +61,7 @@ function ShellContent({ children }: { children: ReactNode }) {
         navItems={NAV_ITEMS}
         menuSections={buildMenuSections(unreadWhatsNew)}
         menuBadge={unreadWhatsNew}
-        searchSlot={pathname?.startsWith('/live') || pathname?.startsWith('/vod') ? (
+        searchSlot={pathname?.startsWith('/live') || pathname?.startsWith('/vod') || pathname?.startsWith('/favorites') ? (
           <div className="flex items-center gap-2">
             <Suspense fallback={<div className="h-10 w-10" />}>
               <HeaderSearch />

@@ -10,10 +10,11 @@ const DEBOUNCE_MS = 300;
 
 // Recherche Netflix dans la barre de navigation : elle appartient à la
 // section courante — /live filtre les chaînes (dossier ?category ou tout le
-// catalogue), /vod filtre films/séries (+ Nollywood via ?dossier). Depuis une
-// page de détail /vod/<id>, on bascule sur la liste /vod?q=. L'état est
-// piloté par l'URL (?q=) — l'écriture est gardée par un ref pour éviter tout
-// écho replace ↔ searchParams.
+// catalogue), /vod filtre films/séries (+ Nollywood via ?dossier),
+// /favorites filtre les favoris de l'utilisateur (chaînes, Mbolo TV, VOD)
+// en préservant l'onglet ?tab=. Depuis une page de détail /vod/<id>, on
+// bascule sur la liste /vod?q=. L'état est piloté par l'URL (?q=) —
+// l'écriture est gardée par un ref pour éviter tout écho replace ↔ searchParams.
 export function HeaderSearch() {
   const router = useRouter();
   const pathname = usePathname();
@@ -27,18 +28,19 @@ export function HeaderSearch() {
   const categoriesQuery = useCategories();
   const folderName = category ? categoryLabel(categoriesQuery.data ?? [], category) : undefined;
   const onVod = pathname.startsWith('/vod');
+  const onFavorites = pathname.startsWith('/favorites');
   const onVodList = pathname === '/vod';
 
   function writeUrl(query: string): void {
     if (lastWrittenRef.current === query) return;
     lastWrittenRef.current = query;
     // Liste courante : on préserve les paramètres de section (kind, dossier,
-    // category…). Détail /vod/<id> : on repart d'une URL propre.
+    // category, tab…). Détail /vod/<id> : on repart d'une URL propre.
     const params = onVodList || !onVod ? new URLSearchParams(window.location.search) : new URLSearchParams();
     if (query) params.set('q', query);
     else params.delete('q');
     const search = params.toString();
-    const base = onVod ? '/vod' : '/live';
+    const base = onFavorites ? '/favorites' : onVod ? '/vod' : '/live';
     router.replace(search ? `${base}?${search}` : base, { scroll: false });
   }
 
@@ -79,8 +81,8 @@ export function HeaderSearch() {
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => { if (event.key === 'Escape') close(); }}
-        placeholder={folderName ? `Rechercher dans « ${format(folderName)} »…` : onVod ? 'Rechercher un film ou une série…' : 'Rechercher une chaîne…'}
-        aria-label={folderName ? `Rechercher dans ${folderName}` : onVod ? 'Rechercher un film ou une série' : 'Rechercher une chaîne'}
+        placeholder={folderName ? `Rechercher dans « ${format(folderName)} »…` : onFavorites ? 'Rechercher dans tes favoris…' : onVod ? 'Rechercher un film ou une série…' : 'Rechercher une chaîne…'}
+        aria-label={folderName ? `Rechercher dans ${folderName}` : onFavorites ? 'Rechercher dans les favoris' : onVod ? 'Rechercher un film ou une série' : 'Rechercher une chaîne'}
         className="w-full rounded-xl border border-border bg-surface-2 py-2 pl-10 pr-9 text-sm font-medium placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
       />
       <button
