@@ -38,6 +38,8 @@ interface ExternalFavoritesState {
   /** Toggle avec métadonnées : la voie utilisée par les fiches — ajoute
    * l'entrée d'affichage en même temps que l'id. */
   toggleWithMeta: (externalId: string, meta: ExternalFavoriteMeta) => void;
+  /** Retrait direct (corbeille de la page Favoris), id préfixé. */
+  remove: (externalId: string) => void;
   has: (externalId: string) => boolean;
 }
 
@@ -73,6 +75,16 @@ export const useExternalFavoritesStore = create<ExternalFavoritesState>()(
         });
       },
       has: (externalId) => get().ids.includes(externalId),
+      remove: (externalId) => {
+        // Robuste aux deux historiques d'ids : les fiches écrivent l'id
+        // préfixé (« x:<id> »), d'anciens loads peuvent détenir l'id brut —
+        // les deux espaces (ids + entrées d'affichage) sont nettoyés.
+        const matches = (candidate: string): boolean => candidate === externalId || externalFavoriteId(candidate) === externalId;
+        set({
+          ids: get().ids.filter((id) => !matches(id)),
+          entries: get().entries.filter((entry) => !matches(entry.id)),
+        });
+      },
     }),
     { name: 'mbolo-external-favorites' },
   ),

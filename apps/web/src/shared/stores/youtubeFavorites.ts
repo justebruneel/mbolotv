@@ -27,6 +27,8 @@ interface YoutubeFavoritesState {
   /** Toggle avec métadonnées : la voie des fiches — l'entrée d'affichage
    * accompagne l'id (la page Favoris rend les tuiles sans fetch). */
   toggleWithMeta: (youtubeId: string, meta: YoutubeFavoriteMeta) => void;
+  /** Retrait direct (corbeille de la page Favoris), id préfixé « yt: ». */
+  remove: (youtubeId: string) => void;
   has: (youtubeId: string) => boolean;
 }
 
@@ -62,6 +64,15 @@ export const useYoutubeFavoritesStore = create<YoutubeFavoritesState>()(
         });
       },
       has: (youtubeId) => get().ids.includes(youtubeId),
+      remove: (youtubeId) => {
+        // Robuste aux deux historiques d'ids (préfixé « yt:<id> » / brut),
+        // ids et entrées d'affichage nettoyés ensemble.
+        const matches = (candidate: string): boolean => candidate === youtubeId || youtubeProgressId(candidate) === youtubeId;
+        set({
+          ids: get().ids.filter((id) => !matches(id)),
+          entries: get().entries.filter((entry) => !matches(entry.id)),
+        });
+      },
     }),
     { name: 'mbolo-youtube-favorites' },
   ),

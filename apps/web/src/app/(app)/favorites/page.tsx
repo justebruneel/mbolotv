@@ -15,6 +15,7 @@ import { ChannelTile } from '../../../features/live-tv/components/ChannelTile';
 import { MediaTile } from '../../../features/vod/components/MediaTile';
 import { VodTile } from '../../../features/vod/components/VodTile';
 import { YoutubeTile } from '../../../features/vod/components/YoutubeTile';
+import { DragToRemove, TrashZone } from './DragToRemove';
 
 type Tab = 'live' | 'vod';
 
@@ -57,6 +58,9 @@ function FavoritesContent() {
       </div>
 
       {tab === 'live' ? <LiveFavorites /> : <VodFavorites />}
+      {/* Corbeille du retrait au glisser — un seul rendu par page, cible
+          partagée par toutes les tuiles (store global DragToRemove). */}
+      <TrashZone />
     </main>
   );
 }
@@ -188,7 +192,9 @@ function LiveFavorites() {
       {visible.length > 0 && (
         <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))]">
           {visible.map((channel) => (
-            <ChannelTile key={channel.id} channel={channel} />
+            <DragToRemove key={channel.id} label={channel.name} onRemove={() => useFavoritesStore.getState().toggle(channel.id)}>
+              <ChannelTile channel={channel} />
+            </DragToRemove>
           ))}
         </div>
       )}
@@ -268,7 +274,7 @@ function VodFavorites() {
       <NoResults query={query} />
     ) : (
       <EmptyState
-        title="Aucun favori VOD"
+        title="Aucun favori film ou série ajouté"
         hint="Touche le cœur sur une affiche dans Films & Séries pour la retrouver ici."
         action={
           <Link
@@ -296,24 +302,30 @@ function VodFavorites() {
       {visibleFavs.length > 0 && (
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
           {visibleFavs.map((item) => (
-            <VodTile key={item.id} item={item} />
+            <DragToRemove key={item.id} label={item.title} onRemove={() => useVodFavoritesStore.getState().toggle(item.id)}>
+              <VodTile item={item} />
+            </DragToRemove>
           ))}
         </div>
       )}
       {visibleExternals.length > 0 && (
         <section className={visibleFavs.length > 0 ? 'mt-8' : ''} aria-label="Favoris Mbolo TV">
-          <h2 className="mb-3 text-lg font-bold">Mbolo TV</h2>
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
             {visibleExternals.map((entry) => (
-              <MediaTile
+              <DragToRemove
                 key={entry.id}
-                href={`/vod/x/${entry.id}`}
-                ariaLabel={`Ouvrir la fiche de ${entry.title}`}
-                aspect="poster"
-                imageUrl={entry.posterUrl}
-                title={entry.title}
-                subtitle={entry.year != null ? String(entry.year) : undefined}
-              />
+                label={entry.title}
+                onRemove={() => useExternalFavoritesStore.getState().remove(entry.id)}
+              >
+                <MediaTile
+                  href={`/vod/x/${entry.id}`}
+                  ariaLabel={`Ouvrir la fiche de ${entry.title}`}
+                  aspect="poster"
+                  imageUrl={entry.posterUrl}
+                  title={entry.title}
+                  subtitle={entry.year != null ? String(entry.year) : undefined}
+                />
+              </DragToRemove>
             ))}
           </div>
         </section>
@@ -323,10 +335,15 @@ function VodFavorites() {
           <h2 className="mb-3 text-lg font-bold">Nollywood</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {visibleYt.map((entry) => (
-              <YoutubeTile
+              <DragToRemove
                 key={entry.id}
-                item={{ id: entry.id, title: entry.title, posterUrl: entry.posterUrl, description: null, publishedAt: null, duration: null }}
-              />
+                label={entry.title}
+                onRemove={() => useYoutubeFavoritesStore.getState().remove(entry.id)}
+              >
+                <YoutubeTile
+                  item={{ id: entry.id, title: entry.title, posterUrl: entry.posterUrl, description: null, publishedAt: null, duration: null }}
+                />
+              </DragToRemove>
             ))}
           </div>
         </section>
