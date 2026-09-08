@@ -58,7 +58,7 @@ function YoutubeDetailContent() {
 
   const progressId = useMemo(() => youtubeProgressId(videoId), [videoId]);
   const isFavorite = useYoutubeFavoritesStore((state) => state.ids.includes(progressId));
-  const toggleFavorite = useYoutubeFavoritesStore((state) => state.toggle);
+  const toggleFavorite = useYoutubeFavoritesStore((state) => state.toggleWithMeta);
   const progress = useSettingsStore((state) => state.vodProgress[progressId]);
   const recordVodProgress = useSettingsStore((state) => state.recordVodProgress);
   const volume = useSettingsStore((state) => state.volume);
@@ -188,7 +188,7 @@ function YoutubeDetailContent() {
                 <FavoriteButton
                   label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
                   isActive={isFavorite}
-                  onToggle={() => toggleFavorite(progressId)}
+                  onToggle={() => toggleFavorite(progressId, { title: item.title, posterUrl: item.posterUrl })}
                 />
               </div>
               {resumePct !== null && (
@@ -218,7 +218,7 @@ function YoutubeDetailContent() {
           <FavoriteButton
             label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
             isActive={isFavorite}
-            onToggle={() => toggleFavorite(progressId)}
+            onToggle={() => toggleFavorite(progressId, { title: item.title, posterUrl: item.posterUrl })}
           />
           <span className="min-w-0 flex-1 truncate text-right text-xs text-muted">{item.title}</span>
         </div>
@@ -262,7 +262,7 @@ function YoutubeDetailContent() {
                 <FavoriteButton
                   label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
                   isActive={isFavorite}
-                  onToggle={() => toggleFavorite(progressId)}
+                  onToggle={() => toggleFavorite(progressId, { title: item.title, posterUrl: item.posterUrl })}
                 />
               </div>
               {resumePct !== null && (

@@ -102,7 +102,7 @@ function ExternalDetailContent() {
   // Favori titre externe : store local pur (jamais servi — même motif que
   // Nollywood), clé préfixée « x: ».
   const isFavorite = useExternalFavoritesStore((state) => state.ids.includes(externalFavoriteId(id)));
-  const toggleFavorite = useExternalFavoritesStore((state) => state.toggle);
+  const toggleFavorite = useExternalFavoritesStore((state) => state.toggleWithMeta);
   const [startAt, setStartAt] = useState(0);
   const recordVodProgress = useSettingsStore((state) => state.recordVodProgress);
   const markVodEpisodeWatched = useSettingsStore((state) => state.markVodEpisodeWatched);
@@ -565,7 +565,7 @@ function ExternalDetailContent() {
                 )}
                 <FavoriteButton
                   isActive={isFavorite}
-                  onToggle={() => toggleFavorite(externalFavoriteId(id))}
+                  onToggle={() => toggleFavorite(externalFavoriteId(id), { title: item.title, posterUrl: item.posterUrl, kind: item.kind, year: item.year })}
                   label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
                 />
               </div>
@@ -657,7 +657,7 @@ function ExternalDetailContent() {
               )}
               <FavoriteButton
                 isActive={isFavorite}
-                onToggle={() => toggleFavorite(externalFavoriteId(id))}
+                onToggle={() => toggleFavorite(externalFavoriteId(id), { title: item.title, posterUrl: item.posterUrl, kind: item.kind, year: item.year })}
                 label={isFavorite ? `Retirer ${item.title} des favoris` : `Ajouter ${item.title} aux favoris`}
               />
             </div>
