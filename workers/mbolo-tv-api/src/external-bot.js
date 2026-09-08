@@ -1,22 +1,30 @@
 // Bot d'import automatique des fiches French Stream : découverte des
 // listings (films / s-tv), file d'attente persistante (ExternalImportQueue),
-// publication par petits lots à chaque tick du cron */10. L'objectif :
-// absorber ~34 000 fiches initiales + les nouveautés quotidiennes sans
-// intervention manuelle, dans le budget de sous-requêtes Workers.
+// publication par petits lots à chaque tick du cron */5. L'objectif :
+// absorber le catalogue complet (~34 000 fiches) + les nouveautés
+// quotidiennes sans aucune intervention, dans le budget de sous-requêtes
+// Workers (50/invocation, plan gratuit).
 //
-// Par tick : reprise des items marqués RUNNING par le tick précédent (ou
-// stale > 15 min), puis un lot de EXTERNAL_BOT_BATCH fiches PENDING (priorité
-// décroissante, moins tentées d'abord). Chaque fiche ≈ 6-8 sous-requêtes
-// (fiche + film_api + ep-data + wrappers) + 6 vérifications inline max :
-// le lot de 3 ≈ 25-30 req, sous les plafonds, et les autres crons respirent.
+// Rattrapage : à CHAQUE tick, discoverBacklog sème la page suivante de
+// chaque listing via un curseur persistant (MetadataCache) — le semis du
+// catalogue (~20 k fiches/jour) doit dépasser la vitesse du traitement.
+// Catalogue couvert → 0 requête, et la découverte des nouveautés (page 1,
+// priority 10) prend le relais à chaque tick.
+//
+// Par tick : reprise des items RUNNING stale (> 15 min), purge des PENDING
+// épuisés, semis, puis un lot de EXTERNAL_BOT_BATCH fiches PENDING
+// (nouveautés d'abord, rattrapage ensuite ; moins tentées d'abord). Chaque
+// fiche ≈ 6-8 sous-requêtes (fiche + film_api + ep-data + wrappers) : le
+// lot de 4 ≈ 38 req, sous les plafonds, et les autres crons respirent.
 import { scrapeFiche, scrapeListingPage, listingKind } from './scrapers/frenchstream.js';
 import { storeExternalPreview } from './owner-vod.js';
 
 const SITE = 'frenchstream';
 const STALE_RUNNING_MINUTES = 15;
 const MAX_ATTEMPTS = 3;
-// Budget de sous-requêtes du tick (estimation : ~8 par fiche + reprise).
+// Budget de sous-requêtes du tick (estimation : ~8 par fiche + semis).
 const TICK_REQUEST_BUDGET = 45;
+const BACKLOG_CURSOR_KEY = 'external-bot-backlog-cursor';
 
 function enabled(env) {
   return String(env.EXTERNAL_BOT_ENABLED ?? '0') === '1';
@@ -33,42 +41,6 @@ function categories(env) {
     .filter(Boolean);
 }
 
-/**
- * Sème la file depuis les listings : page 1 (nouveautés, priority 10) et
- * page suivante du rattrapage (priority 0) par catégorie. Dédup par
- * (site, newsid) — les fiches déjà connues sont ignorées.
- * Retour : { seeded, byCategory: { films: N, 's-tv': N }, maxPage }.
- */
-export async function discoverNew(env, pages = 1) {
-  const summary = { seeded: 0, byCategory: {}, maxPage: {} };
-  for (const category of categories(env)) {
-    let seededCat = 0;
-    for (let index = 0; index < Math.min(Math.max(1, Number(pages) || 1), 5); index += 1) {
-      // Rattrapage : la plus grande page non encore couverte (curseur en
-      // base via le max de priority 0 déjà semé — simplification : on crawl
-      // les pages croissantes à partir de 1, la dédup écrase le connu).
-      const page = index + 1;
-      const listing = await scrapeListingPage(env, category, page);
-      summary.maxPage[category] = listing.maxPage;
-      const kind = listingKind(category) ?? 'MOVIE';
-      const priority = index === 0 ? 10 : 0;
-      for (const item of listing.items) {
-        const inserted = await env.db.query(
-          env,
-          `INSERT INTO "ExternalImportQueue" (id, site, category, newsid, kind, priority)
-           VALUES ($1,$2,$3,$4,$5,$6)
-           ON CONFLICT (site, newsid) DO NOTHING`,
-          [crypto.randomUUID(), SITE, category, item.newsid, kind, priority],
-        );
-        if ((inserted.rowCount ?? 0) > 0) seededCat += 1;
-      }
-    }
-    summary.byCategory[category] = seededCat;
-    summary.seeded += seededCat;
-  }
-  return summary;
-}
-
 /** Reprise des RUNNING muets (tick précédent tué) → re-PENDING. */
 async function reclaimStale(env) {
   const result = await env.db.query(
@@ -76,6 +48,20 @@ async function reclaimStale(env) {
     `UPDATE "ExternalImportQueue"
      SET state = 'PENDING'
      WHERE state = 'RUNNING' AND "processedAt" < now() - interval '${STALE_RUNNING_MINUTES} minutes'`,
+  );
+  return result.rowCount ?? 0;
+}
+
+/** Purge des épuisés : un PENDING au plafond de tentatives n'est plus
+ *  claimable mais reste vivant en base à jamais — il passe FAILED. Sans
+ *  ça, la file garde des fantômes et la console affiche un faux « en
+ *  attente ». */
+async function exhaustStalePending(env) {
+  const result = await env.db.query(
+    env,
+    `UPDATE "ExternalImportQueue" SET state = 'FAILED', "lastError" = 'tentatives épuisées'
+     WHERE state = 'PENDING' AND attempts >= $1`,
+    [MAX_ATTEMPTS],
   );
   return result.rowCount ?? 0;
 }
@@ -122,26 +108,135 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Curseur du rattrapage (MetadataCache) : dernière page semée par
+ *  catégorie + liste des catégories terminées. */
+async function readBacklogCursor(env) {
+  const rows = await env.db.query(env, `SELECT payload FROM "MetadataCache" WHERE "cacheKey" = $1`, [BACKLOG_CURSOR_KEY]);
+  const payload = rows.rows[0]?.payload;
+  return payload && typeof payload === 'object' ? payload : {};
+}
+
+async function writeBacklogCursor(env, cursor) {
+  await env.db.query(
+    env,
+    `INSERT INTO "MetadataCache" (id, "cacheKey", title, payload, "expiresAt")
+     VALUES ($1, $2, 'Curseur rattrapage bot', $3::jsonb, now() + interval '3650 days')
+     ON CONFLICT ("cacheKey") DO UPDATE SET payload = EXCLUDED.payload, "expiresAt" = now() + interval '3650 days'`,
+    [crypto.randomUUID(), BACKLOG_CURSOR_KEY, JSON.stringify(cursor)],
+  );
+}
+
 /**
- * Un tick du bot : reprise des stale, puis traitement d'un lot séquentiel.
- * Chaque fiche : scrape → storeExternalPreview (tout en UNKNOWN, le cron
- * santé vérifiera les lecteurs) → DONE / FAILED. Stop net au budget.
+ * Rattrapage du catalogue : sème la page suivante de chaque listing (une
+ * par catégorie et par tick, ~2 requêtes) via un curseur persistant. Une
+ * catégorie arrivée au bout passe « done » et n'est plus crawlée ; quand
+ * TOUTES le sont, le rattrapage retourne exhausted (0 requête) et le tick
+ * replie sur discoverNew (nouveautés). Priorité 0 : les nouveautés passent
+ * toujours avant dans le claim. La dédup (site, newsid) rend les
+ * recouvrements de pagination sans effet.
+ */
+export async function discoverBacklog(env) {
+  const cursor = await readBacklogCursor(env);
+  const done = new Set(Array.isArray(cursor.done) ? cursor.done : []);
+  const cats = categories(env);
+  if (cats.every((category) => done.has(category))) {
+    return { exhausted: true, seeded: 0, pages: 0, byCategory: {} };
+  }
+  const next = { ...cursor, done: [...done] };
+  const summary = { exhausted: false, seeded: 0, pages: 0, byCategory: {} };
+  for (const category of cats) {
+    if (done.has(category)) continue;
+    const fromPage = Number(cursor[category]) || 0;
+    let listing;
+    try {
+      listing = await scrapeListingPage(env, category, fromPage + 1);
+    } catch (error) {
+      // Listing injoignable : on retente au prochain tick (curseur intact).
+      summary.byCategory[category] = { error: String(error?.message ?? error).slice(0, 120) };
+      continue;
+    }
+    summary.pages += 1;
+    const kind = listingKind(category) ?? 'MOVIE';
+    let seededCat = 0;
+    for (const item of listing.items) {
+      const inserted = await env.db.query(
+        env,
+        `INSERT INTO "ExternalImportQueue" (id, site, category, newsid, kind, priority)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (site, newsid) DO NOTHING`,
+        [crypto.randomUUID(), SITE, category, item.newsid, kind, 0],
+      );
+      if ((inserted.rowCount ?? 0) > 0) seededCat += 1;
+    }
+    next[category] = fromPage + 1;
+    summary.byCategory[category] = { page: fromPage + 1, maxPage: listing.maxPage, seeded: seededCat };
+    summary.seeded += seededCat;
+    if (fromPage + 1 >= listing.maxPage) next.done = [...(next.done ?? []), category];
+  }
+  summary.exhausted = cats.every((category) => (next.done ?? []).includes(category));
+  await writeBacklogCursor(env, next);
+  return summary;
+}
+
+/**
+ * Sème la file depuis les listings : page 1 (nouveautés, priority 10) et
+ * page suivante du rattrapage (priority 0) par catégorie. Dédup par
+ * (site, newsid) — les fiches déjà connues sont ignorées.
+ * Retour : { seeded, byCategory: { films: N, 's-tv': N }, maxPage }.
+ */
+export async function discoverNew(env, pages = 1) {
+  const summary = { seeded: 0, byCategory: {}, maxPage: {} };
+  for (const category of categories(env)) {
+    let seededCat = 0;
+    for (let index = 0; index < Math.min(Math.max(1, Number(pages) || 1), 5); index += 1) {
+      // Rattrapage : la plus grande page non encore couverte (curseur en
+      // base via le max de priority 0 déjà semé — simplification : on crawl
+      // les pages croissantes à partir de 1, la dédup écrase le connu).
+      const page = index + 1;
+      const listing = await scrapeListingPage(env, category, page);
+      summary.maxPage[category] = listing.maxPage;
+      const kind = listingKind(category) ?? 'MOVIE';
+      const priority = index === 0 ? 10 : 0;
+      for (const item of listing.items) {
+        const inserted = await env.db.query(
+          env,
+          `INSERT INTO "ExternalImportQueue" (id, site, category, newsid, kind, priority)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (site, newsid) DO NOTHING`,
+          [crypto.randomUUID(), SITE, category, item.newsid, kind, priority],
+        );
+        if ((inserted.rowCount ?? 0) > 0) seededCat += 1;
+      }
+    }
+    summary.byCategory[category] = seededCat;
+    summary.seeded += seededCat;
+  }
+  return summary;
+}
+
+/**
+ * Un tick du bot : reprise des stale, purge des épuisés, rattrapage
+ * systématique du catalogue, nouveautés dès que le rattrapage est couvert,
+ * puis traitement d'un lot séquentiel. Aucune intervention requise. Chaque
+ * fiche : scrape → storeExternalPreview (tout en UNKNOWN, le cron santé
+ * vérifie les lecteurs) → DONE / FAILED. Stop net au budget.
  */
 export async function runExternalBotTick(env) {
   if (!enabled(env)) return { ran: false, reason: 'bot désactivé' };
   const reclaimed = await reclaimStale(env);
-  // File vide : amorçage automatique (page 1 des listings = nouveautés).
-  const pendingCheck = await env.db.query(env, `SELECT 1 FROM "ExternalImportQueue" WHERE state IN ('PENDING','RUNNING') LIMIT 1`);
-  let discovery = null;
-  if (pendingCheck.rows.length === 0) {
-    discovery = await discoverNew(env, 1);
-  }
+  const purged = await exhaustStalePending(env);
+  const backlog = await discoverBacklog(env);
+  // Nouveautés une fois le catalogue couvert ; pendant le rattrapage, la
+  // page 1 est de toute façon la première page semée par le curseur.
+  const discovery = backlog.exhausted ? await discoverNew(env, 1) : null;
   const results = [];
-  let requests = 8; // marge : listing/reprise
+  let requests = 4 + backlog.pages + (discovery ? 2 : 0); // semis + marge
   let processed = 0;
   const wanted = batch(env);
   while (processed < wanted && requests < TICK_REQUEST_BUDGET) {
-    // Claim atomique : l'item le plus prioritaire, le moins tenté, le plus ancien.
+    // Claim atomique : l'item le plus prioritaire, le moins tenté, le plus
+    // ancien — jamais au plafond de tentatives (déjà exclus par exhaustStale
+    // Pending, mais la garde reste dans la requête).
     const claim = await env.db.query(
       env,
       `UPDATE "ExternalImportQueue" SET state = 'RUNNING', "processedAt" = now(), attempts = attempts + 1
@@ -180,5 +275,5 @@ export async function runExternalBotTick(env) {
       requests += 4;
     }
   }
-  return { ran: true, reclaimed, discovery, processed, results };
+  return { ran: true, reclaimed, purged, backlog, discovery, processed, results };
 }

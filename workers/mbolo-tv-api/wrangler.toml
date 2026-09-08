@@ -4,7 +4,7 @@ compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
-crons = ["*/2 * * * *", "*/10 * * * *", "*/15 * * * *", "0 5 * * *"]
+crons = ["*/2 * * * *", "*/5 * * * *", "*/10 * * * *", "*/15 * * * *", "0 5 * * *"]
 
 [vars]
 VIDEO_PROXY_URL = "https://mbolo-tv-video-proxy.mbolo-tv-video-proxy.workers.dev"
@@ -46,11 +46,12 @@ ECO_SATURATED_THRESHOLD = "8"
 # (newsid) sur ces bases. Voir external.resyncExternalMeta.
 EXTERNAL_FICHE_BASES = "https://french-stream.one"
 # Bot d'import automatique (fiches French Stream → titres externes) :
-# activer avec EXTERNAL_BOT_ENABLED="1" (ou via secret). Lot = fiches traitées
-# par tick du cron */10 (3 ≈ 25-30 sous-requêtes, sous les plafonds Workers).
-# Catégories de listings crawlées : films (MOVIE), s-tv (SERIES).
+# activer avec EXTERNAL_BOT_ENABLED="1" (ou via secret). Tick dédié */5 :
+# semis rattrapage du catalogue (1 page/listing/tick) + lot de fiches
+# traitées (4 ≈ 38 sous-requêtes, sous les plafonds Workers du plan
+# gratuit). Catégories de listings crawlées : films (MOVIE), s-tv (SERIES).
 EXTERNAL_BOT_ENABLED = "1"
-EXTERNAL_BOT_BATCH = "3"
+EXTERNAL_BOT_BATCH = "4"
 EXTERNAL_BOT_CATEGORIES = "films,s-tv"
 
 [[hyperdrive]]

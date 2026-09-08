@@ -14,6 +14,7 @@ import * as ytplay from "./ytplay.js";
 import * as xplay from "./extractors/index.js";
 import * as xfiche from "./scrapers/index.js";
 import * as external from "./external.js";
+import { refreshExternalGenreMap, applyExternalGenreMap } from "./external-genres.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
@@ -740,8 +741,9 @@ async function route(ctx, url) {
   return ctx.fail(404, `Cannot ${method} ${path}`);
 }
 
-// Cron Triggers : reprise des imports en attente (toutes les 2 min), santé des
-// flux (10 min), découverte de matchs (15 min), EPG complet (5 h).
+// Cron Triggers : bot d'import (5 min), reprise des imports en attente
+// (2 min), santé des flux (10 min), découverte de matchs (15 min), EPG
+// complet (5 h).
 export async function scheduled(event, env) {
   env.db = {
     query: (e, sql, params) => withClient(e, (client) => client.query(sql, params)),
@@ -753,9 +755,10 @@ export async function scheduled(event, env) {
       console.log("[cron] imports repris:", resumed);
       const orphaned = await failStaleImports(env);
       if (orphaned > 0) console.log("[cron] imports orphelins marqués FAILED:", orphaned);
-    } else if (cron === "*/10 * * * *") {
-      // Bot d'import French Stream d'abord : petit lot borné, il cède la
-      // main avant d'épuiser le budget des jobs ci-dessous.
+    } else if (cron === "*/5 * * * *") {
+      // Bot d'import externe : tick dédié — semis rattrapage du catalogue
+      // + lot de fiches. Séparé du cron des 10 min pour ne pas partager
+      // son budget de sous-requêtes avec santé/resync/genres.
       if (String(env.EXTERNAL_BOT_ENABLED ?? "0") === "1") {
         try {
           console.log("[cron] external-bot:", JSON.stringify(await externalBot.runExternalBotTick(env)));
@@ -763,6 +766,7 @@ export async function scheduled(event, env) {
           console.error("[cron] external-bot", error instanceof Error ? error.message : error);
         }
       }
+    } else if (cron === "*/10 * * * *") {
       const key = await importKey(env.ENCRYPTION_KEY);
       console.log("[cron] health:", JSON.stringify(await scanDueVariants(env, key, Number(env.HEALTH_CHECK_BATCH_SIZE ?? 10))));
       // Santé des lecteurs tiers : 8 sources les moins vérifiées, en
@@ -771,6 +775,11 @@ export async function scheduled(event, env) {
       // Backfill des détails (synopsis/genres/…) : petit lot par passage,
       // les titres remplis sortent de la file (synopsis IS NULL).
       console.log("[cron] external-resync:", JSON.stringify(await external.resyncExternalMeta(env, 3)));
+      // Genres séries : 2 catégories du site par passage (rotation, tour
+      // complet en ~90 min) puis application de la carte aux titres sans
+      // genre. Voir external-genres.js.
+      console.log("[cron] external-genres:", JSON.stringify(await refreshExternalGenreMap(env, { limit: 2 })));
+      console.log("[cron] external-genres-apply:", JSON.stringify(await applyExternalGenreMap(env)));
     } else if (cron === "*/15 * * * *") {
       console.log("[cron] matches:", JSON.stringify(await discoverMatches(env)));
     } else if (cron === "0 5 * * *") {
