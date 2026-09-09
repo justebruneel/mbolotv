@@ -198,4 +198,48 @@ describe('MatchesDiscoveryService.discover', () => {
     expect(result.matchesCreated).toBe(1);
     expect(result.matchesLinked).toBe(2);
   });
+
+  it('clos un LIVE sans endsAt après 3 h de jeu (sinon « Sport en direct » garderait les vieux matchs)', async () => {
+    const service = buildService({
+      epgProgramme: { findMany: jest.fn(async () => []) },
+      streamVariant: { findMany: jest.fn(async () => []) },
+      source: { findMany: jest.fn(async () => []) },
+      match: {
+        findMany: jest.fn(async () => []),
+        create: jest.fn(),
+        updateMany: jest.fn(async () => ({ count: 0 })),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+      },
+      matchStream: { findMany: jest.fn(async () => []), createMany: jest.fn(async () => ({ count: 0 })) },
+    });
+
+    await service.discover();
+
+    const updateManyCalls = (service as unknown as { prisma: { match: { updateMany: jest.Mock } } }).prisma.match.updateMany.mock.calls;
+    const orphanCall = updateManyCalls.map((call) => call[0] as { where: { state: string; endsAt: unknown; startsAt: unknown } }).find((arg) => arg.where.state === 'LIVE' && arg.where.endsAt === null);
+    expect(orphanCall).toBeDefined();
+    // Le seuil : startsAt strictement antérieur à now - 3 h.
+    expect(orphanCall?.where.startsAt).toEqual({ lt: expect.any(Date) });
+    expect((orphanCall?.where.startsAt as { lt: Date }).lt.getTime()).toBeLessThanOrEqual(Date.now() - 3 * 3_600_000);
+  });
+
+  it('purge aussi les FINISHED sans endsAt (la comparaison SQL les ignorait)', async () => {
+    const deleteMany = jest.fn(async () => ({ count: 0 }));
+    const service = buildService({
+      epgProgramme: { findMany: jest.fn(async () => []) },
+      streamVariant: { findMany: jest.fn(async () => []) },
+      source: { findMany: jest.fn(async () => []) },
+      match: {
+        findMany: jest.fn(async () => []),
+        create: jest.fn(),
+        updateMany: jest.fn(async () => ({ count: 0 })),
+        deleteMany,
+      },
+      matchStream: { findMany: jest.fn(async () => []), createMany: jest.fn(async () => ({ count: 0 })) },
+    });
+
+    await service.discover();
+
+    expect(deleteMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ OR: [{ endsAt: { lt: expect.any(Date) } }, { endsAt: null }] }) }));
+  });
 });

@@ -152,8 +152,12 @@ export async function discoverMatches(env) {
 
   const live = await env.db.query(env, `UPDATE "Match" SET state = 'LIVE' WHERE state = 'SCHEDULED' AND "startsAt" <= now() AND ("endsAt" IS NULL OR "endsAt" > now())`);
   const finished = await env.db.query(env, `UPDATE "Match" SET state = 'FINISHED' WHERE state IN ('SCHEDULED','LIVE','POSTPONED') AND "endsAt" < now()`);
+  // LIVE sans fin (endsAt NULL) : clos après 3 h de jeu — sinon ces matchs
+  // restent « en direct » pour toujours dans « Sport en direct » (la
+  // transition FINISHED ci-dessus exige endsAt < now()).
+  const orphanLive = await env.db.query(env, `UPDATE "Match" SET state = 'FINISHED' WHERE state = 'LIVE' AND "endsAt" IS NULL AND "startsAt" < now() - interval '3 hours'`);
   const postponed = await env.db.query(env, `UPDATE "Match" SET state = 'POSTPONED' WHERE state = 'SCHEDULED' AND "startsAt" < now() - interval '2 hours' AND "endsAt" >= now()`);
-  const removed = await env.db.query(env, `DELETE FROM "Match" WHERE state = 'FINISHED' AND "endsAt" < now() - interval '24 hours'`);
+  const removed = await env.db.query(env, `DELETE FROM "Match" WHERE state = 'FINISHED' AND ("endsAt" < now() - interval '24 hours' OR "endsAt" IS NULL)`);
 
-  return { matchesCreated, matchesLinked, stateUpdates: live.rowCount + finished.rowCount + postponed.rowCount, removed: removed.rowCount };
+  return { matchesCreated, matchesLinked, stateUpdates: live.rowCount + finished.rowCount + orphanLive.rowCount + postponed.rowCount, removed: removed.rowCount };
 }

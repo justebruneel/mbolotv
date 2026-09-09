@@ -69,6 +69,11 @@ const SYNC_WINDOW_FUTURE_MS = 8 * 24 * 3_600_000;
 const DISCOVERY_DEDUP_MS = 12 * 3_600_000;
 const LINK_WINDOW_PAST_MS = 4 * 3_600_000;
 const LINK_WINDOW_FUTURE_MS = 1 * 3_600_000;
+// TheSportsDB ne donne pas d'heure de fin : sans cette valeur, le match
+// naîtrait avec endsAt NULL — et les transitions d'état (FINISHED exige
+// endsAt < now) le laisseraient « LIVE » pour toujours dans « Sport en
+// direct ». Durée plausibile d'un match de foot.
+const DEFAULT_MATCH_DURATION_MS = 2 * 3_600_000;
 
 @Injectable()
 export class FootballScheduleService {
@@ -165,7 +170,9 @@ export class FootballScheduleService {
         (isSameTeam(row.homeTeam, event.strAwayTeam) && isSameTeam(row.awayTeam, event.strHomeTeam)),
     );
     if (similar) {
-      await this.prisma.match.update({ where: { id: similar.id }, data: { homeTeamLogo: data.homeTeamLogo, awayTeamLogo: data.awayTeamLogo } }).catch(() => {});
+      // endsAt backfillé aussi sur la ligne réutilisée (découverte EPG) : un
+      // match créé côté EPG peut lui aussi manquer de fin exploitable.
+      await this.prisma.match.update({ where: { id: similar.id }, data: { endsAt: new Date(startsAt.getTime() + DEFAULT_MATCH_DURATION_MS), homeTeamLogo: data.homeTeamLogo, awayTeamLogo: data.awayTeamLogo } }).catch(() => {});
       return { id: similar.id };
     }
     const created = await this.prisma.match
@@ -176,6 +183,7 @@ export class FootballScheduleService {
           homeTeam: event.strHomeTeam,
           awayTeam: event.strAwayTeam,
           startsAt,
+          endsAt: new Date(startsAt.getTime() + DEFAULT_MATCH_DURATION_MS),
           state: 'SCHEDULED',
           externalId,
           homeTeamLogo: data.homeTeamLogo,
