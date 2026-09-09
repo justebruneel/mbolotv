@@ -9,7 +9,9 @@ import { useSettingsStore } from '../stores/settings';
 import { internalNavigationCount } from './RouteTracker';
 
 // Vignette du mini-lecteur : au-dessus des onglets bas, sous les menus.
-const PLAYER_MINI = 'fixed bottom-[calc(68px+env(safe-area-inset-bottom))] right-3 z-40 w-[232px] overflow-hidden rounded-xl border border-border bg-black shadow-2xl';
+// --kb-offset : même compensation clavier que .bottomTabs — la vignette
+// reste ancrée au-dessus de la barre quand le clavier s'ouvre.
+const PLAYER_MINI = 'fixed bottom-[calc(68px+env(safe-area-inset-bottom)+var(--kb-offset,0px))] right-3 z-40 w-[232px] overflow-hidden rounded-xl border border-border bg-black shadow-2xl';
 // Mode « suit la page watch » : conteneur fixe recalé chaque frame sur
 // l'emplacement réservé par la page (#watch-player-slot) via transform —
 // écriture DOM impérative, aucun re-render pendant le scroll.

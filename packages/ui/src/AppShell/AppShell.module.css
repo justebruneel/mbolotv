@@ -216,7 +216,11 @@
 
 /* ---------- Onglets bas (mobile uniquement) ---------- */
 /* Pas de backdrop-filter : coûteux à recomposer à chaque frame de scroll sur
-   GPU faible (téléphones d'entrée de gamme) — un fond quasi opaque suffit. */
+   GPU faible (téléphones d'entrée de gamme) — un fond quasi opaque suffit.
+   --kb-offset : compensation clavier virtuel (iOS) — quand le clavier
+   s'ouvre, la barre reste ancrée au bas de la page au lieu de monter avec
+   la visual viewport ; le clavier passe par-dessus. Voir
+   useKeyboardViewportOffset. */
 .bottomTabs {
   position: fixed;
   left: 0;
@@ -227,6 +231,7 @@
   border-top: 1px solid var(--mbolo-border);
   background: oklch(from var(--mbolo-bg) l c h / 0.97);
   padding-bottom: env(safe-area-inset-bottom);
+  transform: translateY(var(--kb-offset, 0px));
 }
 .bottomTab {
   position: relative;

@@ -13,6 +13,7 @@ import { useActiveUsers, useActivityHeartbeat, useFavoritesSync, useRemindersSyn
 import { useReminderScheduler } from '../../features/epg/hooks/useReminderScheduler';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
 import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/access';
+import { useKeyboardViewportOffset } from '../../shared/hooks/useKeyboardViewportOffset';
 
 const NAV_ITEMS = [
   { href: '/live', label: 'Live TV', icon: <Icon.Tv size={20} /> },
@@ -53,6 +54,9 @@ function ShellContent({ children }: { children: ReactNode }) {
   useReminderScheduler();
   // Pastille « Quoi de neuf » : annonces plus récentes que la dernière lecture.
   const unreadWhatsNew = useUnreadAnnouncements();
+  // Clavier virtuel : les barres fixed restent ancrées en bas de la page
+  // (--kb-offset) au lieu de monter avec le clavier sur iOS.
+  useKeyboardViewportOffset();
 
   return (
     <>
