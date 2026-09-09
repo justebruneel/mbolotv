@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { AccessChecking, AccessExpiredBanner, AccessForm, useAccessStatus } from '../features/auth/components/access';
-import { ThemeToggle } from '../shared/components/ThemeToggle';
+
 import { apiGet } from '../shared/api/client';
 
 /**
@@ -102,7 +102,6 @@ export default function EntryPage() {
           >
             <Icon.Mail size={14} aria-hidden className="text-accent" /> Besoin d’un code ?
           </a>
-          <ThemeToggle variant="icon" />
         </div>
       </header>
 

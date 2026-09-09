@@ -4,7 +4,6 @@ import '@mbolo/ui/src/tokens.css';
 import './globals.css';
 import '../styles/pwa.css';
 import { PwaRegister } from '../shared/components/PwaRegister';
-import { ThemeProvider } from '../shared/components/ThemeProvider';
 
 export const metadata: Metadata = {
   title: { default: 'Mbolo TV', template: '%s · Mbolo TV' },
@@ -17,17 +16,17 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, title: 'Mbolo TV', statusBarStyle: 'black-translucent' },
 };
 // Zoom pinceau et double-tap désactivés : l'app doit garder sa forme native.
-export const viewport: Viewport = { themeColor: [{ color: '#0f1419', media: '(prefers-color-scheme: dark)' }, { color: '#f8f9fa', media: '(prefers-color-scheme: light)' }], width: 'device-width', initialScale: 1, maximumScale: 1, userScalable: false, viewportFit: 'cover' };
+// Thème unique sombre : un seul theme-color, plus de variante claire.
+export const viewport: Viewport = { themeColor: '#0f1419', width: 'device-width', initialScale: 1, maximumScale: 1, userScalable: false, viewportFit: 'cover' };
 
+// Thème unique sombre : data-theme posé d'office (le script legacy qui
+// lisait « mbolo-theme » disparaît — la clé est purgée des anciens clients).
 const THEME_INIT_SCRIPT = `
 (function() {
   try {
-    var t = localStorage.getItem('mbolo-theme');
-    var d = window.matchMedia('(prefers-color-scheme: light)').matches;
-    var theme = t || 'system';
-    var resolved = theme === 'system' ? (d ? 'light' : 'dark') : theme;
-    document.documentElement.setAttribute('data-theme', resolved);
-    document.documentElement.classList.add(resolved);
+    localStorage.removeItem('mbolo-theme');
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.documentElement.classList.add('dark');
   } catch(e) {}
 })();
 `;
@@ -39,13 +38,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body>
-        <ThemeProvider>
-          <a href="#main-content" className="skip-link">
-            Aller au contenu principal
-          </a>
-          <PwaRegister />
-          {children}
-        </ThemeProvider>
+        <a href="#main-content" className="skip-link">
+          Aller au contenu principal
+        </a>
+        <PwaRegister />
+        {children}
       </body>
     </html>
   );

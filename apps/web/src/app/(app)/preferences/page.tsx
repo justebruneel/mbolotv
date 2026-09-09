@@ -2,16 +2,9 @@
 
 import { Icon } from '@mbolo/ui';
 import { useEffect, useState, type ReactNode } from 'react';
-import { useTheme } from '../../../shared/components/ThemeProvider';
 import { sharedQueryClient } from '../../../shared/components/QueryProvider';
 import { useSettingsStore } from '../../../shared/stores/settings';
 import { usePush } from '../../../shared/hooks/usePush';
-
-const THEME_OPTIONS = [
-  { value: 'dark', label: 'Sombre', icon: Icon.Moon },
-  { value: 'light', label: 'Clair', icon: Icon.Sun },
-  { value: 'system', label: 'Système', icon: Icon.Monitor },
-] as const;
 
 const QUALITY_OPTIONS = [
   { value: -1, label: 'Auto' },
@@ -49,7 +42,6 @@ function Row({ title, hint, children }: { title: string; hint: string; children:
 }
 
 export default function PreferencesPage() {
-  const { theme, setTheme } = useTheme();
   const volume = useSettingsStore((state) => state.volume);
   const setVolume = useSettingsStore((state) => state.setVolume);
   const dataSaver = useSettingsStore((state) => state.dataSaver);
@@ -117,32 +109,7 @@ export default function PreferencesPage() {
   return (
     <main className="mx-auto max-w-2xl animate-fade-in px-4 py-6 md:px-10">
       <h1 className="text-2xl font-black tracking-tight md:text-3xl">Préférences</h1>
-      <p className="mt-1 text-sm text-muted">Réglages de lecture et d'apparence, enregistrés sur cet appareil.</p>
-
-      {/* ===== Apparence ===== */}
-      <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-muted">Apparence</h2>
-        <div className="mt-3 grid grid-cols-3 gap-2" role="group" aria-label="Thème">
-          {THEME_OPTIONS.map((option) => {
-            const active = theme === option.value;
-            const OptionIcon = option.icon;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setTheme(option.value)}
-                className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold transition ${
-                  active ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:bg-surface-2 hover:text-foreground'
-                }`}
-              >
-                <OptionIcon size={16} aria-hidden />
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      <p className="mt-1 text-sm text-muted">Réglages de lecture, enregistrés sur cet appareil.</p>
 
       {/* ===== Lecture ===== */}
       <section className="mt-4 rounded-2xl border border-border bg-surface p-5">
