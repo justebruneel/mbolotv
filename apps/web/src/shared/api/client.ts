@@ -21,6 +21,16 @@ export class ApiError extends Error {
   }
 }
 
+/** Vrai si l'échec provient du réseau (hors ligne) et non d'une réponse HTTP.
+ * Une `ApiError` signifie qu'une réponse du serveur est arrivée ; un `TypeError`
+ * de fetch (ou `navigator.onLine` faux) indique une panne réseau. Sert à ne pas
+ * confondre « hors ligne » avec « accès révoqué/expiré » côté garde d'accès. */
+export function isNetworkError(error: unknown): boolean {
+  if (error instanceof ApiError) return false;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return true;
+  return error instanceof TypeError;
+}
+
 function deviceId(): string {
   if (typeof window === 'undefined') return '';
   const existing = window.localStorage.getItem(DEVICE_KEY);

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { AccessChecking, AccessExpiredBanner, AccessForm, useAccessStatus } from '../features/auth/components/access';
+import { useNetworkStatus } from '../shared/hooks/useNetworkStatus';
 
 import { apiGet } from '../shared/api/client';
 
@@ -24,6 +25,7 @@ function scrollToId(id: string) {
 
 export default function EntryPage() {
   const router = useRouter();
+  const isOnline = useNetworkStatus();
   const { status, loading } = useAccessStatus();
   const [granted, setGranted] = useState(false);
   const [liveCount, setLiveCount] = useState<number | null>(null);
@@ -71,6 +73,20 @@ export default function EntryPage() {
   // Vérification en cours, ou bascule vers /live : écran de marque.
   if (loading || active) {
     return <AccessChecking />;
+  }
+
+  // Hors ligne et aucun statut connu : écran dédié au lieu de la page marketing.
+  if (!isOnline && !status) {
+    return (
+      <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-bg px-6 text-center">
+        <div aria-hidden className="pointer-events-none absolute -top-40 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-accent/10 blur-[120px]" />
+        <Icon.WifiOff size={48} aria-hidden className="text-muted" />
+        <h1 className="mt-6 text-xl font-black tracking-tight">Vous êtes hors ligne</h1>
+        <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted">
+          Vérifiez votre connexion Internet pour accéder à Mbolo TV.
+        </p>
+      </main>
+    );
   }
 
   return (

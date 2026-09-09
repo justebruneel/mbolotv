@@ -4,8 +4,9 @@ import type { AccessStatus } from '@mbolo/contracts';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon, Logo } from '@mbolo/ui';
-import { apiGet, apiPost } from '../../../shared/api/client';
+import { apiGet, apiPost, isNetworkError } from '../../../shared/api/client';
 import { DAY_MS, formatExpiresAt, formatRemaining } from '../../../shared/utils/formatDuration';
+import { useNetworkStatus } from '../../../shared/hooks/useNetworkStatus';
 
 const WHATSAPP_URL = 'https://wa.me/qr/CPB7IL3GHAGIK1';
 const WHATSAPP_NUMBER = '+241 60 10 89 84';
@@ -88,7 +89,14 @@ export function useAccessStatus(pollMs = 0): { status: AccessStatus | null; load
     const refresh = (): Promise<void> =>
       apiGet<AccessStatus>('/access/status')
         .then((next) => { if (mounted) setStatus(next); })
-        .catch(() => { if (mounted) setStatus({ active: false, expiresAt: null, kind: null, whatsappUrl: WHATSAPP_URL }); })
+        .catch((error) => {
+          if (!mounted) return;
+          // Hors ligne / panne réseau : on conserve le dernier statut connu au
+          // lieu de forcer « inactif » — sinon l'AccessGuard renvoie à l'accueil
+          // alors que l'accès n'a pas forcément expiré.
+          if (isNetworkError(error)) return;
+          setStatus({ active: false, expiresAt: null, kind: null, whatsappUrl: WHATSAPP_URL });
+        })
         .finally(() => { if (mounted) setLoading(false); });
     void refresh();
     if (pollMs > 0) timer = window.setInterval(() => void refresh(), pollMs);
@@ -187,6 +195,7 @@ export function AccessForm({ onRedeemed }: { onRedeemed: (status: AccessStatus) 
 export function AccessGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { status, loading } = useAccessStatus(60_000);
+  const isOnline = useNetworkStatus();
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -198,9 +207,11 @@ export function AccessGuard({ children }: { children: ReactNode }) {
   const expired = status !== null && (!status.active || (status.expiresAt !== null && now > new Date(status.expiresAt).getTime()));
 
   useEffect(() => {
-    if (loading || !expired) return;
+    // Hors ligne, on ne redirige jamais : un échec réseau ne doit pas être
+    // interprété comme un accès révoqué/expiré.
+    if (loading || !expired || !isOnline) return;
     router.replace('/');
-  }, [loading, expired, router]);
+  }, [loading, expired, isOnline, router]);
 
   useEffect(() => {
     const onLost = (): void => router.replace('/');
@@ -208,7 +219,7 @@ export function AccessGuard({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('mbolo:access-lost', onLost);
   }, [router]);
 
-  if (loading || expired) {
+  if ((loading || expired) && isOnline) {
     return <AccessChecking />;
   }
   return <>{children}</>;

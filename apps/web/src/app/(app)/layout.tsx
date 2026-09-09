@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import { ReactNode, Suspense, lazy } from 'react';
 import { QueryProvider } from '../../shared/components/QueryProvider';
 import { RouteTracker } from '../../shared/components/RouteTracker';
-import { NetworkStatusBanner } from '../../shared/components/NetworkStatusBanner';
 
 const GlobalPlayer = lazy(() =>
   import('../../shared/components/GlobalPlayer').then((m) => ({ default: m.GlobalPlayer })),
@@ -92,7 +91,6 @@ function ShellContent({ children }: { children: ReactNode }) {
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <QueryProvider>
-      <NetworkStatusBanner />
       <ShellContent>{children}</ShellContent>
     </QueryProvider>
   );
