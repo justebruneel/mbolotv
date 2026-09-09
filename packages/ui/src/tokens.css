@@ -7,9 +7,11 @@
 :root {
   color-scheme: dark;
 
-  /* Background — deeper, richer blacks */
-  --mbolo-bg: oklch(0.10 0.018 260);
-  --mbolo-bg-elevated: oklch(0.13 0.020 260);
+  /* Background — navy profond, identique au fond des splash iOS (la
+     fenêtre d'avant-rendu, le splash et l'app partagent la même couleur :
+     aucun flash sombre au lancement). */
+  --mbolo-bg: #101823;
+  --mbolo-bg-elevated: #161d28;
 
   /* Surfaces — subtle blue tint, Netflix-style depth layers */
   --mbolo-surface: oklch(0.145 0.022 260);
