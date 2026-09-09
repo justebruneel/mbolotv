@@ -4,14 +4,29 @@
 //
 // Stratégies :
 //   - Navigations (HTML)   → réseau d'abord, repli cache hors ligne.
-//     Chaque déploiement est donc visible immédiatement.
+//     Chaque déploiement est donc visible immédiatement. Les pages
+//     principales sont précachées à l'installation et chaque navigation
+//     réussie est conservée : hors ligne, l'utilisateur retombe sur la
+//     page qu'il avait ouverte (ou l'accueil et son écran « hors ligne »).
 //   - /_next/static/*      → cache-first (fichiers hashés = immuables).
 //   - Autres GET même origine → stale-while-revalidate.
 
 const VERSION = 'dev';
 const SHELL_CACHE = `mbolo-tv-shell-${VERSION}`;
 const RUNTIME_CACHE = `mbolo-tv-runtime-${VERSION}`;
-const PRECACHE = ['/', '/icon.svg', '/apple-icon.png'];
+// Les onglets principaux sont précachés : l'app reste utilisable hors ligne
+// dès la première installation, même sans navigation préalable.
+const PRECACHE = ['/', '/live', '/vod', '/favorites', '/icon.svg', '/apple-icon.png'];
+// Nombre max de navigations conservées dans le cache shell (LRU grossier :
+// cache.keys() renvoie dans l'ordre d'insertion).
+const MAX_NAV_ENTRIES = 30;
+
+async function trimNavCache(cache) {
+  const keys = await cache.keys();
+  if (keys.length <= MAX_NAV_ENTRIES) return;
+  await cache.delete(keys[0]);
+  return trimNavCache(cache);
+}
 
 // En dev, /_next/static/* n'est pas immuable : les chunks gardent la même URL
 // avec un contenu recompilé, donc le cache-first servirait du JS périmé après
@@ -58,13 +73,17 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 1. Navigations : réseau d'abord.
+  // 1. Navigations : réseau d'abord, chaque page visitée est gardée pour
+  //    le repli hors ligne (avec un plafond pour ne pas gonfler le cache).
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy));
+          caches.open(SHELL_CACHE).then(async (cache) => {
+            await cache.put(request, copy);
+            await trimNavCache(cache);
+          });
           return response;
         })
         .catch(() =>
