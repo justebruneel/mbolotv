@@ -3,7 +3,7 @@
 import type { AccessStatus } from '@mbolo/contracts';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Icon, Logo, Spinner } from '@mbolo/ui';
+import { Icon, Logo } from '@mbolo/ui';
 import { apiGet, apiPost } from '../../../shared/api/client';
 import { DAY_MS, formatExpiresAt, formatRemaining } from '../../../shared/utils/formatDuration';
 
@@ -101,13 +101,14 @@ async function redeem(code: string): Promise<AccessStatus> {
   return apiPost<AccessStatus>('/access/redeem', { code });
 }
 
-/** Écran de vérification plein écran, aux couleurs de la marque. */
+/** Écran de lancement, comportement natif iOS : la marque (logo + nom)
+ * s'affiche comme prolongement du splash système pendant que la vérification
+ * de l'accès se fait derrière — pas de spinner. */
 export function AccessChecking() {
   return (
-    <div className="relative flex min-h-dvh flex-col items-center justify-center gap-5 overflow-hidden px-6">
+    <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-6">
       <div aria-hidden className="pointer-events-none absolute -top-40 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-accent/10 blur-[120px]" />
-      <Logo />
-      <Spinner />
+      <Logo stacked size={84} />
     </div>
   );
 }

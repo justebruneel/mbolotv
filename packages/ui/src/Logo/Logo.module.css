@@ -10,6 +10,22 @@
   color: var(--mbolo-text);
 }
 
+/* Variante empilée (écran de lancement) : marque au-dessus, nom en dessous */
+.logoStacked {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.nameStacked {
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: 0.02em;
+  color: var(--mbolo-text);
+  animation: mbolo-fade-in 500ms ease-out both 150ms;
+}
+
 /* Petit écran : logo compact pour tenir dans la barre mobile */
 @media (max-width: 480px) {
   .logo {

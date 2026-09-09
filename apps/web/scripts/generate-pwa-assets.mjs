@@ -35,7 +35,8 @@ const svg = await (await import('node:fs/promises')).readFile(join(pub, 'icon.sv
 
 // apple-touch-icon : iOS arrondit lui-même les coins — carré PLEIN demandé,
 // pas de rx (les coins arrondis laisseraient voir le fond noir derrière).
-const squareSvg = svg.replace(/rx="56"/, 'rx="0"');
+// Tuile sombre + play teal : le logo d'accueil reste fidèle à la marque.
+const squareSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="#101823"/><path d="M94 72v112l92-56-92-56Z" fill="#8ee8cf"/></svg>`;
 await sharp(Buffer.from(squareSvg)).resize(180, 180).png().toFile(join(pub, 'apple-icon.png'));
 
 // Icônes manifest (formes arrondies conservées ; fond opaque = maskable OK).
@@ -43,8 +44,11 @@ for (const size of [192, 512]) {
   await sharp(Buffer.from(svg)).resize(size, size).png().toFile(join(pub, `icon-${size}.png`));
 }
 
-// Splash iOS : fond app (#101823) + logo centré. Tailles officielles des
-// appareils courants (portrait + paysage) — iOS exige la taille exacte.
+// Splash iOS : fond app (#101823) + logo sombre (tuile navy, play teal —
+// même rendu que <Logo stacked>) + « Mbolo TV » en dessous. Tailles
+// officielles des appareils courants (portrait + paysage) — iOS exige la
+// taille exacte. Le splash se prolonge visuellement dans l'écran de
+// lancement de l'app (AccessChecking) : même fond, même marque, même agencement.
 const SPLASHES = [
   ['1290x2796', 'iPhone 15/16 Pro Max'],
   ['2796x1290', 'iPhone 15/16 Pro Max (paysage)'],
@@ -59,14 +63,28 @@ const SPLASHES = [
   ['2048x2732', 'iPad Pro 12.9"'],
   ['2732x2048', 'iPad Pro 12.9" (paysage)'],
 ];
-const logo = await sharp(Buffer.from(svg)).resize(180, 180).png().toBuffer();
+const LOGO_PX = 168;
+const GAP_PX = 32;
+const NAME_PX = 56;
+// Logo sombre à play teal (couleurs codées : les PNG n'héritent pas des
+// variables CSS). #101823 = surface navy de la marque ; play = teal accent.
+const logoSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#101823" stroke="#2a3138" stroke-width="0.5"/><path d="M9 7.5v9l7.5-4.5L9 7.5Z" fill="#8ee8cf"/></svg>`;
+const logo = await sharp(Buffer.from(logoSvg)).resize(LOGO_PX, LOGO_PX).png().toBuffer();
 const splashDir = join(pub, 'splash');
 (await import('node:fs/promises')).mkdir(splashDir, { recursive: true });
 for (const [size, label] of SPLASHES) {
   const [width, height] = size.split('x').map(Number);
   const file = join(splashDir, `${size}.png`);
+  // Ensemble centré (logo + espacement + nom) comme le splash natif iOS.
+  const groupHeight = LOGO_PX + GAP_PX + NAME_PX;
+  const top = Math.round((height - groupHeight) / 2);
+  const nameSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${NAME_PX}"><text x="${width / 2}" y="${NAME_PX * 0.76}" text-anchor="middle" font-family="-apple-system, 'Helvetica Neue', Arial, sans-serif" font-size="${NAME_PX}" font-weight="800" letter-spacing="1" fill="#f5f7fa">Mbolo TV</text></svg>`;
+  const name = await sharp(Buffer.from(nameSvg)).png().toBuffer();
   await sharp({ create: { width, height, channels: 4, background: '#101823' } })
-    .composite([{ input: logo, left: Math.round((width - 180) / 2), top: Math.round((height - 180) / 2) }])
+    .composite([
+      { input: logo, left: Math.round((width - LOGO_PX) / 2), top },
+      { input: name, left: 0, top: top + LOGO_PX + GAP_PX },
+    ])
     .png()
     .toFile(file);
   console.log('splash', size, '—', label);
