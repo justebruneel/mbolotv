@@ -5,6 +5,8 @@ import './globals.css';
 import '../styles/pwa.css';
 import { PwaRegister } from '../shared/components/PwaRegister';
 import { OfflineOverlay } from '../shared/components/OfflineOverlay';
+import { QueryProvider } from '../shared/components/QueryProvider';
+import { RestoringOverlay } from '../shared/components/RestoringOverlay';
 
 export const metadata: Metadata = {
   title: { default: 'Mbolo TV', template: '%s · Mbolo TV' },
@@ -101,9 +103,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <a href="#main-content" className="skip-link">
           Aller au contenu principal
         </a>
-        <PwaRegister />
-        <OfflineOverlay />
-        {children}
+        <QueryProvider>
+          <PwaRegister />
+          <OfflineOverlay />
+          <RestoringOverlay />
+          {children}
+        </QueryProvider>
       </body>
     </html>
   );

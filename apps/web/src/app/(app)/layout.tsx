@@ -3,7 +3,7 @@
 import { AppShell, Icon, Logo } from '@mbolo/ui';
 import { usePathname } from 'next/navigation';
 import { ReactNode, Suspense, lazy } from 'react';
-import { QueryProvider } from '../../shared/components/QueryProvider';
+// QueryProvider is now provided by the root layout
 import { RouteTracker } from '../../shared/components/RouteTracker';
 
 const GlobalPlayer = lazy(() =>
@@ -89,9 +89,5 @@ function ShellContent({ children }: { children: ReactNode }) {
 }
 
 export default function AppLayout({ children }: { children: ReactNode }) {
-  return (
-    <QueryProvider>
-      <ShellContent>{children}</ShellContent>
-    </QueryProvider>
-  );
+  return <ShellContent>{children}</ShellContent>;
 }
