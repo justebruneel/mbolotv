@@ -10,14 +10,7 @@ import { useVodFavoritesStore } from '../../../../shared/stores/vodFavorites';
 import { useSettingsStore } from '../../../../shared/stores/settings';
 import { FavoriteButton } from '@mbolo/ui';
 import { ApiError } from '../../../../shared/api/client';
-
-function formatTime(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
-}
+import { formatTime } from '../../../../shared/utils/formatTime';
 
 // Item parti du catalogue fournisseur (purge d'import, retrait du flux) :
 // la tuile « Reprendre » mène ici — page sans sortie. Un bouton rend le

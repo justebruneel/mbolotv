@@ -14,12 +14,13 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useExternalPlay, useExternalTitle, useYoutubePlay } from '../../../../../shared/api/queries';
+import { useExternalPlay, useExternalTitle, useInfiniteExternalTitles, useYoutubePlay } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
 import { externalFavoriteId, useExternalFavoritesStore } from '../../../../../shared/stores/externalFavorites';
 import { NativeTrailerFrame, TrailerFrame, useTrailerEmbed } from '../../../../../features/vod/components/TrailerHero';
 import { ExternalEpisodeList } from '../../../../../features/vod/components/ExternalEpisodeList';
+import { ExternalRow } from '../../../../../features/vod/components/ExternalRow';
 import type { ExternalSourcePublic } from '@mbolo/contracts';
 
 // Références vides partagées : évitent de recréer un tableau neuf à chaque
@@ -87,6 +88,12 @@ function ExternalDetailContent() {
   const [skippedHost, setSkippedHost] = useState<string | null>(null);
 
   const playQuery = useExternalPlay(selected?.host ?? 'mixdrop', selected?.playRef ?? '', false);
+
+  // Rail « Sur le même thème » : titres du PREMIER genre du titre courant
+  // (même onglet), tri éditorial. Hook appelé sans condition (React #310) ;
+  // enabled quand le titre est chargé et porte un genre — sinon pas d'appel.
+  const relatedGenre = detailQuery.data?.genres?.[0] ?? null;
+  const relatedQuery = useInfiniteExternalTitles('', 12, detailQuery.data?.kind, relatedGenre ?? undefined, 'recent', Boolean(detailQuery.data?.kind && relatedGenre));
 
   // Progression par épisode (façon Netflix) : persistance locale throttlée
   // 5 s pour « Reprendre » + position restaurée par le lecteur. Hooks
@@ -404,6 +411,11 @@ function ExternalDetailContent() {
   }
 
   const item = detailQuery.data;
+  // Rail « Sur le même thème », sans le titre courant (le même genre le
+  // inclurait) — muet si vide/en erreur.
+  const relatedItems = relatedGenre
+    ? (relatedQuery.data?.pages.flatMap((page) => page.items) ?? []).filter((candidate) => candidate.id !== id).slice(0, 12)
+    : [];
   const backdropUrl = item.backdropUrl ?? item.posterUrl;
   // Fenêtre d'intro saisie en console (titre entier, tous épisodes) : ne sert
   // qu'en lecture directe (Player maison avec seek). En iframe (embed tiers
@@ -743,6 +755,15 @@ function ExternalDetailContent() {
           </div>
         </div>
       </div>
+      {!playing && relatedGenre && !relatedQuery.isError && relatedItems.length > 0 && (
+        <div className="mx-auto mt-8 w-full max-w-6xl border-t border-border px-4 pt-6">
+          <ExternalRow
+            title={`Sur le même thème · ${relatedGenre}`}
+            items={relatedItems}
+            seeAllHref={`/vod?kind=${item.kind}&genre=${encodeURIComponent(relatedGenre)}`}
+          />
+        </div>
+      )}
     </div>
   );
 }

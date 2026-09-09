@@ -11,20 +11,14 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import type { YoutubeListResponse } from '@mbolo/contracts';
-import { useYoutubePlay, useYoutubeVideo } from '../../../../../shared/api/queries';
+import { YOUTUBE_AFOREVO_CHANNEL_ID, useInfiniteYoutube, useYoutubePlay, useYoutubeVideo } from '../../../../../shared/api/queries';
 import { useSettingsStore } from '../../../../../shared/stores/settings';
 import { useVodPlayerStore } from '../../../../../shared/stores/player';
 import { useYoutubeFavoritesStore, youtubeProgressId } from '../../../../../shared/stores/youtubeFavorites';
 import { FavoriteButton } from '@mbolo/ui';
 import { formatPublishedRelative } from '../../../../../shared/utils/formatPublishedRelative';
-
-function formatTime(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
-}
+import { formatTime } from '../../../../../shared/utils/formatTime';
+import { YoutubeRow } from '../../../../../features/vod/components/YoutubeRow';
 
 function YoutubeDetailContent() {
   const params = useParams<{ videoId: string }>();
@@ -117,6 +111,11 @@ function YoutubeDetailContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [queryClient, videoId]);
 
+  // Rail « Plus de Nollywood » : le reste du catalogue de la chaîne (le même
+  // cache que le rail d'accueil, staleTime 5 min). Hook avant les
+  // early-returns (React #310) ; muet si vide/en erreur.
+  const relatedQuery = useInfiniteYoutube(YOUTUBE_AFOREVO_CHANNEL_ID, 25, '');
+
   if (!videoId) return <EmptyState title="Contenu introuvable" />;
   if (itemQuery.isLoading && !item) return <div className="flex justify-center py-24"><Spinner /></div>;
   if (!item) return <EmptyState title="Contenu introuvable" hint="Cette vidéo n'est plus disponible." />;
@@ -130,6 +129,8 @@ function YoutubeDetailContent() {
   const publishedLabel = item.publishedAt ? formatPublishedRelative(item.publishedAt) : null;
   const playUrls = playQuery.data?.urls ?? [];
   const playing = playUrls.length > 0;
+  // Rail connexe sans la vidéo courante (elle serait en tête du catalogue).
+  const moreFromChannel = (relatedQuery.data?.pages[0]?.items ?? []).filter((candidate) => candidate.id !== videoId).slice(0, 25);
 
   return (
     <div className="pb-10">
@@ -300,6 +301,11 @@ function YoutubeDetailContent() {
           </div>
         </div>
       </div>
+      {!playing && !relatedQuery.isError && moreFromChannel.length > 0 && (
+        <div className="mx-auto mt-8 w-full max-w-6xl border-t border-border px-4 pt-6">
+          <YoutubeRow title="Plus de Nollywood" items={moreFromChannel} seeAllHref="/vod?kind=MOVIE&dossier=nollywood" />
+        </div>
+      )}
     </div>
   );
 }

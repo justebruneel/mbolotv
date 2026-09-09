@@ -8,10 +8,11 @@ import type {
   ChannelViewersResponse,
   CountryOption,
   EpgRangeResponse,
+  ExternalGenresResponse,
   ExternalPlayResponse,
   ExternalTitleDetail,
+  ExternalTitlePublic,
   ExternalTitlesResponse,
-  ExternalGenresResponse,
   MatchListResponse,
   PlayResponse,
   Programme,
@@ -32,6 +33,7 @@ import { useEffect } from 'react';
 import { apiGet, apiPost } from './client';
 import { useSettingsStore } from '../stores/settings';
 import { useFavoritesStore } from '../stores/favorites';
+import { useExternalFavoritesStore } from '../stores/externalFavorites';
 import { useRemindersStore } from '../stores/reminders';
 import { useWhatsNewStore } from '../stores/whatsNew';
 
@@ -522,8 +524,9 @@ export function useExternalPlay(host: string, id: string, enabled = true) {
 
 // Titres externes (lecteurs tiers) : catalogue public visible + détail.
 // Miroir de useInfiniteVod (pagination par offset serveur). `genre` filtre
-// exact sur le tableau genres, `sort=year` trie par date de sortie.
-export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' | 'SERIES', genre?: string, sort?: 'recent' | 'year') {
+// exact sur le tableau genres, `sort` : year = nouveautés par date de
+// sortie, title = ordre alphabétique.
+export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' | 'SERIES', genre?: string, sort?: 'recent' | 'year' | 'title', enabled = true) {
   const trimmed = q.trim();
   const cleanGenre = genre?.trim() ?? '';
   return useInfiniteQuery({
@@ -533,7 +536,7 @@ export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' 
         ...(trimmed ? { q: trimmed } : {}),
         ...(kind ? { kind } : {}),
         ...(cleanGenre ? { genre: cleanGenre } : {}),
-        ...(sort === 'year' ? { sort: 'year' } : {}),
+        ...(sort ? { sort } : {}),
         limit: pageSize,
         offset: pageParam,
       }),
@@ -541,6 +544,7 @@ export function useInfiniteExternalTitles(q = '', pageSize = 48, kind?: 'MOVIE' 
     getNextPageParam: (lastPage, allPages) =>
       lastPage.hasMore ? allPages.reduce((count, page) => count + page.items.length, 0) : undefined,
     placeholderData: keepPreviousData,
+    enabled,
     staleTime: 5 * 60_000,
   });
 }
@@ -598,4 +602,31 @@ export function useVodFavorites(enabled = true) {
     staleTime: 30_000,
     enabled,
   });
+}
+
+// Favoris titres externes (lecteurs tiers) par appareil — même contrat que
+// le Worker (/api/x/favorites). La page Favoris fusionne la réponse triée
+// (du plus récent au plus ancien) avec les ajouts locaux pas encore ackés.
+export function useExternalFavorites(enabled = true) {
+  return useQuery({
+    queryKey: ['x-favorites'],
+    queryFn: () => apiGet<{ items: ExternalTitlePublic[] }>('/x/favorites'),
+    staleTime: 30_000,
+    enabled,
+  });
+}
+
+/** Synchronise le store local des favoris externes avec le serveur (au
+ * montage de l'app) : même logique d'import unique que useFavoritesSync —
+ * au premier passage les favoris locaux inconnus du serveur y sont importés,
+ * ensuite le serveur fait foi. */
+export function useExternalFavoritesSync(): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    // Même clé que useExternalFavorites : une seule requête partagée.
+    void queryClient
+      .fetchQuery({ queryKey: ['x-favorites'], queryFn: () => apiGet<{ items: ExternalTitlePublic[] }>('/x/favorites'), staleTime: 30_000 })
+      .then((data) => useExternalFavoritesStore.getState().syncFromServer(data.items))
+      .catch(() => undefined);
+  }, [queryClient]);
 }

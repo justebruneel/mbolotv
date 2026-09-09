@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Delete, Get, Headers, Param, Put, Query, UseGuards } from '@nestjs/common';
 import { AccessGuard } from '../access/access.guard';
 import { VodService } from './vod.service';
 
@@ -15,6 +15,30 @@ export class ExternalGenresController {
   }
 }
 
+// Favoris titres externes par appareil (lecteurs tiers) : miroir des routes
+// Worker /api/x/favorites. Chemins disjoints de 'x/titles/:id' (cf.
+// ExternalController ci-dessous).
+@UseGuards(AccessGuard)
+@Controller('x')
+export class ExternalFavoritesController {
+  constructor(private readonly vod: VodService) {}
+
+  @Get('favorites')
+  favorites(@Headers('x-device-id') deviceId: string | undefined): ReturnType<VodService['listExternalFavorites']> {
+    return this.vod.listExternalFavorites(deviceId);
+  }
+
+  @Put(':id/favorite')
+  addFavorite(@Headers('x-device-id') deviceId: string | undefined, @Param('id') id: string): ReturnType<VodService['addExternalFavorite']> {
+    return this.vod.addExternalFavorite(deviceId, id);
+  }
+
+  @Delete(':id/favorite')
+  removeFavorite(@Headers('x-device-id') deviceId: string | undefined, @Param('id') id: string): ReturnType<VodService['removeExternalFavorite']> {
+    return this.vod.removeExternalFavorite(deviceId, id);
+  }
+}
+
 // Titres externes publics (lecteurs tiers) : mêmes routes que le Worker
 // (/api/x/titles*). La résolution/lecture reste côté Worker (/api/x/play).
 @UseGuards(AccessGuard)
@@ -27,7 +51,7 @@ export class ExternalController {
     @Query('q') q?: string,
     @Query('kind') kind?: 'MOVIE' | 'SERIES',
     @Query('genre') genre?: string,
-    @Query('sort') sort?: 'recent' | 'year',
+    @Query('sort') sort?: 'recent' | 'year' | 'title',
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ): ReturnType<VodService['listExternalTitles']> {
@@ -35,7 +59,7 @@ export class ExternalController {
       q: q ?? undefined,
       kind: kind === 'MOVIE' || kind === 'SERIES' ? kind : undefined,
       genre: genre?.trim() ? genre.trim() : undefined,
-      sort: sort === 'year' ? 'year' : undefined,
+      sort: sort === 'year' || sort === 'title' ? sort : undefined,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });

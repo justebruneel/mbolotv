@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ExternalSourceMode, ExternalTitleDetail, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
+import type { ExternalSourceMode, ExternalTitleDetail, ExternalTitlePublic, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
 import { editorialCategoryLabel, publicExternalSourceMode } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
@@ -100,6 +100,45 @@ export class VodService {
   async removeFavorite(deviceId: string | undefined, vodItemId: string): Promise<{ ok: true }> {
     try {
       await this.prisma.vodFavorite.delete({ where: { deviceId_vodItemId: { deviceId: this.device(deviceId), vodItemId } } });
+    } catch (error) {
+      // P2025 : favori absent — suppression idempotente.
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')) throw error;
+    }
+    return { ok: true };
+  }
+
+  // Favoris titres externes par appareil — miroir de listFavorites : liste
+  // triée du favori le plus récent au plus ancien, titres visibles seuls
+  // (un titre retiré du catalogue disparaît simplement de la réponse).
+  async listExternalFavorites(deviceId: string | undefined): Promise<{ items: ExternalTitlePublic[] }> {
+    const id = this.device(deviceId);
+    const rows = await this.prisma.externalFavorite.findMany({ where: { deviceId: id }, orderBy: { createdAt: 'desc' } });
+    if (rows.length === 0) return { items: [] };
+    const titles = await this.prisma.externalTitle.findMany({
+      where: { id: { in: rows.map((row) => row.externalTitleId) }, isVisible: true },
+      include: { sources: { where: { isActive: true, lastStatus: { in: ['OK', 'UNKNOWN'] } }, select: { id: true } } },
+    });
+    const order = new Map(rows.map((row, index) => [row.externalTitleId, index] as const));
+    const sorted = [...titles].sort((a, b) => (order.get(a.id) ?? titles.length) - (order.get(b.id) ?? titles.length));
+    return { items: sorted.map((row) => ({ id: row.id, title: row.title, year: row.year, posterUrl: row.posterUrl, kind: row.kind === 'SERIES' ? 'SERIES' as const : 'MOVIE' as const, healthySources: row.sources.length })) };
+  }
+
+  async addExternalFavorite(deviceId: string | undefined, externalTitleId: string): Promise<{ ok: true }> {
+    const id = this.device(deviceId);
+    const exists = await this.prisma.externalTitle.findFirst({ where: { id: externalTitleId, isVisible: true }, select: { id: true } });
+    if (!exists) throw new NotFoundException('Titre introuvable');
+    try {
+      await this.prisma.externalFavorite.create({ data: { deviceId: id, externalTitleId } });
+    } catch (error) {
+      // P2002 : déjà favori (idempotent).
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error;
+    }
+    return { ok: true };
+  }
+
+  async removeExternalFavorite(deviceId: string | undefined, externalTitleId: string): Promise<{ ok: true }> {
+    try {
+      await this.prisma.externalFavorite.delete({ where: { deviceId_externalTitleId: { deviceId: this.device(deviceId), externalTitleId } } });
     } catch (error) {
       // P2025 : favori absent — suppression idempotente.
       if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')) throw error;
@@ -307,8 +346,9 @@ export class VodService {
   // Titres externes publics (lecteurs tiers) : miroir du Worker (external.js).
   // La résolution/lecture reste côté Worker (/api/x/play).
   // `genre` = filtre exact sur le tableau genres ; `sort=year` = nouveautés
-  // par date de sortie (année DESC, nulls en fin).
-  async listExternalTitles({ q, kind, genre, sort, limit = 48, offset = 0 }: { q?: string; kind?: 'MOVIE' | 'SERIES'; genre?: string; sort?: 'recent' | 'year'; limit?: number; offset?: number }): Promise<ExternalTitlesResponse> {
+  // par date de sortie (année DESC, nulls en fin) ; `sort=title` = ordre
+  // alphabétique (insensible à la casse, puis ajouts récents).
+  async listExternalTitles({ q, kind, genre, sort, limit = 48, offset = 0 }: { q?: string; kind?: 'MOVIE' | 'SERIES'; genre?: string; sort?: 'recent' | 'year' | 'title'; limit?: number; offset?: number }): Promise<ExternalTitlesResponse> {
     const safeLimit = Math.min(Math.max(1, Number(limit) || 48), 100);
     const safeOffset = Math.max(0, Number(offset) || 0);
     const where = {
@@ -319,7 +359,9 @@ export class VodService {
     };
     const orderBy = sort === 'year'
       ? [{ year: { sort: 'desc', nulls: 'last' } as const }, { createdAt: 'desc' as const }]
-      : [{ sortOrder: 'asc' as const }, { createdAt: 'desc' as const }];
+      : sort === 'title'
+        ? [{ title: 'asc' as const }, { createdAt: 'desc' as const }]
+        : [{ sortOrder: 'asc' as const }, { createdAt: 'desc' as const }];
     const [rows, total] = await Promise.all([
       this.prisma.externalTitle.findMany({
         where,
