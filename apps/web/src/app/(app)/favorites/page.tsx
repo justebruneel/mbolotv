@@ -6,10 +6,10 @@ import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { useFavorites, useVodFavorites } from '../../../shared/api/queries';
+import { useFavorites, useExternalFavorites, useVodFavorites } from '../../../shared/api/queries';
 import { useFavoritesStore } from '../../../shared/stores/favorites';
 import { useVodFavoritesStore } from '../../../shared/stores/vodFavorites';
-import { useExternalFavoritesStore } from '../../../shared/stores/externalFavorites';
+import { useExternalFavoritesStore, type ExternalFavoriteEntry } from '../../../shared/stores/externalFavorites';
 import { useYoutubeFavoritesStore } from '../../../shared/stores/youtubeFavorites';
 import { ChannelTile } from '../../../features/live-tv/components/ChannelTile';
 import { MediaTile } from '../../../features/vod/components/MediaTile';
@@ -204,12 +204,14 @@ function LiveFavorites() {
 
 function VodFavorites() {
   const vodFavoritesQuery = useVodFavorites();
+  const externalFavoritesQuery = useExternalFavorites();
   const ids = useVodFavoritesStore((state) => state.ids);
   const queryClient = useQueryClient();
   const ytEntries = useYoutubeFavoritesStore((state) => state.entries);
-  // Favoris Mbolo TV (titres externes, fiche /vod/x) : 100 % locaux, aucune
-  // requête — affichés dans ce même onglet puisque le catalogue Films & Séries
-  // est porté par les titres externes (le catalogue serveur VodItem coexiste).
+  // Favoris Mbolo TV (titres externes, fiche /vod/x) : local-first + serveur —
+  // la liste serveur de l'appareil fait foi pour l'appartenance, les entrées
+  // locales fournissent les métadonnées (et gardent les fiches lisibles même
+  // hors ligne). Affichées dans ce même onglet puisqu'il porte le catalogue.
   const externalEntries = useExternalFavoritesStore((state) => state.entries);
   const query = useFavoritesQuery().trim().toLowerCase();
   const isSearching = query.length > 0;
@@ -220,11 +222,23 @@ function VodFavorites() {
     return sorted.filter((entry) => entry.title.toLowerCase().includes(query));
   }, [ytEntries, query, isSearching]);
 
-  const externalFavorites = useMemo(() => {
-    const sorted = [...externalEntries].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
-    if (!isSearching) return sorted;
-    return sorted.filter((entry) => entry.title.toLowerCase().includes(query));
-  }, [externalEntries, query, isSearching]);
+  // Fusion optimiste : liste serveur (ordre récence serveur) + ajouts locaux
+  // pas encore confirmés — l'ordre local (du plus récent au plus ancien) vient
+  // en tête, puis le serveur fait foi. Entrée locale préférée quand elle
+  // existe (métadonnées capturées sur la fiche), sinon reconstruction.
+  const externalFavorites = useMemo<ExternalFavoriteEntry[]>(() => {
+    const server = externalFavoritesQuery.data?.items ?? [];
+    const known = new Set(server.map((item) => item.id));
+    const pending = externalEntries
+      .filter((entry) => !known.has(entry.id))
+      .sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
+    const localByRawId = new Map(externalEntries.map((entry) => [entry.id, entry]));
+    const fromServer: ExternalFavoriteEntry[] = server.map((item) => {
+      const local = localByRawId.get(item.id);
+      return local ?? { id: item.id, title: item.title, posterUrl: item.posterUrl, kind: item.kind, year: item.year, addedAt: '' };
+    });
+    return [...pending, ...fromServer];
+  }, [externalEntries, externalFavoritesQuery.data]);
 
   const favorites = useMemo(() => {
     const server = vodFavoritesQuery.data?.items ?? [];
@@ -310,6 +324,14 @@ function VodFavorites() {
       )}
       {visibleExternals.length > 0 && (
         <section className={visibleFavs.length > 0 ? 'mt-8' : ''} aria-label="Favoris Mbolo TV">
+          {externalFavoritesQuery.isError && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface px-5 py-4">
+              <p className="text-sm text-muted">Sync indisponible — tes favoris locaux restent affichés ici.</p>
+              <button type="button" onClick={() => void externalFavoritesQuery.refetch()} className="rounded-full border border-accent bg-accent px-3.5 py-1.5 text-xs font-bold text-on-accent">
+                Réessayer
+              </button>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
             {visibleExternals.map((entry) => (
               <DragToRemove

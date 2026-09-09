@@ -50,10 +50,13 @@ export async function listExternalTitles(env, { q, kind, genre, sort, limit = 48
     conditions.push(`t.title ILIKE $${params.length}`);
   }
   const where = `WHERE ${conditions.join(' AND ')}`;
-  // Tri `year` = nouveautés par date de sortie (année DESC, nulls en fin).
+  // Tri `year` = nouveautés par date de sortie (année DESC, nulls en fin) ;
+  // `title` = ordre alphabétique, puis ajouts récents.
   const order = sort === 'year'
     ? `ORDER BY t.year DESC NULLS LAST, t."createdAt" DESC`
-    : `ORDER BY t."sortOrder" ASC, t."createdAt" DESC`;
+    : sort === 'title'
+      ? `ORDER BY t.title ASC, t."createdAt" DESC`
+      : `ORDER BY t."sortOrder" ASC, t."createdAt" DESC`;
   const limitParam = Math.min(Math.max(1, Number(limit) || 48), 100);
   const offsetParam = Math.max(0, Number(offset) || 0);
   const [rows, counts] = await Promise.all([
@@ -176,6 +179,66 @@ export async function findExternalTitleById(env, id) {
       .sort(sourceOrder)
       .map((row) => serializeSource({ id: row.sourceId, host: row.host, mode: row.mode, versions: row.versions, embedUrl: row.embedUrl, finalUrl: row.finalUrl, episode: first.kind === 'SERIES' ? row.sortOrder : null })),
   };
+}
+
+// Favoris titres externes par appareil — miroir de listVodFavorites (vod.js) :
+// liste triée du favori le plus récent au plus ancien, titres visibles seuls
+// (un titre retiré du catalogue disparaît simplement de la réponse).
+export async function listExternalFavorites(env, deviceId) {
+  const rows = await env.db.query(
+    env,
+    `SELECT f."externalTitleId", f."createdAt"
+       FROM "ExternalFavorite" f
+      WHERE f."deviceId" = $1
+      ORDER BY f."createdAt" DESC`,
+    [deviceId],
+  );
+  if (rows.rows.length === 0) return { items: [] };
+  const order = new Map(rows.rows.map((row, index) => [row.externalTitleId, index]));
+  const titles = await env.db.query(
+    env,
+    `SELECT t.id, t.title, t.year, t."posterUrl", t.kind,
+      (SELECT COUNT(*)::int FROM "ExternalSource" s
+        WHERE s."titleId" = t.id AND s."isActive" AND s."lastStatus" IN ('OK','UNKNOWN')) AS "healthySources"
+     FROM "ExternalTitle" t
+     WHERE t.id = ANY($1::text[]) AND t."isVisible" = true`,
+    [rows.rows.map((row) => row.externalTitleId)],
+  );
+  const sorted = titles.rows.sort((a, b) => (order.get(a.id) ?? titles.rows.length) - (order.get(b.id) ?? titles.rows.length));
+  return {
+    items: sorted.map((row) => ({
+      id: row.id,
+      title: row.title,
+      year: row.year ?? null,
+      posterUrl: row.posterUrl ?? null,
+      kind: row.kind === 'SERIES' ? 'SERIES' : 'MOVIE',
+      healthySources: row.healthySources ?? 0,
+    })),
+  };
+}
+
+export async function addExternalFavorite(env, deviceId, externalTitleId) {
+  const exists = await env.db.query(
+    env,
+    `SELECT id FROM "ExternalTitle" WHERE id = $1 AND "isVisible" = true`,
+    [externalTitleId],
+  );
+  if (exists.rows.length === 0) return false;
+  await env.db.query(
+    env,
+    `INSERT INTO "ExternalFavorite" ("deviceId", "externalTitleId") VALUES ($1, $2)
+      ON CONFLICT ("deviceId", "externalTitleId") DO NOTHING`,
+    [deviceId, externalTitleId],
+  );
+  return true;
+}
+
+export async function removeExternalFavorite(env, deviceId, externalTitleId) {
+  await env.db.query(
+    env,
+    `DELETE FROM "ExternalFavorite" WHERE "deviceId" = $1 AND "externalTitleId" = $2`,
+    [deviceId, externalTitleId],
+  );
 }
 
 /**

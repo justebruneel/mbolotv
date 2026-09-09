@@ -206,6 +206,18 @@ model VodFavorite {
   @@id([deviceId, vodItemId])
   @@index([deviceId, createdAt])
 }
+
+// Favoris « films & séries » (titres externes, lecteurs tiers) — miroir de
+// VodFavorite : -------------------------------------------------------------
+model ExternalFavorite {
+  deviceId        String
+  externalTitleId String
+  createdAt       DateTime @default(now())
+  externalTitle   ExternalTitle @relation(fields:[externalTitleId], references:[id], onDelete:Cascade)
+
+  @@id([deviceId, externalTitleId])
+  @@index([deviceId, createdAt])
+}
 // ---- Catalogue VOD administrable (console propriétaire) ----
 // Dossiers vidéo en arbre — miroir de Category mais indépendant du live.
 // kind : MOVIE | SERIES | BOTH (un dossier mixte apparaît dans les deux onglets).
@@ -293,6 +305,7 @@ model ExternalTitle {
   sortOrder Int @default(0)
   createdAt DateTime @default(now())
   sources ExternalSource[]
+  favorites ExternalFavorite[]
   @@unique([site, siteRef])
   @@index([isVisible, sortOrder])
 }

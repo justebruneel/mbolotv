@@ -609,6 +609,28 @@ async function route(ctx, url) {
     return ctx.json(item);
   }
 
+  // Favoris titres externes par appareil (lecteurs tiers) : liste + bascule
+  // via x-device-id, comme les favorites VOD/Nollywood. Le catalogue externe
+  // n'est pas soumis au grant actif (parité avec /api/x/titles ci-dessus).
+  if (path === "/api/x/favorites" && method === "GET") {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    return ctx.json(await external.listExternalFavorites(env, deviceId.trim()));
+  }
+
+  const externalFavoriteMatch = path.match(/^\/api\/x\/([^/]+)\/favorite$/);
+  if (externalFavoriteMatch && (method === "PUT" || method === "DELETE")) {
+    const deviceId = ctx.request.headers.get("x-device-id");
+    if (!deviceId?.trim()) return ctx.fail(400, "Identifiant appareil manquant");
+    const externalTitleId = decodeURIComponent(externalFavoriteMatch[1]);
+    const ok =
+      method === "PUT"
+        ? await external.addExternalFavorite(env, deviceId.trim(), externalTitleId)
+        : (await external.removeExternalFavorite(env, deviceId.trim(), externalTitleId), true);
+    if (!ok) return ctx.fail(404, "Titre introuvable");
+    return ctx.json({ ok: true });
+  }
+
   const vodMatch = path.match(/^\/api\/vod\/([^/]+)(\/(episodes|play|favorite))?$/);
 
   if (vodMatch && !vodMatch[3] && method === "GET") {

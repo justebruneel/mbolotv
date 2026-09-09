@@ -9,7 +9,7 @@ import { RouteTracker } from '../../shared/components/RouteTracker';
 const GlobalPlayer = lazy(() =>
   import('../../shared/components/GlobalPlayer').then((m) => ({ default: m.GlobalPlayer })),
 );
-import { useActiveUsers, useActivityHeartbeat, useFavoritesSync, useRemindersSync, useUnreadAnnouncements } from '../../shared/api/queries';
+import { useActiveUsers, useActivityHeartbeat, useExternalFavoritesSync, useFavoritesSync, useRemindersSync, useUnreadAnnouncements } from '../../shared/api/queries';
 import { useReminderScheduler } from '../../features/epg/hooks/useReminderScheduler';
 import { HeaderSearch } from '../../features/live-tv/components/HeaderSearch';
 import { AccessGuard, AccessTimeBadge } from '../../features/auth/components/access';
@@ -49,6 +49,8 @@ function ShellContent({ children }: { children: ReactNode }) {
   useActivityHeartbeat();
   // Favoris : synchronisation initiale avec la liste serveur de l'appareil.
   useFavoritesSync();
+  // Favoris titres externes (Films & Séries) : même motif de synchro initiale.
+  useExternalFavoritesSync();
   // Rappels de programmes : miroir serveur + secours local quand l'app est ouverte.
   useRemindersSync();
   useReminderScheduler();
