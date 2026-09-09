@@ -4,7 +4,7 @@ import '@mbolo/ui/src/tokens.css';
 import './globals.css';
 import '../styles/pwa.css';
 import { PwaRegister } from '../shared/components/PwaRegister';
-import { NetworkStatusBanner } from '../shared/components/NetworkStatusBanner';
+import { OfflineOverlay } from '../shared/components/OfflineOverlay';
 
 export const metadata: Metadata = {
   title: { default: 'Mbolo TV', template: '%s · Mbolo TV' },
@@ -102,7 +102,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           Aller au contenu principal
         </a>
         <PwaRegister />
-        <NetworkStatusBanner />
+        <OfflineOverlay />
         {children}
       </body>
     </html>
