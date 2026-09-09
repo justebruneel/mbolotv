@@ -11,7 +11,7 @@
 const VERSION = 'dev';
 const SHELL_CACHE = `mbolo-tv-shell-${VERSION}`;
 const RUNTIME_CACHE = `mbolo-tv-runtime-${VERSION}`;
-const PRECACHE = ['/', '/icon.svg', '/apple-icon.svg'];
+const PRECACHE = ['/', '/icon.svg', '/apple-icon.png'];
 
 // En dev, /_next/static/* n'est pas immuable : les chunks gardent la même URL
 // avec un contenu recompilé, donc le cache-first servirait du JS périmé après
