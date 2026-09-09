@@ -57,12 +57,13 @@ export const useExternalFavoritesStore = create<ExternalFavoritesState>()(
         });
       },
       toggleWithMeta: (externalId, meta) => {
+        const rawId = stripExternalPrefix(externalId);
         const previous = get().ids;
         const previousEntries = get().entries;
         if (previous.includes(externalId)) {
           set({
             ids: previous.filter((id) => id !== externalId),
-            entries: previousEntries.filter((entry) => entry.id !== externalId),
+            entries: previousEntries.filter((entry) => entry.id !== rawId),
           });
           return;
         }
@@ -70,25 +71,42 @@ export const useExternalFavoritesStore = create<ExternalFavoritesState>()(
           ids: [...previous, externalId],
           entries: [
             ...previousEntries,
-            { id: externalId, ...meta, addedAt: new Date().toISOString() },
+            { id: rawId, ...meta, addedAt: new Date().toISOString() },
           ],
         });
       },
       has: (externalId) => get().ids.includes(externalId),
       remove: (externalId) => {
-        // Robuste aux deux historiques d'ids : les fiches écrivent l'id
-        // préfixé (« x:<id> »), d'anciens loads peuvent détenir l'id brut —
-        // les deux espaces (ids + entrées d'affichage) sont nettoyés.
-        const matches = (candidate: string): boolean => candidate === externalId || externalFavoriteId(candidate) === externalId;
+        // ids préfixés (« x:<id> »), entrées en id brut : la comparaison passe
+        // par la forme brute pour nettoyer les deux espaces ensemble.
+        const target = stripExternalPrefix(externalId);
         set({
-          ids: get().ids.filter((id) => !matches(id)),
-          entries: get().entries.filter((entry) => !matches(entry.id)),
+          ids: get().ids.filter((id) => stripExternalPrefix(id) !== target),
+          entries: get().entries.filter((entry) => stripExternalPrefix(entry.id) !== target),
         });
       },
     }),
-    { name: 'mbolo-external-favorites' },
+    {
+      name: 'mbolo-external-favorites',
+      version: 1,
+      // v1 : les entrées portaient l'id PRÉFIXÉ (« x:<id> ») au lieu de l'id
+      // brut — les hrefs /vod/x/<id> cassaient (« Contenu introuvable »).
+      // Migration : purge du préfixe à la rehydration.
+      migrate: (persisted) => {
+        const state = persisted as Partial<ExternalFavoritesState> | undefined;
+        return {
+          ids: state?.ids ?? [],
+          entries: (state?.entries ?? []).map((entry) => ({ ...entry, id: stripExternalPrefix(entry.id) })),
+        } as Partial<ExternalFavoritesState>;
+      },
+    },
   ),
 );
+
+/** Normalise un identifiant externe : retire le préfixe « x: » s'il existe. */
+function stripExternalPrefix(id: string): string {
+  return id.startsWith('x:') ? id.slice(2) : id;
+}
 
 /** Id de favori pour un titre externe (cohabite avec les autres espaces d'ids). */
 export function externalFavoriteId(titleId: string): string {

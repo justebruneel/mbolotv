@@ -46,12 +46,13 @@ export const useYoutubeFavoritesStore = create<YoutubeFavoritesState>()(
         });
       },
       toggleWithMeta: (youtubeId, meta) => {
+        const rawId = stripYoutubePrefix(youtubeId);
         const previous = get().ids;
         const previousEntries = get().entries;
         if (previous.includes(youtubeId)) {
           set({
             ids: previous.filter((id) => id !== youtubeId),
-            entries: previousEntries.filter((entry) => entry.id !== youtubeId),
+            entries: previousEntries.filter((entry) => entry.id !== rawId),
           });
           return;
         }
@@ -59,24 +60,42 @@ export const useYoutubeFavoritesStore = create<YoutubeFavoritesState>()(
           ids: [...previous, youtubeId],
           entries: [
             ...previousEntries,
-            { id: youtubeId, ...meta, addedAt: new Date().toISOString() },
+            { id: rawId, ...meta, addedAt: new Date().toISOString() },
           ],
         });
       },
       has: (youtubeId) => get().ids.includes(youtubeId),
       remove: (youtubeId) => {
-        // Robuste aux deux historiques d'ids (préfixé « yt:<id> » / brut),
-        // ids et entrées d'affichage nettoyés ensemble.
-        const matches = (candidate: string): boolean => candidate === youtubeId || youtubeProgressId(candidate) === youtubeId;
+        // ids préfixés (« yt:<id> »), entrées en id brut : la comparaison
+        // passe par la forme brute pour nettoyer les deux espaces ensemble.
+        const target = stripYoutubePrefix(youtubeId);
         set({
-          ids: get().ids.filter((id) => !matches(id)),
-          entries: get().entries.filter((entry) => !matches(entry.id)),
+          ids: get().ids.filter((id) => stripYoutubePrefix(id) !== target),
+          entries: get().entries.filter((entry) => stripYoutubePrefix(entry.id) !== target),
         });
       },
     }),
-    { name: 'mbolo-youtube-favorites' },
+    {
+      name: 'mbolo-youtube-favorites',
+      version: 1,
+      // v1 : les entrées portaient l'id PRÉFIXÉ (« yt:<id> ») au lieu de
+      // l'id brut — les tuiles Nollywood renvoyaient vers /vod/yt/yt:<id>
+      // (« Contenu introuvable »). Migration : purge du préfixe.
+      migrate: (persisted) => {
+        const state = persisted as Partial<YoutubeFavoritesState> | undefined;
+        return {
+          ids: state?.ids ?? [],
+          entries: (state?.entries ?? []).map((entry) => ({ ...entry, id: stripYoutubePrefix(entry.id) })),
+        } as Partial<YoutubeFavoritesState>;
+      },
+    },
   ),
 );
+
+/** Normalise un identifiant YouTube : retire le préfixe « yt: » s'il existe. */
+function stripYoutubePrefix(id: string): string {
+  return id.startsWith('yt:') ? id.slice(3) : id;
+}
 
 /** Id de progression/favori pour une vidéo YouTube (cohabite avec les ids VodItem). */
 export function youtubeProgressId(videoId: string): string {
