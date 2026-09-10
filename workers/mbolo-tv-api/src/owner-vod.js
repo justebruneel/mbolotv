@@ -7,9 +7,20 @@ import { checkEmbedPage, checkSource, SUPPORTED_HOSTS } from './extractors/index
 import { previewFiche, readCachedPreview, serveFichePreview } from './scrapers/index.js';
 import { resyncExternalMeta } from './external.js';
 import { botStatus, discoverNew, runExternalBotTickForce } from './external-bot.js';
-
-const KINDS = new Set(['MOVIE', 'SERIES', 'BOTH']);
-const CHANNEL_ID_RE = /^UC[A-Za-z0-9_-]{22}$/;
+// Schémas Zod partagés (ADR-0002) : mêmes validations que l'API de référence.
+import {
+  ownerVodFolderCreateSchema,
+  ownerVodFolderUpdateSchema,
+  ownerVodRulesPutSchema,
+  ownerVodItemsAddSchema,
+  ownerVodItemAssignSchema,
+  ownerVodYoutubeCreateSchema,
+  ownerVodYoutubeUpdateSchema,
+  ownerExternalPublishSchema,
+  ownerExternalTitleUpdateSchema,
+  ownerExternalSourceUpdateSchema,
+} from '@mbolo/contracts';
+import { parseContract } from './validate.js';
 // Vérifications inline max par publication : au-delà, les lecteurs partent en
 // UNKNOWN pour le cron (plafond de sous-requêtes Cloudflare par invocation).
 const MAX_INLINE_VERIFY = 12;
@@ -280,10 +291,12 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
 
   if (path === '/api/owner/vod/folders' && method === 'POST') {
     const body = await ctx.readJson().catch(() => ({}));
-    const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    if (name.length < 1 || name.length > 120) return ctx.fail(400, 'Validation failed');
-    const kind = KINDS.has(body?.kind) ? body.kind : 'BOTH';
-    const parentId = body?.parentId ?? null;
+    const parsed = parseContract(ctx, ownerVodFolderCreateSchema, body);
+    if (parsed.response) return parsed.response;
+    const name = parsed.value.name.trim();
+    if (!name) return ctx.fail(400, 'Validation failed');
+    const kind = parsed.value.kind ?? 'BOTH';
+    const parentId = parsed.value.parentId ?? null;
     if (parentId) {
       const parent = await env.db.query(env, `SELECT id FROM "VodFolder" WHERE id = $1`, [parentId]);
       if (parent.rows.length === 0) return ctx.fail(400, 'Parent invalide');
@@ -303,22 +316,22 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   const folderPatch = path.match(/^\/api\/owner\/vod\/folders\/([^/]+)$/);
   if (folderPatch && method === 'PATCH') {
     const id = dec(folderPatch[1]);
-    const body = await ctx.readJson().catch(() => ({}));
+    const bodyRaw = await ctx.readJson().catch(() => ({}));
+    const parsed = parseContract(ctx, ownerVodFolderUpdateSchema, bodyRaw);
+    if (parsed.response) return parsed.response;
+    const body = parsed.value;
     const folderRows = await env.db.query(env, `SELECT * FROM "VodFolder" WHERE id = $1`, [id]);
     const folder = folderRows.rows[0];
     if (!folder) return ctx.fail(404, 'Dossier introuvable');
     const updates = {};
     if (body.name !== undefined) {
-      const name = String(body.name).trim().slice(0, 120);
+      const name = String(body.name).trim();
       if (!name) return ctx.fail(400, 'Validation failed');
       updates.name = name;
     }
-    if (body.kind !== undefined) {
-      if (!KINDS.has(body.kind)) return ctx.fail(400, 'Validation failed');
-      updates.kind = body.kind;
-    }
-    if (body.isVisible !== undefined) updates.isVisible = Boolean(body.isVisible);
-    if (body.sortOrder !== undefined) updates.sortOrder = Number(body.sortOrder) || 0;
+    if (body.kind !== undefined) updates.kind = body.kind;
+    if (body.isVisible !== undefined) updates.isVisible = body.isVisible;
+    if (body.sortOrder !== undefined) updates.sortOrder = body.sortOrder;
     if (body.parentId !== undefined) {
       const parentId = body.parentId || null;
       if (parentId === id) return ctx.fail(400, 'Un parent ne peut pas être lui-même');
@@ -385,8 +398,9 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   if (rulesPut && method === 'PUT') {
     const id = dec(rulesPut[1]);
     const body = await ctx.readJson().catch(() => null);
-    const titles = Array.isArray(body?.categoryTitles) ? body.categoryTitles.filter((value) => typeof value === 'string') : null;
-    if (!titles || titles.length > 200) return ctx.fail(400, 'Validation failed');
+    const parsed = parseContract(ctx, ownerVodRulesPutSchema, body);
+    if (parsed.response) return parsed.response;
+    const titles = parsed.value.categoryTitles;
     const folder = await env.db.query(env, `SELECT id FROM "VodFolder" WHERE id = $1`, [id]);
     if (folder.rows.length === 0) return ctx.fail(404, 'Dossier introuvable');
     const seen = new Map();
@@ -414,8 +428,9 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   if (itemsPost && method === 'POST') {
     const id = dec(itemsPost[1]);
     const body = await ctx.readJson().catch(() => null);
-    const itemIds = Array.isArray(body?.itemIds) ? body.itemIds.filter((value) => typeof value === 'string').slice(0, 200) : [];
-    if (itemIds.length === 0) return ctx.fail(400, 'Aucun titre sélectionné');
+    const parsed = parseContract(ctx, ownerVodItemsAddSchema, body);
+    if (parsed.response) return parsed.response;
+    const itemIds = parsed.value.itemIds;
     const folder = await env.db.query(env, `SELECT id FROM "VodFolder" WHERE id = $1`, [id]);
     if (folder.rows.length === 0) return ctx.fail(404, 'Dossier introuvable');
     const added = await env.db.query(
@@ -442,8 +457,9 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   if (itemPatch && method === 'PATCH') {
     const id = dec(itemPatch[1]);
     const body = await ctx.readJson().catch(() => null);
-    const folderIds = Array.isArray(body?.folderIds) ? Array.from(new Set(body.folderIds.filter((value) => typeof value === 'string'))).slice(0, 20) : null;
-    if (!folderIds) return ctx.fail(400, 'Validation failed');
+    const parsed = parseContract(ctx, ownerVodItemAssignSchema, body);
+    if (parsed.response) return parsed.response;
+    const folderIds = Array.from(new Set(parsed.value.folderIds));
     const itemRows = await env.db.query(
       env,
       `SELECT i.id, i.kind, i.title, i."posterUrl", i."categoryTitle", i."isVisible" FROM "VodItem" i JOIN "Source" s ON s.id = i."sourceId" WHERE i.id = $1 AND s."ownerId" = $2`,
@@ -466,8 +482,8 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
       await env.db.query(env, `INSERT INTO "VodFolderItem" ("folderId", "vodItemId") VALUES ${values.join(', ')} ON CONFLICT DO NOTHING`, params);
     }
     let isVisible = item.isVisible;
-    if (typeof body?.isVisible === 'boolean') {
-      isVisible = body.isVisible;
+    if (parsed.value.isVisible !== undefined) {
+      isVisible = parsed.value.isVisible;
       await env.db.query(env, `UPDATE "VodItem" SET "isVisible" = $2 WHERE id = $1`, [id, isVisible]);
     }
     await audit(ctx, owner.userId, 'vod.item_assign', 'vod_item', id, { folderIds });
@@ -486,9 +502,10 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   if (youtubeList && method === 'POST') {
     const id = dec(youtubeList[1]);
     const body = await ctx.readJson().catch(() => ({}));
-    const channelId = typeof body?.channelId === 'string' ? body.channelId.trim() : '';
-    if (!CHANNEL_ID_RE.test(channelId)) return ctx.fail(400, 'Identifiant de chaîne YouTube invalide (UC…)');
-    const label = typeof body?.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 80) : null;
+    const parsed = parseContract(ctx, ownerVodYoutubeCreateSchema, body);
+    if (parsed.response) return parsed.response;
+    const channelId = parsed.value.channelId.trim();
+    const label = parsed.value.label?.trim() || null;
     const folder = await env.db.query(env, `SELECT id FROM "VodFolder" WHERE id = $1`, [id]);
     if (folder.rows.length === 0) return ctx.fail(404, 'Dossier introuvable');
     const existing = await env.db.query(env, `SELECT COUNT(*)::int AS count FROM "VodYoutubeSource" WHERE "folderId" = $1`, [id]);
@@ -504,14 +521,17 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   const youtubePatch = path.match(/^\/api\/owner\/vod\/youtube\/([^/]+)$/);
   if (youtubePatch && method === 'PATCH') {
     const id = dec(youtubePatch[1]);
-    const body = await ctx.readJson().catch(() => ({}));
+    const bodyRaw = await ctx.readJson().catch(() => ({}));
+    const parsed = parseContract(ctx, ownerVodYoutubeUpdateSchema, bodyRaw);
+    if (parsed.response) return parsed.response;
+    const body = parsed.value;
     const sourceRows = await env.db.query(env, `SELECT * FROM "VodYoutubeSource" WHERE id = $1`, [id]);
     const source = sourceRows.rows[0];
     if (!source) return ctx.fail(404, 'Source YouTube introuvable');
     const updates = {};
-    if (body.label !== undefined) updates.label = typeof body.label === 'string' && body.label.trim() ? body.label.trim().slice(0, 80) : null;
-    if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);
-    if (body.sortOrder !== undefined) updates.sortOrder = Number(body.sortOrder) || 0;
+    if (body.label !== undefined) updates.label = body.label?.trim() || null;
+    if (body.isActive !== undefined) updates.isActive = body.isActive;
+    if (body.sortOrder !== undefined) updates.sortOrder = body.sortOrder;
     const keys = Object.keys(updates);
     if (keys.length === 0) return ctx.fail(400, 'Aucune modification');
     if (updates.sortOrder !== undefined) {
@@ -564,10 +584,13 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   // wrappers. Vérification inline plafonnée, le reste part en UNKNOWN pour
   // le cron — un publish ne doit jamais heurter le plafond CF.
   if (path === '/api/owner/vod/external/publish' && method === 'POST') {
-    const body = await ctx.readJson().catch(() => ({}));
-    const ficheUrl = typeof body?.url === 'string' ? body.url.trim() : '';
+    const bodyRaw = await ctx.readJson().catch(() => ({}));
+    const parsed = parseContract(ctx, ownerExternalPublishSchema, bodyRaw);
+    if (parsed.response) return parsed.response;
+    const body = parsed.value;
+    const ficheUrl = body.url.trim();
     if (!ficheUrl) return ctx.fail(400, 'URL de fiche manquante');
-    const hasClientPlayers = Array.isArray(body?.players) && body.players.length > 0;
+    const hasClientPlayers = Array.isArray(body.players) && body.players.length > 0;
     // Cache de l'aperçu (5 min) : la console vient de l'afficher, inutile de
     // re-scraper fiche + wrappers (~20 sous-requêtes). Re-scrape sinon.
     let preview = hasClientPlayers ? await readCachedPreview(env, ficheUrl) : null;
@@ -726,22 +749,21 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   const externalTitleMatch = path.match(/^\/api\/owner\/vod\/external\/titles\/([^/]+)$/);
   if (externalTitleMatch && method === 'PATCH') {
     const id = dec(externalTitleMatch[1]);
-    const body = await ctx.readJson().catch(() => ({}));
+    const bodyRaw = await ctx.readJson().catch(() => ({}));
+    const parsed = parseContract(ctx, ownerExternalTitleUpdateSchema, bodyRaw);
+    if (parsed.response) return parsed.response;
+    const body = parsed.value;
     const updates = {};
-    if (body.title !== undefined && typeof body.title === 'string' && body.title.trim()) updates.title = body.title.trim().slice(0, 200);
-    if (body.year !== undefined) updates.year = body.year === null ? null : Number(body.year) || null;
-    if (body.posterUrl !== undefined) updates.posterUrl = typeof body.posterUrl === 'string' && body.posterUrl.trim() ? body.posterUrl.trim() : null;
-    if (body.isVisible !== undefined) updates.isVisible = Boolean(body.isVisible);
-    if (body.sortOrder !== undefined) updates.sortOrder = Math.max(0, Number(body.sortOrder) || 0);
+    if (body.title !== undefined && body.title.trim()) updates.title = body.title.trim();
+    if (body.year !== undefined) updates.year = body.year;
+    if (body.posterUrl !== undefined) updates.posterUrl = body.posterUrl;
+    if (body.isVisible !== undefined) updates.isVisible = body.isVisible;
+    if (body.sortOrder !== undefined) updates.sortOrder = body.sortOrder;
     // Fenêtre d'intro en secondes (null = efface). Le Player ignore toute
     // fenêtre invalide, mais on refuse le cas début >= fin quand les deux
     // bornes sont renseignées.
     for (const key of ['introStartSec', 'introEndSec']) {
-      if (body[key] === undefined) continue;
-      if (body[key] === null) { updates[key] = null; continue; }
-      const value = Number(body[key]);
-      if (!Number.isFinite(value) || value < 0 || value > 6 * 3600) return ctx.fail(400, 'Intro invalide : secondes entre 0 et 21600');
-      updates[key] = value;
+      if (body[key] !== undefined) updates[key] = body[key];
     }
     if (updates.introStartSec !== undefined && updates.introEndSec !== undefined
       && updates.introStartSec !== null && updates.introEndSec !== null
@@ -768,10 +790,13 @@ export async function handleOwnerVodRoute(ctx, url, path, method, owner, audit) 
   const externalSourceMatch = path.match(/^\/api\/owner\/vod\/external\/sources\/([^/]+)$/);
   if (externalSourceMatch && method === 'PATCH') {
     const id = dec(externalSourceMatch[1]);
-    const body = await ctx.readJson().catch(() => ({}));
+    const bodyRaw = await ctx.readJson().catch(() => ({}));
+    const parsed = parseContract(ctx, ownerExternalSourceUpdateSchema, bodyRaw);
+    if (parsed.response) return parsed.response;
+    const body = parsed.value;
     const updates = {};
-    if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);
-    if (body.sortOrder !== undefined) updates.sortOrder = Math.max(0, Number(body.sortOrder) || 0);
+    if (body.isActive !== undefined) updates.isActive = body.isActive;
+    if (body.sortOrder !== undefined) updates.sortOrder = body.sortOrder;
     if (Object.keys(updates).length === 0) return ctx.fail(400, 'Aucune modification');
     const rows = await env.db.query(env, `SELECT id FROM "ExternalSource" WHERE id = $1`, [id]);
     if (rows.rows.length === 0) return ctx.fail(404, 'Source introuvable');

@@ -11,6 +11,14 @@ import {
   announcementCreateSchema,
   sourceCreateSchema,
   sourceImportSchema,
+  ownerVodFolderCreateSchema,
+  ownerVodFolderUpdateSchema,
+  ownerVodRulesPutSchema,
+  ownerVodItemsAddSchema,
+  ownerVodItemAssignSchema,
+  ownerVodYoutubeCreateSchema,
+  ownerExternalTitleUpdateSchema,
+  ownerExternalSourceUpdateSchema,
 } from "@mbolo/contracts";
 
 describe("contrats partagés — le Worker et NestJS valident la même source", () => {
@@ -65,5 +73,49 @@ describe("contrats partagés — le Worker et NestJS valident la même source", 
     const issues = bad.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
     assert.ok(issues.some((issue) => issue.path === "email"));
     assert.ok(issues.some((issue) => issue.path === "password"));
+  });
+
+  // ---- owner-vod.js (lot 2 de la Phase 2) ----
+  it("dossier VOD : kind strict, corps vide refusé au PATCH", () => {
+    assert.equal(ownerVodFolderCreateSchema.safeParse({ name: "Films", kind: "MOVIE" }).success, true);
+    assert.equal(ownerVodFolderCreateSchema.safeParse({ name: "Films", kind: "DOCUMENTAIRE" }).success, false,
+      "le worker tolérait un kind inconnu (repli BOTH) : la référence rejette");
+    const empty = ownerVodFolderUpdateSchema.safeParse({});
+    assert.equal(empty.success, false);
+    assert.ok(empty.error.issues.some((issue) => issue.message === "Aucune modification"));
+  });
+
+  it("règles : array categoryTitles requis (PUT = remplacement intégral)", () => {
+    assert.equal(ownerVodRulesPutSchema.safeParse({ categoryTitles: ["Action", "Comédie"] }).success, true);
+    assert.equal(ownerVodRulesPutSchema.safeParse({}).success, false,
+      "avant le contrat, un corps sans categoryTitles passait et vidait les règles");
+    assert.equal(ownerVodRulesPutSchema.safeParse({ categoryTitles: [] }).success, true);
+    assert.equal(ownerVodRulesPutSchema.safeParse({ categoryTitles: [""] }).success, false);
+  });
+
+  it("items : itemIds min(1) max(200) — le 'Aucun titre sélectionné' devient 400 contrat", () => {
+    assert.equal(ownerVodItemsAddSchema.safeParse({ itemIds: ["a"] }).success, true);
+    assert.equal(ownerVodItemsAddSchema.safeParse({ itemIds: [] }).success, false);
+    assert.equal(ownerVodItemsAddSchema.safeParse({ itemIds: Array(201).fill("x") }).success, false);
+  });
+
+  it("assignation d'item : folderIds requis même vide (liste faisant foi)", () => {
+    assert.equal(ownerVodItemAssignSchema.safeParse({ folderIds: [] }).success, true);
+    assert.equal(ownerVodItemAssignSchema.safeParse({}).success, false);
+    assert.equal(ownerVodItemAssignSchema.safeParse({ folderIds: ["a"], isVisible: false }).success, true);
+  });
+
+  it("YouTube : channelId strict UC+22 (la regex du worker vit dans le contrat)", () => {
+    assert.equal(ownerVodYoutubeCreateSchema.safeParse({ channelId: "UC" + "a".repeat(22) }).success, true);
+    assert.equal(ownerVodYoutubeCreateSchema.safeParse({ channelId: "channelhandle" }).success, false);
+  });
+
+  it("titre externe : year 1900-2100, posterUrl URL, refine 'Aucune modification'", () => {
+    assert.equal(ownerExternalTitleUpdateSchema.safeParse({ title: "Ok" }).success, true);
+    assert.equal(ownerExternalTitleUpdateSchema.safeParse({ year: 1899 }).success, false);
+    assert.equal(ownerExternalTitleUpdateSchema.safeParse({ posterUrl: "pas une url" }).success, false);
+    const empty = ownerExternalSourceUpdateSchema.safeParse({});
+    assert.equal(empty.success, false);
+    assert.ok(empty.error.issues.some((issue) => issue.message === "Aucune modification"));
   });
 });

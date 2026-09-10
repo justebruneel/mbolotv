@@ -22,18 +22,7 @@ import {
   accessCodeCreateSchema,
   announcementCreateSchema,
 } from '@mbolo/contracts';
-
-// Valide un corps contre un schéma @mbolo/contracts. Renvoie { value } (avec
-// valeurs par défaut/transformations Zod appliquées) ou { response } = 400 au
-// format du ZodValidationPipe de l'API de référence : { message: 'Validation
-// failed', issues: [{ path, message }] } — les messages des .refine() (ex.
-// 'Aucune modification') ressortent dans issues comme côté NestJS.
-function parseContract(ctx, schema, body) {
-  const result = schema.safeParse(body);
-  if (result.success) return { value: result.data };
-  const issues = result.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
-  return { response: ctx.json({ message: 'Validation failed', issues, statusCode: 400 }, 400) };
-}
+import { parseContract } from './validate.js';
 
 function chunks(values, size) {
   const output = [];
