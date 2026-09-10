@@ -11,7 +11,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config as loadEnv } from 'dotenv';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../generated/client/index.js';
 
 for (const path of [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')]) {
   if (existsSync(path)) loadEnv({ path });

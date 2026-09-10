@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@mbolo/db';
 import type { ExternalSourceMode, ExternalTitleDetail, ExternalTitlePublic, ExternalTitlesResponse, VodCategory, VodFolderKind, VodFolderRowsResponse, VodFolderSummary, VodHeroResponse, VodItem, VodKind, VodListResponse, VodRowsResponse, VodYoutubeSourcePublic } from '@mbolo/contracts';
 import { editorialCategoryLabel, publicExternalSourceMode } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';

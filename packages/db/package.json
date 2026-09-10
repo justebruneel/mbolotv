@@ -1,0 +1,32 @@
+{
+  "name": "@mbolo/db",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Source de vérité du modèle de données Mbolo TV : schéma Prisma, migrations, seed et scripts de correction. Le client généré est importé par apps/api (et à terme par tout outil Node).",
+  "main": "generated/client/index.js",
+  "types": "generated/client/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/client/index.d.ts",
+      "default": "./generated/client/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "generate": "prisma generate",
+    "db:seed": "prisma db seed",
+    "clean": "rm -rf generated"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.1.0"
+  },
+  "devDependencies": {
+    "dotenv": "^17.0.0",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.2"
+  }
+}

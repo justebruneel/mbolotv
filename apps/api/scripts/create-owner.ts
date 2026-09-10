@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { Algorithm, hash } from '@node-rs/argon2';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '@mbolo/db';
 import { PasswordService } from '../src/common/password/password.service';
 
 function loadEnv(): void {

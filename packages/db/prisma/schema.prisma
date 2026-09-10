@@ -1,11 +1,16 @@
 generator client {
   provider = "prisma-client-js"
+  // Client généré hors node_modules : apps/api et les scripts l'importent via
+  // '@mbolo/db' (le client par défaut se résoudrait sinon dans le
+  // node_modules du consumer). `generated/` est ignoré par git — régénéré par
+  // `pnpm generate` en local et dans la CI avant typecheck/build.
+  output   = "../generated/client"
 }
 
 datasource db {
   provider = "postgresql"
   // Variable d'environnement : URL de connexion PostgreSQL (Neon, Supabase...).
-  // En local : postgresql://user:pass@host:5432/mbolo_tv (voir apps/api/.env).
+  // En local : postgresql://user:pass@host:5432/mbolo_tv (voir packages/db/.env).
   url = env("DATABASE_URL")
 }
 

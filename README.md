@@ -4,16 +4,17 @@ Plateforme IPTV multi-sources pour des flux dont l’utilisation est autorisée.
 
 ## Architecture
 
-Monorepo TypeScript avec séparation entre l’expérience web, l’API métier et le traitement asynchrone.
+Monorepo TypeScript. **Le backend de production est le Cloudflare Worker `workers/mbolo-tv-api`** ; `apps/api` (NestJS) est du code de référence gelé, non déployé — voir [ADR-0002](docs/adr/0002-backend-unique-cloudflare-worker.md).
 
-| Composant | Rôle | Technologie |
-|---|---|---|
-| `apps/web` | Interface utilisateur et lecteur HLS | Next.js, React, TypeScript |
-| `apps/api` | API REST, authentification, import et proxy de lecture | NestJS, Fastify, Prisma |
-| `apps/worker` | Point d’extension pour les jobs séparés | Node.js, BullMQ |
-| Base de données | Catalogue et données relationnelles | SQLite validé pour dev, migration Postgres à préparer pour prod |
-| Files d’attente | Imports et jobs asynchrones | In-process en dev, BullMQ/Redis en déploiement dédié |
-| Stockage | Playlists et logos | Disque local en dev, S3/R2 avec URLs signées en prod |
+| Composant | Rôle | Technologie | Statut |
+|---|---|---|---|
+| `apps/web` | Interface utilisateur et lecteur HLS | Next.js, React, TypeScript | Production (Vercel) |
+| `workers/mbolo-tv-api` | API métier complète : catalogue, accès, favoris, notifications, console owner, imports, crons | Cloudflare Workers, Hyperdrive | **Backend officiel** |
+| `workers/mbolo-tv-video-proxy` | Proxy HLS edge, URLs signées HMAC, cache segments, relais | Cloudflare Workers, Durable Objects | Production |
+| `apps/api` | Implémentation historique de l'API | NestJS, Fastify, Prisma | Gelé — référence + tests, hors chemin de production |
+| `packages/contracts` | Schémas Zod et types partagés des réponses API | TypeScript | Web + API ; à câbler dans le Worker |
+| Base de données | Catalogue et données relationnelles | PostgreSQL (Neon), schéma Prisma dans `packages/db` | Production |
+| Stockage | Playlists et logos | S3/R2 avec URLs signées | Production |
 
 Voir `docs/architecture/overview.md` et `docs/architecture/tree.md` pour les détails.
 
@@ -26,15 +27,15 @@ pnpm db:migrate
 pnpm dev
 ```
 
-Web : `http://localhost:3000`. API : `http://localhost:4000`.
+Web : `http://localhost:3000`. L’API NestJS de référence (`apps/api`) tourne sur `http://localhost:4000` ; en local comme en production, `apps/web` peut être pointé vers le Worker via `NEXT_PUBLIC_API_URL`.
 
 Le compte propriétaire nécessite `OWNER_EMAIL` et `OWNER_PASSWORD`. Le mot de passe n’est provisionné que si aucun hash propriétaire n’existe déjà, afin d’éviter de réinitialiser la console à chaque redémarrage.
 
 ## Production
 
-Le chemin recommandé est un déploiement avec Postgres, Redis et S3/R2 managés. Le schéma Prisma est actuellement SQLite et ne doit pas être basculé en production par simple changement d’URL sans migration et validation dédiées.
+Le backend de production est `workers/mbolo-tv-api` (Cloudflare Workers + Hyperdrive vers PostgreSQL Neon), déployé manuellement via `npx wrangler deploy`. Le companion edge vidéo `workers/mbolo-tv-video-proxy` signe et proxifie les flux HLS. Le frontend `apps/web` est déployé sur Vercel avec `API_URL` pointant vers le Worker.
 
-En mode BullMQ, un consommateur doit être actif. La branche actuelle peut traiter les imports via l’API ; le worker séparé reste une étape de découplage à finaliser avant un déploiement multi-instance.
+`apps/api` (NestJS) n’est **pas le chemin de production** et ne doit plus recevoir de modifications fonctionnelles (gel acté par [ADR-0002](docs/adr/0002-backend-unique-cloudflare-worker.md)) ; sa source de vérité de modèle de données, le schéma Prisma, a été extraite vers `packages/db`. L'instance conteneurisée `mbolotv-api-1` et son script de redéploiement ont été décommissionnés (2026-09-10).
 
 ## Principes de sécurité
 

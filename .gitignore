@@ -25,4 +25,7 @@ tools/eco-transcoder/eco-transcoder.env
 
 # Service worker généré au build depuis sw.template.js (version unique par déploiement)
 apps/web/public/sw.js
+
+# Client Prisma généré par `prisma generate` (source de vérité : prisma/schema.prisma)
+packages/db/generated/
 .zcode/

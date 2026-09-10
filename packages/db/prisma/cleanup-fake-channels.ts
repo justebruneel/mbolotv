@@ -15,8 +15,9 @@ import { createDecipheriv, createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config as loadEnv } from 'dotenv';
-import { PrismaClient } from '@prisma/client';
-import { isFolderMarker } from '../src/modules/sources/m3u.parser';
+import { PrismaClient } from '../generated/client/index.js';
+// Copie de m3u.parser.ts (apps/api, gelé) : marqueur de dossier M3U ("##### SPORTS #####").
+const isFolderMarker = (title: string): boolean => /^#{2,}.+#{2,}$/.test(title.trim());
 
 for (const path of [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')]) {
   if (existsSync(path)) loadEnv({ path });

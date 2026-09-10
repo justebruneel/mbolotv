@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@mbolo/db';
 import type { ChannelListResponse } from '@mbolo/contracts';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ChannelsService } from '../channels/channels.service';
