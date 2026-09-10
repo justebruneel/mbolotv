@@ -4,6 +4,9 @@ dist/
 coverage/
 .env
 .env.*.local
+# Wrangler : variables locales du worker (jamais versionnées, lues en priorité
+# par `wrangler dev` — c'est là que vivent localhost et les secrets de dev).
+.dev.vars
 *.log
 .DS_Store
 uploads/

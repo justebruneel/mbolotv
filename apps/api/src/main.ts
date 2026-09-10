@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { fetch as undiciFetch, setGlobalDispatcher, Agent } from 'undici';
 import { AppModule } from './app.module';
+import { resolveCors } from './common/cors';
 import { TunnelSafeExceptionFilter } from './common/filters/tunnel-safe-exception.filter';
 
 const UPLOAD_BODY_LIMIT = 512 * 1024 * 1024;
@@ -37,7 +38,18 @@ async function bootstrap(): Promise<void> {
   // accepte les deux formes) au lieu d'un 415 bloquant.
   instance.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, payload, done) => done(null, payload));
 
-  const cors = resolveCors(config);
+  // Fail-fast CORS : une configuration invalide en production (mode permissif,
+  // liste vide ou joker) doit empêcher le démarrage plutôt qu'exposer l'API
+  // silencieusement. process.exit explicite car le safety-net unhandledRejection
+  // avalerait l'exception sans quitter le process.
+  let cors: { origins: string[] | boolean };
+  try {
+    cors = resolveCors(config);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    await app.close().catch(() => undefined);
+    process.exit(1);
+  }
   app.enableCors({
     origin: cors.origins,
     credentials: true,
@@ -73,24 +85,4 @@ function installProcessSafetyNet(): void {
   const log = (source: string, error: unknown): void => console.error(`[process] ${source} (non fatal, le serveur continue) :`, error);
   process.on('uncaughtException', (error) => log('uncaughtException', error));
   process.on('unhandledRejection', (reason) => log('unhandledRejection', reason));
-}
-
-function resolveCors(config: ConfigService): { origins: string[] | boolean } {
-  const isProd = (config.get<string>('NODE_ENV') ?? 'development').trim().toLowerCase() === 'production';
-  const mode = (config.get<string>('CORS_MODE') ?? (isProd ? 'strict' : 'permissive')).trim().toLowerCase();
-  if (mode === 'permissive') return { origins: true };
-
-  const origins = (config.get<string>('CORS_ALLOWED_ORIGINS', '') ?? '')
-    .split(',')
-    .map((origin) => origin.trim().replace(/\/$/, ''))
-    .filter(Boolean);
-  if (origins.length === 0) {
-    // Refuser CORS plutôt que de retomber silencieusement sur un mode permissif :
-    // une liste vide en mode strict est une erreur de configuration qui ne doit
-    // pas devenir une faille. La console owner fonctionne en same-origin (proxy
-    // reverse) : seul le navigateur cross-origin nécessite CORS_ALLOWED_ORIGINS.
-    console.error(`[cors] CORS_MODE=strict mais CORS_ALLOWED_ORIGINS est vide → CORS refusé. Configurez CORS_ALLOWED_ORIGINS (ex: https://mbolo.tv).`);
-    return { origins: false };
-  }
-  return { origins };
 }

@@ -24,7 +24,7 @@ import { discoverMatches } from "./discovery.js";
 import { runEpgImportForSource } from "./epgimport.js";
 import { geoFeatured } from "./featured.js";
 
-function corsHeaders(request, env) {
+export function corsHeaders(request, env) {
   const allowed = (env?.CORS_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((value) => value.trim())
@@ -35,8 +35,11 @@ function corsHeaders(request, env) {
     "access-control-allow-headers": "content-type,x-device-id,cookie,set-cookie",
     vary: "Origin",
   };
-  if (allowed.length === 0 || (origin && allowed.includes(origin))) {
-    headers["access-control-allow-origin"] = origin ?? "*";
+  // Liste vide = configuration absente : on REFUSE le cross-origin plutôt que
+  // de refléter n'importe quelle origine (le navigateur bloque, les appels
+  // same-origin et serveur-à-serveur sans en-tête Origin restent possibles).
+  if (allowed.length > 0 && origin && allowed.includes(origin)) {
+    headers["access-control-allow-origin"] = origin;
   }
   return headers;
 }
