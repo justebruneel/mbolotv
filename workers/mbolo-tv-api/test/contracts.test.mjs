@@ -19,6 +19,15 @@ import {
   ownerVodYoutubeCreateSchema,
   ownerExternalTitleUpdateSchema,
   ownerExternalSourceUpdateSchema,
+  channelQuerySchema,
+  matchQuerySchema,
+  matchPlaySchema,
+  epgRangeQuerySchema,
+  programmeSearchQuerySchema,
+  activityHeartbeatSchema,
+  accessRedeemSchema,
+  pushSubscriptionSchema,
+  reminderCreateSchema,
 } from "@mbolo/contracts";
 
 describe("contrats partagés — le Worker et NestJS valident la même source", () => {
@@ -117,5 +126,79 @@ describe("contrats partagés — le Worker et NestJS valident la même source", 
     const empty = ownerExternalSourceUpdateSchema.safeParse({});
     assert.equal(empty.success, false);
     assert.ok(empty.error.issues.some((issue) => issue.message === "Aucune modification"));
+  });
+
+  // ---- routes publiques de index.js (lot 3 de la Phase 2) ----
+  // Attention coercition : les query params arrivent en STRING — le contrat
+  // z.coerce.number() fait le travail (comme côté Nest, même pipe).
+  it("channels : limit coercé, borné 1..100, offset >= 0", () => {
+    const ok = channelQuerySchema.safeParse({ limit: "20", offset: "40" });
+    assert.equal(ok.success, true);
+    assert.equal(ok.data.limit, 20, "coercion string → number");
+    assert.equal(channelQuerySchema.safeParse({ limit: "0" }).success, false);
+    assert.equal(channelQuerySchema.safeParse({ limit: "200" }).success, false,
+      "le worker clampait silencieusement à 100 : le contrat Nest rejette, parité");
+    assert.equal(channelQuerySchema.safeParse({ offset: "-5" }).success, false);
+    assert.equal(channelQuerySchema.safeParse({}).success, true, "absence = optionnel, default appliqué par le handler");
+  });
+
+  it("matches : state enum strict, from/to datetimes", () => {
+    assert.equal(matchQuerySchema.safeParse({ state: "LIVE" }).success, true);
+    assert.equal(matchQuerySchema.safeParse({ state: "BIDON" }).success, false);
+    assert.equal(matchQuerySchema.safeParse({ from: "pas-une-date" }).success, false);
+    assert.equal(matchQuerySchema.safeParse({ from: "2026-09-10T12:00:00.000Z" }).success, true);
+  });
+
+  it("match play : corps absent/nullish → {} (transform du contrat)", () => {
+    assert.deepEqual(matchPlaySchema.parse({}), {});
+    assert.deepEqual(matchPlaySchema.parse(null), {});
+    assert.equal(matchPlaySchema.safeParse({ channelId: 42 }).success, false);
+  });
+
+  it("epg range : only ISO datetimes acceptés", () => {
+    assert.equal(epgRangeQuerySchema.safeParse({ from: "pas-une-date" }).success, false);
+    assert.equal(epgRangeQuerySchema.safeParse({ from: "2026-09-10 10:00" }).success, false,
+      "le worker faisait new Date() permissif ; le contrat exige ISO 8601");
+    assert.equal(epgRangeQuerySchema.safeParse({ from: "2026-09-10T10:00:00Z" }).success, true);
+    assert.equal(epgRangeQuerySchema.safeParse({ from: "2026-09-10T10:00:00.000Z" }).success, true,
+      "millisecondes optionnelles par défaut (le web envoie toISOString())");
+  });
+
+  it("programmes search : q requis min 1, limit coercé default 30", () => {
+    assert.equal(programmeSearchQuerySchema.safeParse({}).success, false);
+    assert.equal(programmeSearchQuerySchema.safeParse({ q: "ligue" }).data.limit, 30);
+    assert.equal(programmeSearchQuerySchema.safeParse({ q: "l", limit: "999" }).success, false);
+  });
+
+  it("heartbeat : channelId optionnel, chaîne stricte", () => {
+    assert.equal(activityHeartbeatSchema.safeParse({}).success, true);
+    assert.equal(activityHeartbeatSchema.safeParse({ channelId: "c1" }).success, true);
+    assert.equal(activityHeartbeatSchema.safeParse({ channelId: 12 }).success, false,
+      "le worker ignorait silencieusement un channelId non-string ; le contrat rejette");
+  });
+
+  it("redeem : code 4-64 (parité avec le contrôle supprimé du worker)", () => {
+    assert.equal(accessRedeemSchema.safeParse({ code: "MBLO-ABC" }).success, true);
+    assert.equal(accessRedeemSchema.safeParse({ code: "ab" }).success, false);
+    assert.equal(accessRedeemSchema.safeParse({}).success, false);
+  });
+
+  it("push subscribe : endpoint + keys p256dh/auth requis", () => {
+    assert.equal(pushSubscriptionSchema.safeParse({
+      endpoint: "https://push.example/x",
+      keys: { p256dh: "pk", auth: "ak" },
+    }).success, true);
+    assert.equal(pushSubscriptionSchema.safeParse({ endpoint: "https://push.example/x" }).success, false);
+    assert.equal(pushSubscriptionSchema.safeParse(null).success, false);
+  });
+
+  it("reminder : tous champs requis, startsAt/endsAt datetimes", () => {
+    const valid = {
+      programmeId: "p1", channelId: "c1", channelName: "Canal+",
+      title: "Match", startsAt: "2026-09-10T20:00:00.000Z", endsAt: "2026-09-10T22:00:00.000Z",
+    };
+    assert.equal(reminderCreateSchema.safeParse(valid).success, true);
+    assert.equal(reminderCreateSchema.safeParse({ ...valid, startsAt: "demain" }).success, false,
+      "le worker acceptait toute chaîne (new Date() silencieux) ; la référence exige ISO");
   });
 });

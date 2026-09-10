@@ -23,6 +23,22 @@ import { scanDueVariants } from "./healthcheck.js";
 import { discoverMatches } from "./discovery.js";
 import { runEpgImportForSource } from "./epgimport.js";
 import { geoFeatured } from "./featured.js";
+// Schémas Zod partagés (ADR-0002 Phase 2, lot public) : mêmes validations que
+// l'API de référence, qui pipe ces routes avec ZodValidationPipe. Les routes
+// VOD publiques ne sont PAS pipées dans la référence — pas de contrat ici non
+// plus, pour ne pas créer une divergence inversée.
+import {
+  channelQuerySchema,
+  matchQuerySchema,
+  matchPlaySchema,
+  epgRangeQuerySchema,
+  programmeSearchQuerySchema,
+  activityHeartbeatSchema,
+  accessRedeemSchema,
+  pushSubscriptionSchema,
+  reminderCreateSchema,
+} from "@mbolo/contracts";
+import { parseContract } from "./validate.js";
 
 export function corsHeaders(request, env) {
   const allowed = (env?.CORS_ALLOWED_ORIGINS ?? "")
@@ -79,7 +95,6 @@ class Ctx {
   }
 }
 
-const MATCH_STATES = new Set(["SCHEDULED", "LIVE", "FINISHED", "POSTPONED"]);
 
 // ---- Éco adaptatif -------------------------------------------------------
 // Le relais résidentiel porte ~1 flux par chaîne ACTIVE (mutualisation proxy),
@@ -280,20 +295,12 @@ async function route(ctx, url) {
     return geoFeatured(ctx, url);
 
   if (path === "/api/channels" && method === "GET") {
-    return ctx.json(
-      await channels.listChannels(env, {
-        category: url.searchParams.get("category") ?? undefined,
-        country: url.searchParams.get("country") ?? undefined,
-        q: url.searchParams.get("q") ?? undefined,
-        limit: intParam(url.searchParams.get("limit"), 48, 1, 100),
-        offset: intParam(
-          url.searchParams.get("offset"),
-          0,
-          0,
-          Number.MAX_SAFE_INTEGER,
-        ),
-      }),
-    );
+    // Le contrat (channelQuerySchema, pipe de la référence) borne limit à
+    // 1..100 et rejette un offset négatif — avant, le worker clampait
+    // silencieusement. searchParams → objet (les clés absentes le restent).
+    const parsed = parseContract(ctx, channelQuerySchema, Object.fromEntries(url.searchParams));
+    if (parsed.response) return parsed.response;
+    return ctx.json(await channels.listChannels(env, parsed.value));
   }
 
   if (path === "/api/channels/countries" && method === "GET")
@@ -345,20 +352,9 @@ async function route(ctx, url) {
   }
 
   if (path === "/api/matches" && method === "GET") {
-    const state = url.searchParams.get("state");
-    if (state && !MATCH_STATES.has(state))
-      return ctx.fail(
-        400,
-        `state doit être un de ${[...MATCH_STATES].join(", ")}`,
-      );
-    return ctx.json(
-      await matches.listMatches(env, {
-        state,
-        sport: url.searchParams.get("sport") ?? undefined,
-        from: url.searchParams.get("from") ?? undefined,
-        to: url.searchParams.get("to") ?? undefined,
-      }),
-    );
+    const parsed = parseContract(ctx, matchQuerySchema, Object.fromEntries(url.searchParams));
+    if (parsed.response) return parsed.response;
+    return ctx.json(await matches.listMatches(env, parsed.value));
   }
 
   const matchMatch = path.match(/^\/api\/matches\/([^/]+)(\/play)?$/);
@@ -368,11 +364,14 @@ async function route(ctx, url) {
     const found = await matches.findMatchVariants(env, matchId);
     if (!found) return ctx.fail(404, "Match not found");
     const body = await readJson(ctx.request).catch(() => ({}));
+    const parsed = parseContract(ctx, matchPlaySchema, body);
+    if (parsed.response) return parsed.response;
+    const channelId = parsed.value.channelId;
     const variants = found.variants.filter(
       (variant) =>
         variant.is_active &&
         variant.source_status !== "DISABLED" &&
-        (!body.channelId || variant.channel_id === body.channelId),
+        (!channelId || variant.channel_id === channelId),
     );
     if (variants.length === 0)
       return ctx.fail(404, "Aucun flux disponible pour ce match");
@@ -400,25 +399,15 @@ async function route(ctx, url) {
     );
 
   if (path === "/api/epg/range" && method === "GET") {
-    return ctx.json(
-      await epg.epgRange(env, {
-        from: url.searchParams.get("from") ?? undefined,
-        to: url.searchParams.get("to") ?? undefined,
-        category: url.searchParams.get("category") ?? undefined,
-      }),
-    );
+    const parsed = parseContract(ctx, epgRangeQuerySchema, Object.fromEntries(url.searchParams));
+    if (parsed.response) return parsed.response;
+    return ctx.json(await epg.epgRange(env, parsed.value));
   }
 
   if (path === "/api/programmes/search" && method === "GET") {
-    const q = url.searchParams.get("q");
-    if (!q) return ctx.fail(400, "q est requis");
-    return ctx.json(
-      await epg.searchProgrammes(env, {
-        q: q.slice(0, 80),
-        category: url.searchParams.get("category") ?? undefined,
-        limit: intParam(url.searchParams.get("limit"), 30, 1, 100),
-      }),
-    );
+    const parsed = parseContract(ctx, programmeSearchQuerySchema, Object.fromEntries(url.searchParams));
+    if (parsed.response) return parsed.response;
+    return ctx.json(await epg.searchProgrammes(env, parsed.value));
   }
 
   if (path === "/api/activity/heartbeat" && method === "POST") {
@@ -426,11 +415,9 @@ async function route(ctx, url) {
     if (!deviceId?.trim())
       return ctx.fail(400, "Identifiant appareil manquant");
     const body = await readJson(ctx.request).catch(() => ({}));
-    await activity.heartbeat(
-      env,
-      deviceId,
-      typeof body.channelId === "string" ? body.channelId : undefined,
-    );
+    const parsed = parseContract(ctx, activityHeartbeatSchema, body);
+    if (parsed.response) return parsed.response;
+    await activity.heartbeat(env, deviceId, parsed.value.channelId);
     return ctx.json({ ok: true });
   }
 
@@ -462,12 +449,11 @@ async function route(ctx, url) {
     if (!deviceId?.trim())
       return ctx.fail(409, "Identifiant appareil manquant");
     const body = await readJson(ctx.request).catch(() => null);
-    const code = typeof body?.code === "string" ? body.code : "";
-    if (code.length < 4 || code.length > 64)
-      return ctx.fail(400, "Code invalide");
+    const parsed = parseContract(ctx, accessRedeemSchema, body);
+    if (parsed.response) return parsed.response;
     const result = await access.redeemCode(
       env,
-      code,
+      parsed.value.code,
       deviceId,
       ctx.request.headers.get("user-agent") ?? undefined,
       ctx.request.headers.get("cf-connecting-ip") ?? "",
@@ -727,7 +713,10 @@ async function route(ctx, url) {
     if (!(await assertGrantActive(env, deviceId)))
       return ctx.fail(403, "Un code d’accès actif est requis");
     if (method === "DELETE") return ctx.json(await notifications.unsubscribe(env, deviceId));
-    const subscribed = await notifications.subscribe(env, deviceId, await ctx.readJson().catch(() => null));
+    const body = await ctx.readJson().catch(() => null);
+    const parsed = parseContract(ctx, pushSubscriptionSchema, body);
+    if (parsed.response) return parsed.response;
+    const subscribed = await notifications.subscribe(env, deviceId, parsed.value);
     if (!subscribed) return ctx.fail(400, "Abonnement invalide");
     return ctx.json(subscribed);
   }
@@ -738,7 +727,10 @@ async function route(ctx, url) {
     if (!(await assertGrantActive(env, deviceId)))
       return ctx.fail(403, "Un code d’accès actif est requis");
     if (method === "GET") return ctx.json(await notifications.listReminders(env, deviceId));
-    const added = await notifications.addReminder(env, deviceId, await ctx.readJson().catch(() => null));
+    const body = await ctx.readJson().catch(() => null);
+    const parsed = parseContract(ctx, reminderCreateSchema, body);
+    if (parsed.response) return parsed.response;
+    const added = await notifications.addReminder(env, deviceId, parsed.value);
     if (!added) return ctx.fail(400, "Rappel invalide");
     return ctx.json(added);
   }
