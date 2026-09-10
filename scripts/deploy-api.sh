@@ -20,6 +20,18 @@ echo "→ Conteneur $CONTAINER, workdir : $WORKDIR"
 echo "→ Copie du dist compilé…"
 docker cp "$ROOT/apps/api/dist/." "$CONTAINER:$WORKDIR/apps/api/dist"
 
+# Les dist des packages workspace (@mbolo/contracts, @mbolo/ui) sont résolus
+# depuis node_modules par des symlinks vers /app/packages/* : ils font partie
+# du code applicatif et doivent suivre le même déploiement que apps/api/dist.
+# Sans ça, une exportation récente de contracts est undefined au boot du dist
+# de l'API (ex. sourceImportSchema → TypeError au require du contrôleur).
+echo "→ Copie des dist des packages workspace…"
+for pkg in contracts ui; do
+  if [ -d "$ROOT/packages/$pkg/dist" ]; then
+    docker cp "$ROOT/packages/$pkg/dist/." "$CONTAINER:$WORKDIR/packages/$pkg/dist"
+  fi
+done
+
 echo "→ Copie du schéma et des migrations Prisma…"
 docker cp "$ROOT/apps/api/prisma/schema.prisma" "$CONTAINER:$WORKDIR/apps/api/prisma/schema.prisma"
 docker exec "$CONTAINER" mkdir -p "$WORKDIR/apps/api/prisma/migrations"
