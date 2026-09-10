@@ -29,3 +29,5 @@ apps/web/public/sw.js
 # Client Prisma généré par `prisma generate` (source de vérité : prisma/schema.prisma)
 packages/db/generated/
 .zcode/
+# Plans de l'outil opencode (outil local, sans rapport avec le dépôt)
+.opencode/
