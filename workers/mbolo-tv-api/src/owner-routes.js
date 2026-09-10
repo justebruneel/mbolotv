@@ -8,6 +8,32 @@ import { checkVariant } from './healthcheck.js';
 import { featuredList, featuredSet, featuredRemove } from './featured.js';
 import { handleOwnerVodRoute } from './owner-vod.js';
 import * as notifications from './notifications.js';
+// Schémas Zod partagés (ADR-0002) : mêmes validations que apps/api (source de
+// vérité gelée) et apps/web. Une seule source de vérité pour les entrées API.
+import {
+  ownerLoginSchema,
+  ownerProfileUpdateSchema,
+  sourceCreateSchema,
+  sourceUpdateSchema,
+  sourceImportSchema,
+  ownerCategoryCreateSchema,
+  ownerCategoryUpdateSchema,
+  ownerChannelUpdateSchema,
+  accessCodeCreateSchema,
+  announcementCreateSchema,
+} from '@mbolo/contracts';
+
+// Valide un corps contre un schéma @mbolo/contracts. Renvoie { value } (avec
+// valeurs par défaut/transformations Zod appliquées) ou { response } = 400 au
+// format du ZodValidationPipe de l'API de référence : { message: 'Validation
+// failed', issues: [{ path, message }] } — les messages des .refine() (ex.
+// 'Aucune modification') ressortent dans issues comme côté NestJS.
+function parseContract(ctx, schema, body) {
+  const result = schema.safeParse(body);
+  if (result.success) return { value: result.data };
+  const issues = result.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
+  return { response: ctx.json({ message: 'Validation failed', issues, statusCode: 400 }, 400) };
+}
 
 function chunks(values, size) {
   const output = [];
@@ -57,9 +83,9 @@ export async function handleOwnerRoute(ctx, url, path, method) {
 
   if (path === '/api/owner/auth/login' && method === 'POST') {
     const body = await ctx.readJson().catch(() => null);
-    const email = typeof body?.email === 'string' ? body.email : '';
-    const password = typeof body?.password === 'string' ? body.password : '';
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || password.length < 1 || password.length > 200) return ctx.fail(400, 'Validation failed');
+    const parsed = parseContract(ctx, ownerLoginSchema, body);
+    if (parsed.response) return parsed.response;
+    const { email, password } = parsed.value;
     const result = await ownerLogin(ctx, email, password);
     if (result.status === 429) {
       const response = ctx.json({ message: 'Trop de tentatives', statusCode: 429 }, 429);
@@ -111,8 +137,10 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   }
   if (path === '/api/owner/profile' && method === 'PATCH') {
     const body = await ctx.readJson().catch(() => ({}));
-    if (!('whatsappContact' in body)) return ctx.fail(400, 'Aucune modification');
-    const contact = typeof body.whatsappContact === 'string' && body.whatsappContact.trim() !== '' ? body.whatsappContact.trim().slice(0, 120) : null;
+    const parsed = parseContract(ctx, ownerProfileUpdateSchema, body);
+    if (parsed.response) return parsed.response;
+    const raw = parsed.value.whatsappContact;
+    const contact = typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
     await env.db.query(env, `UPDATE "User" SET "whatsappContact" = $2 WHERE id = $1`, [owner.userId, contact]);
     return ctx.json({ id: owner.userId, email: owner.email, role: 'OWNER', whatsappContact: contact });
   }
@@ -191,12 +219,13 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   const channelPatch = path.match(/^\/api\/owner\/channels\/([^/]+)$/);
   if (channelPatch && method === 'PATCH') {
     const body = await ctx.readJson().catch(() => ({}));
+    const parsed = parseContract(ctx, ownerChannelUpdateSchema, body);
+    if (parsed.response) return parsed.response;
     const owned = await env.db.query(env, `SELECT c.id FROM "Channel" c WHERE c.id = $1 AND EXISTS (SELECT 1 FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" WHERE v."channelId" = c.id AND s."ownerId" = $2)`, [decodeURIComponent(channelPatch[1]), owner.userId]);
     if (owned.rows.length === 0) return ctx.fail(404, 'Channel not found');
-    if (body.name !== undefined || body.isVisible !== undefined) {
-      await env.db.query(env, `UPDATE "Channel" SET name = COALESCE($2, name), "canonicalName" = COALESCE($2, "canonicalName"), "isVisible" = COALESCE($3, "isVisible") WHERE id = $1`, [owned.rows[0].id, typeof body.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 160) : null, typeof body.isVisible === 'boolean' ? body.isVisible : null]);
-      await audit(ctx, owner.userId, 'catalog.channel_update', 'channel', owned.rows[0].id, { name: body.name, isVisible: body.isVisible });
-    }
+    const name = typeof parsed.value.name === 'string' && parsed.value.name.trim() ? parsed.value.name.trim() : null;
+    await env.db.query(env, `UPDATE "Channel" SET name = COALESCE($2, name), "canonicalName" = COALESCE($2, "canonicalName"), "isVisible" = COALESCE($3, "isVisible") WHERE id = $1`, [owned.rows[0].id, name, parsed.value.isVisible ?? null]);
+    await audit(ctx, owner.userId, 'catalog.channel_update', 'channel', owned.rows[0].id, { name: parsed.value.name, isVisible: parsed.value.isVisible });
     return ctx.json(await buildOwnerCatalog(ctx, owner));
   }
 
@@ -280,29 +309,29 @@ export async function handleOwnerRoute(ctx, url, path, method) {
 
   if (path === '/api/owner/sources' && method === 'POST') {
     const body = await ctx.readJson().catch(() => null);
-    const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    const kind = ['M3U', 'XTREAM', 'MAC_PORTAL'].includes(body?.kind) ? body.kind : null;
-    if (name.length < 2 || name.length > 80 || !kind || typeof body.connection !== 'object' || body.connection === null) return ctx.fail(400, 'Validation failed');
+    const parsed = parseContract(ctx, sourceCreateSchema, body);
+    if (parsed.response) return parsed.response;
+    const { name, kind, connection, vodEnabled, scope: requestedScope } = parsed.value;
     const key = await importKey(env.ENCRYPTION_KEY);
     const sourceId = crypto.randomUUID();
-    const vodEnabled = body?.vodEnabled === true;
+    const vodEnabledFinal = vodEnabled === true;
     await env.db.query(
       env,
       `INSERT INTO "Source" (id, "ownerId", name, kind, status, priority, "connectionEncrypted", "vodEnabled") VALUES ($1,$2,$3,$4,'PENDING',100,$5,$6)`,
-      [sourceId, owner.userId, name, kind, await encryptLocator(key, JSON.stringify(body.connection)), vodEnabled],
+      [sourceId, owner.userId, name, kind, await encryptLocator(key, JSON.stringify(connection)), vodEnabledFinal],
     );
-    await audit(ctx, owner.userId, 'source.create', 'source', sourceId, { kind, name, vodEnabled });
+    await audit(ctx, owner.userId, 'source.create', 'source', sourceId, { kind, name, vodEnabled: vodEnabledFinal });
     // Périmètre de l'import initial choisi à la création ('live', 'vod' ou
     // 'all'). Un scope 'vod' n'a de sens que si la source peut fournir de la
     // VOD (M3U toujours, Xtream avec vodEnabled) — sinon repli sur 'all'.
-    const createScope = normalizeSourceScope(kind, vodEnabled, body?.scope);
-    if (kind === 'M3U' && (body.connection.url || body.connection.playlistUrl)) {
+    const createScope = normalizeSourceScope(kind, vodEnabledFinal, requestedScope);
+    if (kind === 'M3U' && (connection.url || connection.playlistUrl)) {
       const runId = await startImportRun(ctx, sourceId, createScope);
       ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId, createScope));
     }
     // XTREAM avec VOD activée : import immédiat aussi (le live seul ne se
     // déclenchait pas à la création — l'owner lanceait POST /import).
-    if (kind === 'XTREAM' && vodEnabled && body.connection.url && body.connection.username && body.connection.password) {
+    if (kind === 'XTREAM' && vodEnabledFinal && connection.url && connection.username && connection.password) {
       const runId = await startImportRun(ctx, sourceId, createScope);
       ctx.waitUntil(runImportAndEpg(ctx, sourceId, runId, createScope));
     }
@@ -358,9 +387,15 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     if (!source) return ctx.fail(404, 'Source introuvable');
     if (source.status === 'DISABLED') return ctx.fail(409, 'Source désactivée');
     // Périmètre individuel : 'live' (chaînes), 'vod' (films/séries sans les
-    // chaînes) ou 'all'. Accepté en corps JSON ou en ?scope=.
+    // chaînes) ou 'all'. Accepté en corps JSON ou en ?scope=. Comme l'API de
+    // référence, un corps présent est validé strictement (sourceImportSchema).
     const importBody = await ctx.readJson().catch(() => null);
-    const requestedScope = importBody?.scope ?? url.searchParams.get('scope');
+    let requestedScope = url.searchParams.get('scope');
+    if (importBody !== null) {
+      const parsed = parseContract(ctx, sourceImportSchema, importBody);
+      if (parsed.response) return parsed.response;
+      requestedScope = parsed.value.scope ?? requestedScope;
+    }
     const scope = normalizeSourceScope(source.kind, Boolean(source.vodEnabled), requestedScope);
     const runId = await startImportRun(ctx, source.id);
     await audit(ctx, owner.userId, 'source.import_request', 'source', source.id, { importRunId: runId, scope });
@@ -386,15 +421,18 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     const source = await findOwnedSource(ctx, owner, sourceDetail[1]);
     if (!source) return ctx.fail(404, 'Source introuvable');
     const body = await ctx.readJson().catch(() => ({}));
-    const name = typeof body.name === 'string' && body.name.trim().length >= 2 && body.name.trim().length <= 80 ? body.name.trim() : source.name;
-    const priority = Number.isInteger(body.priority) && body.priority >= 1 && body.priority <= 1000 ? body.priority : source.priority;
-    const status = ['READY', 'DEGRADED', 'FAILED', 'DISABLED'].includes(body.status) ? body.status : source.status;
-    const vodEnabled = typeof body.vodEnabled === 'boolean' ? body.vodEnabled : Boolean(source.vodEnabled);
+    const parsed = parseContract(ctx, sourceUpdateSchema, body);
+    if (parsed.response) return parsed.response;
+    const patch = parsed.value;
+    const name = patch.name !== undefined ? patch.name : source.name;
+    const priority = patch.priority !== undefined ? patch.priority : source.priority;
+    const status = patch.status !== undefined ? patch.status : source.status;
+    const vodEnabled = patch.vodEnabled !== undefined ? patch.vodEnabled : Boolean(source.vodEnabled);
     await env.db.query(env, `UPDATE "Source" SET name = $2, priority = $3, status = $4, "vodEnabled" = $5 WHERE id = $1`, [source.id, name, priority, status, vodEnabled]);
     // Activer le VOD déclenche un import immédiat pour remplir VodItem —
     // avec le périmètre choisi ('vod' = sans les chaînes, sinon 'all').
     if (vodEnabled && !source.vodEnabled) {
-      const vodScope = normalizeSourceScope(source.kind, true, body?.scope);
+      const vodScope = normalizeSourceScope(source.kind, true, patch.scope);
       const runId = await startImportRun(ctx, source.id, vodScope);
       await audit(ctx, owner.userId, 'source.vod_enabled', 'source', source.id, { importRunId: runId, scope: vodScope });
       ctx.waitUntil(runImportAndEpg(ctx, source.id, runId, vodScope));
@@ -548,8 +586,10 @@ export async function handleOwnerRoute(ctx, url, path, method) {
   }
   if (path === '/api/owner/access-codes' && method === 'POST') {
     const body = await ctx.readJson().catch(() => ({}));
-    const kind = body.kind === 'PROMO' ? 'PROMO' : 'STANDARD';
-    const durationHours = kind === 'PROMO' ? 24 : ([7, 14, 30].includes(body.durationDays) ? body.durationDays : 7) * 24;
+    const parsed = parseContract(ctx, accessCodeCreateSchema, body);
+    if (parsed.response) return parsed.response;
+    const { kind, durationDays } = parsed.value;
+    const durationHours = kind === 'PROMO' ? 24 : (durationDays ?? 7) * 24;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const rawCode = `${kind === 'PROMO' ? 'PROMO' : 'MBLO'}-${hexRandom(5)}`;
       const codeHash = await sha256Hex(rawCode);
@@ -578,7 +618,10 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     return ctx.json(await notifications.ownerList(env, owner.userId));
   }
   if (path === '/api/owner/notifications' && method === 'POST') {
-    const created = await notifications.ownerCreate(env, await ctx.readJson().catch(() => null));
+    const body = await ctx.readJson().catch(() => null);
+    const parsed = parseContract(ctx, announcementCreateSchema, body);
+    if (parsed.response) return parsed.response;
+    const created = await notifications.ownerCreate(env, parsed.value);
     if (!created) return ctx.fail(400, 'Annonce invalide (titre 3-80 caractères, corps 3-500)');
     await audit(ctx, owner.userId, 'notifications.create', 'announcement', created.id, { kind: created.kind });
     return ctx.json(created);
@@ -697,9 +740,11 @@ export async function failStaleImports(env) {
 
 async function createCategory(ctx, owner) {
   const body = await ctx.readJson().catch(() => ({}));
-  const name = typeof body?.name === 'string' ? body.name.trim() : '';
-  if (name.length < 1 || name.length > 120) return ctx.fail(400, 'Validation failed');
-  const parentId = body.parentId ?? null;
+  const parsed = parseContract(ctx, ownerCategoryCreateSchema, body);
+  if (parsed.response) return parsed.response;
+  const name = parsed.value.name.trim();
+  if (name.length < 1) return ctx.fail(400, 'Validation failed');
+  const parentId = parsed.value.parentId ?? null;
   if (parentId) {
     const parent = await ctx.env.db.query(ctx.env, `SELECT id FROM "Category" WHERE id = $1`, [parentId]);
     if (parent.rows.length === 0) return ctx.fail(400, 'Parent invalide');
@@ -720,13 +765,16 @@ async function createCategory(ctx, owner) {
 
 async function patchCategory(ctx, owner, id, body) {
   const { env } = ctx;
+  const parsed = parseContract(ctx, ownerCategoryUpdateSchema, body);
+  if (parsed.response) return parsed.response;
+  body = parsed.value;
   const rows = await env.db.query(env, `SELECT * FROM "Category" WHERE id = $1`, [id]);
   const category = rows.rows[0];
   if (!category) return ctx.fail(404, 'Category not found');
   const updates = {};
-  if (body.name !== undefined) updates.name = String(body.name).trim().slice(0, 120);
-  if (body.isVisible !== undefined) updates.isVisible = Boolean(body.isVisible);
-  if (body.sortOrder !== undefined) updates.sortOrder = Number(body.sortOrder) || 0;
+  if (body.name !== undefined) updates.name = String(body.name).trim();
+  if (body.isVisible !== undefined) updates.isVisible = body.isVisible;
+  if (body.sortOrder !== undefined) updates.sortOrder = body.sortOrder;
   if (body.parentId !== undefined) {
     if (body.parentId === id) return ctx.fail(400, 'Un parent ne peut pas être lui-même');
     if (body.parentId) {

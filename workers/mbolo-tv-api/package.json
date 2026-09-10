@@ -8,6 +8,7 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
+    "@mbolo/contracts": "file:../../packages/contracts",
     "pg": "^8.16.3"
   },
   "devDependencies": {
