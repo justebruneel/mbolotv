@@ -12,7 +12,7 @@ Monorepo TypeScript. **Le backend de production est le Cloudflare Worker `worker
 | `workers/mbolo-tv-api` | API métier complète : catalogue, accès, favoris, notifications, console owner, imports, crons | Cloudflare Workers, Hyperdrive | **Backend officiel** |
 | `workers/mbolo-tv-video-proxy` | Proxy HLS edge, URLs signées HMAC, cache segments, relais | Cloudflare Workers, Durable Objects | Production |
 | `apps/api` | Implémentation historique de l'API | NestJS, Fastify, Prisma | Gelé — référence + tests, hors chemin de production |
-| `packages/contracts` | Schémas Zod et types partagés des réponses API | TypeScript | Web + API ; à câbler dans le Worker |
+| `packages/contracts` | Schémas Zod et types partagés des réponses API | TypeScript | Web + API + Worker (validations) |
 | Base de données | Catalogue et données relationnelles | PostgreSQL (Neon), schéma Prisma dans `packages/db` | Production |
 | Stockage | Playlists et logos | S3/R2 avec URLs signées | Production |
 
