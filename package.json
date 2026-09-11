@@ -13,8 +13,7 @@
     "format": "prettier --write .",
     "generate": "pnpm --filter @mbolo/db exec prisma generate",
     "db:migrate": "pnpm --filter @mbolo/db exec prisma migrate dev",
-    "db:seed": "pnpm --filter @mbolo/db exec prisma db seed",
-    "owner:create": "pnpm --filter @mbolo/api exec tsx scripts/create-owner.ts"
+    "db:seed": "pnpm --filter @mbolo/db exec prisma db seed"
   },
   "devDependencies": {"prettier": "^3.4.2", "typescript": "^5.7.2"}
 }

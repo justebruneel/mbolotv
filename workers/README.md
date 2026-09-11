@@ -87,6 +87,8 @@ Variables (`[vars]`) : `VIDEO_PROXY_URL`, `PUBLIC_API_URL` (base des logos),
 
 ## Ce qui reste du backend NestJS (`apps/api`)
 
-Code de référence et tests unitaires (74 tests Jest). Redis/BullMQ/ioredis ont
-été **entièrement retirés** du projet ainsi que le service `apps/worker`.
-Aucune partie de l'application ne nécessite un processus permanent.
+Implémentation historique gelée (ADR-0002) : **code de référence en lecture
+seule, hors chemin de production**. Ses règles métier sont portées et testées
+dans ce Worker (`node --test test/` — ADR-0003) ; son schéma Prisma vit dans
+`packages/db`. La provision du compte OWNER passe par `bootstrap-owner.mjs`
+(ci-dessus), l'équivalent Worker de l'ancien `pnpm owner:create`.
