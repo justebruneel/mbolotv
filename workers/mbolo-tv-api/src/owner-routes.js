@@ -563,15 +563,34 @@ export async function handleOwnerRoute(ctx, url, path, method) {
 
   if (path === '/api/owner/access-codes' && method === 'GET') {
     // Résidus exclus : révoqués, désactivés ou dont l'appareil lié a expiré.
+    // L'appareil lié est remonté (grantId, lastSeenAt) pour permettre sa
+    // révocation unitaire depuis la console.
     const rows = await env.db.query(
       env,
-      `SELECT a.*, g."expiresAt" AS grant_expires FROM "AccessCode" a LEFT JOIN "DeviceGrant" g ON g."accessCodeId" = a.id
+      `SELECT a.*, g.id AS grant_id, g."expiresAt" AS grant_expires, g."lastSeenAt" AS grant_last_seen, g."revokedAt" AS grant_revoked
+       FROM "AccessCode" a LEFT JOIN "DeviceGrant" g ON g."accessCodeId" = a.id
        WHERE a."createdById" = $1 AND a.active AND a."revokedAt" IS NULL
          AND (g.id IS NULL OR g."expiresAt" > now())
        ORDER BY a."createdAt" DESC LIMIT 200`,
       [owner.userId],
     );
-    return ctx.json(rows.rows.map((row) => ({ id: row.id, code: null, codeLast4: row.codeLast4, kind: row.kind, durationHours: row.durationHours, active: true, createdAt: iso(row.createdAt), expiresAt: iso(row.grant_expires), deviceBound: Boolean(row.grant_expires) })));
+    return ctx.json(rows.rows.map((row) => ({
+      id: row.id,
+      code: null,
+      codeLast4: row.codeLast4,
+      kind: row.kind,
+      durationHours: row.durationHours,
+      active: true,
+      createdAt: iso(row.createdAt),
+      expiresAt: iso(row.grant_expires),
+      deviceBound: Boolean(row.grant_expires),
+      grantId: row.grant_id ?? null,
+      lastSeenAt: iso(row.grant_last_seen),
+      // Un appareil révoqué occupe la ligne (accessCodeId est UNIQUE) : le
+      // code n'est alors plus réclamable par personne. La console doit le
+      // montrer, sinon il semblerait actif.
+      deviceRevoked: Boolean(row.grant_revoked),
+    })));
   }
   if (path === '/api/owner/access-codes' && method === 'POST') {
     const body = await ctx.readJson().catch(() => ({}));
@@ -585,12 +604,31 @@ export async function handleOwnerRoute(ctx, url, path, method) {
       try {
         const inserted = await env.db.query(env, `INSERT INTO "AccessCode" (id, "codeHash", "codeLast4", kind, "durationHours", active, "createdById") VALUES ($1,$2,$3,$4,$5,true,$6) RETURNING id`, [crypto.randomUUID(), codeHash, rawCode.slice(-4), kind, durationHours, owner.userId]);
         await audit(ctx, owner.userId, 'access_code.create', 'access_code', inserted.rows[0].id, { kind, durationHours });
-        return ctx.json({ id: inserted.rows[0].id, code: rawCode, codeLast4: rawCode.slice(-4), kind, durationHours, active: true, createdAt: new Date().toISOString(), expiresAt: null, deviceBound: false });
+        return ctx.json({ id: inserted.rows[0].id, code: rawCode, codeLast4: rawCode.slice(-4), kind, durationHours, active: true, createdAt: new Date().toISOString(), expiresAt: null, deviceBound: false, grantId: null, lastSeenAt: null, deviceRevoked: false });
       } catch {
         if (attempt === 4) return ctx.fail(500, 'Impossible de générer un code');
       }
     }
     return ctx.fail(500, 'Impossible de générer un code');
+  }
+  // Révocation de l'appareil d'un code, sans supprimer le code : la console
+  // garde la trace de l'émission, et le propriétaire peut réactiver en émettant
+  // un nouveau code. L'appareil révoqué perd immédiatement la lecture
+  // (assertGrantActive) et ne peut pas se réinscrire avec ce même code.
+  const grantRevoke = path.match(/^\/api\/owner\/access-codes\/([^/]+)\/device$/);
+  if (grantRevoke && method === 'DELETE') {
+    const rows = await env.db.query(
+      env,
+      `UPDATE "DeviceGrant" g SET "revokedAt" = now()
+       FROM "AccessCode" a
+       WHERE g."accessCodeId" = a.id AND g."revokedAt" IS NULL
+         AND a.id = $1 AND a."createdById" = $2
+       RETURNING g.id`,
+      [decodeURIComponent(grantRevoke[1]), owner.userId],
+    );
+    if (rows.rows.length === 0) return ctx.fail(404, 'Appareil introuvable ou déjà révoqué');
+    await audit(ctx, owner.userId, 'access_code.device_revoke', 'device_grant', rows.rows[0].id, { accessCodeId: decodeURIComponent(grantRevoke[1]) });
+    return new Response(null, { status: 204, headers: ctx.corsHeaders() });
   }
   const accessRevoke = path.match(/^\/api\/owner\/access-codes\/([^/]+)$/);
   if (accessRevoke && method === 'DELETE') {

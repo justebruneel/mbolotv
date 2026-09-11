@@ -536,7 +536,7 @@ export type OwnerVodYoutubeUpdateInput = z.infer<typeof ownerVodYoutubeUpdateSch
 
 export const accessCodeCreateSchema = z.object({ kind: z.enum(['STANDARD', 'PROMO']).default('STANDARD'), durationDays: z.union([z.literal(7), z.literal(14), z.literal(30)]).optional() });
 export type AccessCodeCreateInput = z.infer<typeof accessCodeCreateSchema>;
-export const accessCodeSchema = z.object({ id: z.string(), code: z.string().nullable(), codeLast4: z.string(), kind: z.enum(['STANDARD', 'PROMO']), durationHours: z.number(), active: z.boolean(), createdAt: z.string(), expiresAt: z.string().nullable(), deviceBound: z.boolean() });
+export const accessCodeSchema = z.object({ id: z.string(), code: z.string().nullable(), codeLast4: z.string(), kind: z.enum(['STANDARD', 'PROMO']), durationHours: z.number(), active: z.boolean(), createdAt: z.string(), expiresAt: z.string().nullable(), deviceBound: z.boolean(), grantId: z.string().nullable(), lastSeenAt: z.string().nullable(), deviceRevoked: z.boolean() });
 export type AccessCode = z.infer<typeof accessCodeSchema>;
 export const accessStatusSchema = z.object({ active: z.boolean(), expiresAt: z.string().nullable(), kind: z.enum(['STANDARD', 'PROMO']).nullable(), whatsappUrl: z.string() });
 export type AccessStatus = z.infer<typeof accessStatusSchema>;
