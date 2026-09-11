@@ -40,6 +40,6 @@ L'option « deux backends assumés » (contrats générés + tests de compatibil
 | 0 | Gel documenté (cet ADR + README) | ✅ fait (2026-09-10) |
 | 1 | Extraction `apps/api/prisma/` → `packages/db` | ✅ fait (2026-09-10) — schéma + migrations + seed + client généré (`@mbolo/db`) |
 | 2 | Câblage de `@mbolo/contracts` dans le Worker | ✅ fait (2026-09-10) — routes owner (lots 1-2), routes publiques pipées dans la référence (lot 3) ; `/vod/*` et `/x/titles` publics volontairement sans contrat (la référence ne les pipe pas — objectif : parité, pas sur-conformité) |
-| 3 | Port des tests de référence vers le Worker, puis tag + suppression de `apps/api` | ⏳ |
+| 3 | Port des tests de référence vers le Worker, puis tag + suppression de `apps/api` | ✅ fait (2026-09-11) — 49 tests portés ([ADR-0003](0003-port-tests-worker.md)), 153/153 ; tag `archive/nestjs-api` posé puis `apps/api` supprimé |
 
 Mise à jour 2026-09-10 : l'instance conteneurisée `mbolotv-api-1` ne servait aucun client (les applications Android et le web pointent tous vers Vercel/Workers) ; `scripts/deploy-api.sh` a été retiré et le décommissionnement validé avant l'extraction de la Phase 1.
