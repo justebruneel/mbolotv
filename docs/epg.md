@@ -50,16 +50,13 @@ INSERT INTO "ChannelEpgMapping" ("id","channelId","provider","externalId","updat
 
 ## 5. Ajouter un fournisseur EPG
 
-1. Crée `apps/api/src/modules/epg/providers/mon-provider.ts` implémentant `EpgProvider` (`providers/epg-provider.interface.ts`):
-```ts
-export class MonProvider implements EpgProvider {
-  readonly name='mon';
-  getSourceUrl(){ return 'https://…/guide.xml.gz'; }
-  fetchXmltv(){ return new HttpXmltvProvider('mon', url).fetchXmltv(); }
-}
-```
-2. Ajoute-le dans `EpgOrchestrator.getExtraProviders()` ou `EpgImportService` et dans `docs/epg.md`.
-3. Frontend inchangé (`EpgService` normalise).
+Les fournisseurs EPG sont des simples URLs XMLTV : la couche « provider »
+NestJS a disparu avec l'API (ADR-0002). Pour ajouter une source :
+
+1. Renseigne son URL dans la variable d'environnement du Worker adéquate
+   (`EPG_XMLTVFR_URL`, `EPG_AFRICA_URLS`, `EPG_EXTRA_URLS`… — cf. § 3).
+2. Le pipeline `epgimport.js` parse le flux (parseXmltvStream) et mappe les
+   chaînes (§ 4). Frontend inchangé.
 
 ## 6. Cache
 
@@ -94,7 +91,10 @@ Flux : `EPG brut → normalizeCategoryToType → enrichBatch (50 prime 19-23h) �
 - iptv-epg.org `testing only`, pas de SLA.
 - `globetvapp` 1-4 fichiers/pays à merger manuellement.
 - `.xz` non supporté (on n'utilise que `.gz`).
-- Worker Cloudflare `workers/mbolo-tv-api` n'exécute pas `EpgOrchestrator` ni l'agenda football (seul Nest `apps/api` le fait).
+- L'agenda football TheSportsDB (`FootballScheduleService` NestJS) n'a pas été
+  porté sur le Worker (ADR-0003) : la détection de matchs repose sur le cron
+  discovery `*/15` (EPG pur, `discovery.js`). Réintroduire l'agenda externe
+  reste possible via `SPORTSDB_API_KEY` si besoin.
 
 ## 10. Choix EPG pour Mbolo TV (recommandé MVP)
 

@@ -132,11 +132,11 @@ Le lecteur bascule sur les sources saines ; les `DEAD` sortent du catalogue
 public mais restent gérables en console. Le passage d'un extracteur pour un
 host previously iframe déclenche aussi la **promotion** automatique (§ Modes).
 
-## Parité Nest (auto-hébergé)
+## Historique : parité avec l'API NestJS (retirée)
 
-Modèles Prisma + migration partagés. Nest couvre CRUD/gestion et lectures
-publiques (`ExternalController` `/api/x/titles*`, endpoints owner Prisma).
-Aperçu/publication/revérification (scrape + probe = code Worker) répondent
-**501** explicite : le flux d'import complet tourne sur le Worker.
+L'API NestJS auto-hébergée a été retirée du dépôt (ADR-0002, tag
+`archive/nestjs-api`). Le Worker couvre aujourd'hui CRUD/gestion, lectures
+publiques (`/api/x/titles*`), endpoints owner, aperçu/publication et
+revérification — l'ensemble du flux vit dans `workers/mbolo-tv-api/src/`.
 - Quand un host casse (player changé) : le symptôme est `DEAD`/`wurl` absent —
   mettre à jour l'adapter seul, kill-switch = retirer du registre.

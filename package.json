@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "predev": "pnpm --filter @mbolo/contracts build && pnpm --filter @mbolo/db exec prisma generate",
-    "dev": "pnpm --parallel --filter @mbolo/web --filter @mbolo/api dev",
+    "dev": "pnpm --parallel --filter @mbolo/web dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test && node --test workers/mbolo-tv-api/test/*.test.mjs",

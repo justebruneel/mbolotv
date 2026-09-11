@@ -4,9 +4,9 @@
  * Dry-run par défaut, aucune suppression sans --apply.
  *
  * Exemples:
- *   pnpm --filter @mbolo/api exec tsx prisma/cleanup-stale-sources.ts
- *   pnpm --filter @mbolo/api exec tsx prisma/cleanup-stale-sources.ts --older-than-days=30
- *   pnpm --filter @mbolo/api exec tsx prisma/cleanup-stale-sources.ts --older-than-days=30 --apply
+ *   pnpm --filter @mbolo/db exec tsx prisma/cleanup-stale-sources.ts
+ *   pnpm --filter @mbolo/db exec tsx prisma/cleanup-stale-sources.ts --older-than-days=30
+ *   pnpm --filter @mbolo/db exec tsx prisma/cleanup-stale-sources.ts --older-than-days=30 --apply
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
