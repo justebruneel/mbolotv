@@ -36,6 +36,9 @@ jobs:
           # Les workers sont hors workspace pnpm (npm à part) : le test du
           # Worker importe @mbolo/contracts depuis son node_modules.
           (cd workers/mbolo-tv-api && npm ci)
+          # dist/ est gitignoré : le file: du worker pointe sur le dossier
+          # source, il faut construire le JS de @mbolo/contracts avant le test.
+          pnpm --filter @mbolo/contracts build
 
       # Le client généré peut être périmé dans le cache pnpm : régénération
       # explicite avant typecheck/test/build (le client vit dans packages/db).
