@@ -1,4 +1,4 @@
-import { sha256Hex } from "./crypto.js";
+import { sha256Hex, hmacSha256Hex } from "./crypto.js";
 
 const DEFAULT_WHATSAPP_URL = "https://wa.me/qr/CPB7IL3GHAGIK1";
 
@@ -135,12 +135,46 @@ export async function accessStatus(env, deviceId) {
   };
 }
 
+// Hash d'un code pour la colonne codeHash. L'empreinte est HMAC(pepper, code)
+// quand ACCESS_CODE_PEPPER est défini, sinon repli sha256(code) (historique).
+// La requête porte les deux variantes : les codes créés avant le pepper
+// restent réclamables et migrent vers l'empreinte HMAC à la première lecture
+// réussie. Le pepper ne vit que dans les secrets du Worker — un dump de la
+// base seul ne permet pas de retrouver les codes hors ligne.
+function normalizeCode(code) {
+  return code.trim().toUpperCase();
+}
+
+async function lookupAccessCode(env, normalized) {
+  const plainHash = await sha256Hex(normalized);
+  const pepper = String(env.ACCESS_CODE_PEPPER ?? '').trim();
+  const pepperHash = pepper ? await hmacSha256Hex(pepper, normalized) : null;
+  const rows = await env.db.query(
+    env,
+    `SELECT * FROM "AccessCode" WHERE "codeHash" = ANY($1) LIMIT 1`,
+    [[pepperHash, plainHash].filter(Boolean)],
+  );
+  const accessCode = rows.rows[0] ?? null;
+  // Migration à la lecture : réécrire l'empreinte legacy (sha256 nu) vers
+  // l'empreinte pepperée. Idempotent, et sans effet si le code a changé de
+  // côté entre-temps (WHERE codeHash = oldHash ne modifiera rien).
+  if (accessCode && pepperHash && accessCode.codeHash === plainHash) {
+    await env.db
+      .query(
+        env,
+        `UPDATE "AccessCode" SET "codeHash" = $1 WHERE id = $2 AND "codeHash" = $3`,
+        [pepperHash, accessCode.id, plainHash],
+      )
+      .catch(() => undefined);
+  }
+  return accessCode;
+}
+
 export async function redeemCode(env, code, deviceId, userAgent, ip) {
-  const normalized = code.trim().toUpperCase();
-  const codeHash = await sha256Hex(normalized);
+  const normalized = normalizeCode(code);
   const deviceHash = await sha256Hex(deviceId);
   const ipHash = ip ? await sha256Hex(ip) : null;
-  const attempt = { codeHash, deviceHash, ipHash };
+  const attempt = { deviceHash, ipHash };
 
   const limit = await redeemRateLimit(env, ipHash, deviceHash);
   if (limit.blocked) {
@@ -152,12 +186,7 @@ export async function redeemCode(env, code, deviceId, userAgent, ip) {
     };
   }
 
-  const rows = await env.db.query(
-    env,
-    `SELECT * FROM "AccessCode" WHERE "codeHash" = $1 LIMIT 1`,
-    [codeHash],
-  );
-  const accessCode = rows.rows[0];
+  const accessCode = await lookupAccessCode(env, normalized);
   if (!accessCode || !accessCode.active || accessCode.revokedAt) {
     await recordAttempt(env, { ...attempt, outcome: "INVALID_CODE" });
     return { status: 403, message: "Code invalide ou désactivé" };
