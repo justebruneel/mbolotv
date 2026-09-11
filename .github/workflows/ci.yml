@@ -31,7 +31,11 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          # Les workers sont hors workspace pnpm (npm à part) : le test du
+          # Worker importe @mbolo/contracts depuis son node_modules.
+          (cd workers/mbolo-tv-api && npm ci)
 
       # Le client généré peut être périmé dans le cache pnpm : régénération
       # explicite avant typecheck/test/build (le client vit dans packages/db).
