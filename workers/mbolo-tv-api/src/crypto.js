@@ -5,6 +5,16 @@ export async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// HMAC-SHA256 avec pepper serveur : la clé ne vit QUE dans les secrets du
+// Worker, jamais en base. Un dump de la base seul ne permet donc pas de
+// retrouver les codes hors ligne (un sha256 nu serait casserable en minutes
+// sur GPU — les codes font 40 bits). Même format hex que sha256Hex.
+export async function hmacSha256Hex(secret, value) {
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = await crypto.subtle.sign('HMAC', key, encoder.encode(value));
+  return [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 async function derivedKey(secret) {
   const digest = await crypto.subtle.digest('SHA-256', encoder.encode(secret));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);

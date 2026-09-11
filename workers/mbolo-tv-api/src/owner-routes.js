@@ -1,4 +1,4 @@
-import { importKey, encryptLocator, decryptLocator, sha256Hex } from './crypto.js';
+import { importKey, encryptLocator, decryptLocator, sha256Hex, hmacSha256Hex } from './crypto.js';
 import { requireOwner, ownerLogin, ownerLogout } from './owner.js';
 import { hashPassword } from './password.js';
 import { slugify } from './normalize.js';
@@ -600,7 +600,11 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     const durationHours = kind === 'PROMO' ? 24 : (durationDays ?? 7) * 24;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const rawCode = `${kind === 'PROMO' ? 'PROMO' : 'MBLO'}-${hexRandom(5)}`;
-      const codeHash = await sha256Hex(rawCode);
+      // Empreinte pepperée si ACCESS_CODE_PEPPER est défini (sinon sha256 nu,
+      // comme lookupAccessCode côté redeem — les deux côtés doivent rester
+      // alignés ; la lecture accepte de toute façon les deux variantes).
+      const pepper = String(env.ACCESS_CODE_PEPPER ?? '').trim();
+      const codeHash = pepper ? await hmacSha256Hex(pepper, rawCode) : await sha256Hex(rawCode);
       try {
         const inserted = await env.db.query(env, `INSERT INTO "AccessCode" (id, "codeHash", "codeLast4", kind, "durationHours", active, "createdById") VALUES ($1,$2,$3,$4,$5,true,$6) RETURNING id`, [crypto.randomUUID(), codeHash, rawCode.slice(-4), kind, durationHours, owner.userId]);
         await audit(ctx, owner.userId, 'access_code.create', 'access_code', inserted.rows[0].id, { kind, durationHours });
