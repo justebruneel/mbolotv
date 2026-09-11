@@ -48,8 +48,10 @@ jobs:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
 
       - name: Validate Cloudflare workers
+        # Exclure node_modules : après `npm ci`, le find capturait les .worker.js
+        # de miniflare (syntaxe `using` runtime-supported, pas du JS Node) → 123.
         run: |
-          find workers -path '*/src/*.js' -print0 | xargs -0 -n1 node --check
+          find workers -path '*/src/*.js' -not -path '*/node_modules/*' -print0 | xargs -0 -n1 node --check
 
       - name: Typecheck
         run: pnpm typecheck
