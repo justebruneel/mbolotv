@@ -458,6 +458,16 @@ async function route(ctx, url) {
       ctx.request.headers.get("user-agent") ?? undefined,
       ctx.request.headers.get("cf-connecting-ip") ?? "",
     );
+    if (result.status === 429) {
+      // Rate limit du rachat : même forme que le login owner (message + délai
+      // exploitable par le client, qui peut inviter à patienter).
+      const response = ctx.json(
+        { message: result.message, statusCode: 429 },
+        429,
+      );
+      response.headers.set("retry-after", String(result.retryAfterSeconds));
+      return response;
+    }
     if (result.status !== 200) return ctx.fail(result.status, result.message);
     return ctx.json(result.value);
   }
@@ -808,6 +818,15 @@ export async function scheduled(event, env) {
          OR EXISTS (SELECT 1 FROM "DeviceGrant" g WHERE g."accessCodeId" = a.id AND g."expiresAt" <= now())`,
       );
       console.log("[cron] codes purgés:", purged.rowCount ?? 0);
+      // Journal des tentatives : seule la fenêtre glissante du rate limit est
+      // utile. Sans purge, la table croîtrait indéfiniment (une ligne par
+      // tentative, y compris les bruteforce). Rétention large (7 j) pour
+      // pouvoir enquêter après coup sur une campagne d'essais.
+      const attemptsPurged = await env.db.query(
+        env,
+        `DELETE FROM "AccessAttempt" WHERE "createdAt" < now() - interval '7 days'`,
+      );
+      console.log("[cron] tentatives purgées:", attemptsPurged.rowCount ?? 0);
       const sources = await env.db.query(env, `SELECT id FROM "Source" WHERE status <> 'DISABLED' AND (kind = 'XTREAM' OR "epgUrl" IS NOT NULL)`);
       for (const source of sources.rows) {
         await runEpgImportForSource(env, source.id).catch((error) => console.error("[cron] epg", error.message));

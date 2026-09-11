@@ -13,7 +13,7 @@ function getRemainingLabel(code: AccessCode, now: number): { text: string; expir
   return { text: formatRemaining(remaining), expired: false, soon: remaining < DAY_MS };
 }
 
-function CodeRow({ code, now, busy, onRevoke }: { code: AccessCode; now: number; busy: boolean; onRevoke: (id: string) => void }) {
+function CodeRow({ code, now, busy, onRevoke, onRevokeDevice }: { code: AccessCode; now: number; busy: boolean; onRevoke: (id: string) => void; onRevokeDevice: (id: string) => void }) {
   const remainingInfo = code.deviceBound ? getRemainingLabel(code, now) : null;
   const isExpired = remainingInfo?.expired ?? false;
   const isSoon = remainingInfo?.soon ?? false;
@@ -43,9 +43,19 @@ function CodeRow({ code, now, busy, onRevoke }: { code: AccessCode; now: number;
             Échéance : {formatExpiresAt(code.expiresAt)}
           </p>
         )}
+        {code.deviceRevoked && (
+          <p className="mt-1 text-xs text-danger">
+            Appareil révoqué : ce code n’est plus réclamable, émettez-en un nouveau.
+          </p>
+        )}
         <p className="mt-1 text-xs text-faint">Créé le {formatExpiresAt(code.createdAt)}</p>
       </div>
       <span className={`text-xs font-semibold ${statusClass}`}>{statusLabel}</span>
+      {code.active && !code.deviceRevoked && code.grantId && (
+        <button className="btn" disabled={busy} onClick={() => onRevokeDevice(code.id)}>
+          Couper l’appareil
+        </button>
+      )}
       {code.active && (
         <button className="btn btn-danger" disabled={busy} onClick={() => onRevoke(code.id)}>
           Révoquer
@@ -96,6 +106,18 @@ export default function AccessControlPage() {
     try {
       await ownerApi.accessCodes.revoke(id);
       setCodes((current) => current.map((code) => (code.id === id ? { ...code, active: false } : code)));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Révocation impossible.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function revokeDevice(id: string): Promise<void> {
+    if (!window.confirm('Couper l’appareil lié à ce code ? Il perdra l’accès immédiatement, et ce code ne sera plus réclamable.')) return;
+    setBusy(true);
+    try {
+      await ownerApi.accessCodes.revokeDevice(id);
+      setCodes((current) => current.map((code) => (code.id === id ? { ...code, deviceRevoked: true } : code)));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Révocation impossible.');
     } finally {
@@ -166,7 +188,7 @@ export default function AccessControlPage() {
           {codes.length === 0 ? (
             <p className="p-5 text-sm text-muted">Aucun code pour l’instant.</p>
           ) : (
-            codes.map((code) => <CodeRow key={code.id} code={code} now={now} busy={busy} onRevoke={revoke} />)
+            codes.map((code) => <CodeRow key={code.id} code={code} now={now} busy={busy} onRevoke={revoke} onRevokeDevice={revokeDevice} />)
           )}
         </div>
       </section>

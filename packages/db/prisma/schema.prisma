@@ -384,7 +384,6 @@ model AccessCode {
   codeLast4 String
   kind String @default("STANDARD")
   durationHours Int
-  maxDevices Int @default(1)
   active Boolean @default(true)
   createdById String
   createdAt DateTime @default(now())
@@ -402,8 +401,22 @@ model DeviceGrant {
   grantedAt DateTime @default(now())
   expiresAt DateTime
   lastSeenAt DateTime @default(now())
+  revokedAt DateTime?
   accessCode AccessCode @relation(fields:[accessCodeId], references:[id], onDelete:Cascade)
   @@index([deviceHash, expiresAt])
+}
+// Journal des tentatives de /access/redeem (rate limit + traçabilité).
+// Pas de relation vers AccessCode : on journalise aussi les codes inexistants.
+model AccessAttempt {
+  id String @id @default(cuid())
+  codeHash String?
+  deviceHash String?
+  ipHash String?
+  outcome String
+  createdAt DateTime @default(now())
+  @@index([deviceHash, createdAt])
+  @@index([ipHash, createdAt])
+  @@index([createdAt])
 }
 // Cache d'enrichissement EPG (TVmaze + Fanart.tv, ex-TmdbCache).
 // payload = MetadataEnriched ; clé "titre normalisé::année" ; TTL 30 jours.

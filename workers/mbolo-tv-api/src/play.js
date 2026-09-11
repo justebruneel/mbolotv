@@ -11,7 +11,7 @@ export async function selectVariant(env, channelId, filterChannelId) {
 }
 export async function assertGrantActive(env, deviceId) {
   if (!deviceId) return false;
-  const result = await env.db.query(env, `SELECT g.id FROM "DeviceGrant" g JOIN "AccessCode" a ON a.id = g."accessCodeId" WHERE g."deviceHash" = $1 AND g."expiresAt" > now() AND a.active AND a."revokedAt" IS NULL LIMIT 1`, [await sha256Hex(deviceId)]);
+  const result = await env.db.query(env, `SELECT g.id FROM "DeviceGrant" g JOIN "AccessCode" a ON a.id = g."accessCodeId" WHERE g."deviceHash" = $1 AND g."expiresAt" > now() AND g."revokedAt" IS NULL AND a.active AND a."revokedAt" IS NULL LIMIT 1`, [await sha256Hex(deviceId)]);
   return result.rows.length > 0;
 }
 const SIGN_TTL_MS = 24 * 3_600_000;

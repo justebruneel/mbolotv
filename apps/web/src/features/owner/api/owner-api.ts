@@ -163,6 +163,9 @@ export const ownerApi = {
     list: (): Promise<AccessCode[]> => fetch(`${BASE_URL}/owner/access-codes`, { credentials: 'include' }).then(parseResponse<AccessCode[]>),
     create: (input: AccessCodeCreateInput): Promise<AccessCode> => fetch(`${BASE_URL}/owner/access-codes`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<AccessCode>),
     revoke: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/access-codes/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
+    // Coupe l'appareil lié sans supprimer le code (la console garde la trace
+    // de l'émission ; l'appareil révoqué ne peut pas se réinscrire).
+    revokeDevice: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/access-codes/${id}/device`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
   },
   sources: {
     list: (): Promise<SourceResponse[]> => fetch(`${BASE_URL}/owner/sources`, { credentials: 'include' }).then(parseResponse<SourceResponse[]>),
