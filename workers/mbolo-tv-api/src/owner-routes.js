@@ -1,6 +1,6 @@
 import { importKey, encryptLocator, decryptLocator, sha256Hex, hmacSha256Hex } from './crypto.js';
-import { requireOwner, ownerLogin, ownerLogout } from './owner.js';
-import { hashPassword } from './password.js';
+import { requireOwner, ownerLogin, ownerLogout, rateLimit } from './owner.js';
+import { hashPassword, verifyPassword } from './password.js';
 import { slugify } from './normalize.js';
 import { runSourceImport, ACTIVE_IMPORT_STATES } from './importer.js';
 import { runEpgImportForSource } from './epgimport.js';
@@ -21,6 +21,7 @@ import {
   ownerChannelUpdateSchema,
   accessCodeCreateSchema,
   announcementCreateSchema,
+  sourceCredentialsRevealSchema,
 } from '@mbolo/contracts';
 import { parseContract } from './validate.js';
 
@@ -361,15 +362,45 @@ export async function handleOwnerRoute(ctx, url, path, method) {
       return ctx.json({ ok: false, latencyMs: Date.now() - started, error: String(error.message).replace(/https?:\/\/[^\s]+/g, '[url masquée]') });
     }
   }
-  if (sourceDetail && sourceDetail[3] === 'credentials' && method === 'GET') {
+  // Révélation exceptionnelle des identifiants : la session owner seule ne
+  // suffit plus (une session volée, une XSS ou un poste infecté ne donnent
+  // plus accès aux secrets en un GET). Exige la RE-SAISIE du mot de passe
+  // owner, bornée par un rate limit, et journalise chaque affichage.
+  if (sourceDetail && sourceDetail[3] === 'credentials' && method === 'POST') {
     const source = await findOwnedSource(ctx, owner, sourceDetail[1]);
     if (!source) return ctx.fail(404, 'Source introuvable');
+    const revealIp = ctx.request.headers.get('cf-connecting-ip') ?? '';
+    const limited = rateLimit(`reveal:${owner.userId}:${source.id}:${revealIp.slice(0, 24)}`,
+      Number(env.OWNER_REVEAL_MAX_ATTEMPTS ?? 5), 15 * 60_000);
+    if (!limited.allowed) {
+      await audit(ctx, owner.userId, 'owner.credentials_reveal_rate_limited', 'source', source.id, {});
+      const response = ctx.json({ message: 'Trop de tentatives de révélation, réessayez plus tard.', statusCode: 429 }, 429);
+      response.headers.set('retry-after', String(limited.retryAfterSeconds));
+      return response;
+    }
+    const body = await ctx.readJson().catch(() => null);
+    const parsed = parseContract(ctx, sourceCredentialsRevealSchema, body);
+    if (parsed.response) return parsed.response;
+    const userRows = await env.db.query(
+      env, `SELECT "passwordHash" FROM "User" WHERE id = $1 AND role = 'OWNER' LIMIT 1`, [owner.userId],
+    );
+    const valid = userRows.rows[0]?.passwordHash && (await verifyPassword(userRows.rows[0].passwordHash, parsed.value.password));
+    if (!valid) {
+      await audit(ctx, owner.userId, 'owner.credentials_reveal_denied', 'source', source.id, { reason: 'password' });
+      return ctx.fail(403, 'Mot de passe incorrect');
+    }
+    await audit(ctx, owner.userId, 'owner.credentials_reveal', 'source', source.id, { name: source.name });
     const key = await importKey(env.ENCRYPTION_KEY);
     try {
       return ctx.json({ connection: JSON.parse(await decryptLocator(key, source.connectionEncrypted)) });
     } catch {
       return ctx.json({ connection: {} });
     }
+  }
+  if (sourceDetail && sourceDetail[3] === 'credentials' && method === 'GET') {
+    // Supprimé (audit §4.4) : plus de GET nu. Un lien ou un fetch résiduel
+    // côté client tombe ici plutôt que de divulguer silencieusement.
+    return ctx.fail(405, 'La révélation des identifiants exige une re-authentification (POST + mot de passe)');
   }
   if (sourceDetail && sourceDetail[3] === 'import' && method === 'POST') {
     const source = await findOwnedSource(ctx, owner, sourceDetail[1]);
@@ -418,6 +449,34 @@ export async function handleOwnerRoute(ctx, url, path, method) {
     const status = patch.status !== undefined ? patch.status : source.status;
     const vodEnabled = patch.vodEnabled !== undefined ? patch.vodEnabled : Boolean(source.vodEnabled);
     await env.db.query(env, `UPDATE "Source" SET name = $2, priority = $3, status = $4, "vodEnabled" = $5 WHERE id = $1`, [source.id, name, priority, status, vodEnabled]);
+    // Remplacement des credentials SANS révélation : seules les clés fournies
+    // écrasent les existantes (fusion sur la connexion déchiffrée, puis
+    // re-chiffrement). Le frontend n'envoie que les champs réellement saisis.
+    // Garde anti-enregistrement-de-masque : un champ pré-rempli par un masque
+    // (•••• ou suffixe …) jamais saisi par l'owner ne doit pas écraser le vrai
+    // secret. Un secret légitime ne finit pas par « … » et n'est pas QUE des
+    // puces.
+    if (patch.connection) {
+      const provided = Object.entries(patch.connection).filter(
+        ([, value]) => !/^•+$/.test(value) && !value.endsWith('…'),
+      );
+      if (provided.length > 0) {
+        const key = await importKey(env.ENCRYPTION_KEY);
+        let merged;
+        try {
+          merged = { ...JSON.parse(await decryptLocator(key, source.connectionEncrypted)) };
+        } catch {
+          merged = {};
+        }
+        for (const [entryKey, value] of provided) merged[entryKey] = value;
+        await env.db.query(
+          env,
+          `UPDATE "Source" SET "connectionEncrypted" = $2 WHERE id = $1`,
+          [source.id, await encryptLocator(key, JSON.stringify(merged))],
+        );
+        await audit(ctx, owner.userId, 'source.credentials_update', 'source', source.id, { keys: provided.map(([entryKey]) => entryKey) });
+      }
+    }
     // Activer le VOD déclenche un import immédiat pour remplir VodItem —
     // avec le périmètre choisi ('vod' = sans les chaînes, sinon 'all').
     if (vodEnabled && !source.vodEnabled) {

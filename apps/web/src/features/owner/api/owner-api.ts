@@ -170,7 +170,9 @@ export const ownerApi = {
   sources: {
     list: (): Promise<SourceResponse[]> => fetch(`${BASE_URL}/owner/sources`, { credentials: 'include' }).then(parseResponse<SourceResponse[]>),
     detail: (id: string): Promise<SourceDetail> => fetch(`${BASE_URL}/owner/sources/${id}`, { credentials: 'include' }).then(parseResponse<SourceDetail>),
-    credentials: (id: string): Promise<SourceCredentials> => fetch(`${BASE_URL}/owner/sources/${id}/credentials`, { credentials: 'include' }).then(parseResponse<SourceCredentials>),
+    // Révélation (audit §4.4) : POST + re-saisie du mot de passe owner ; le
+    // GET nu n'existe plus côté API. Chaque affichage est journalisé serveur.
+    revealCredentials: (id: string, password: string): Promise<SourceCredentials> => fetch(`${BASE_URL}/owner/sources/${id}/credentials`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify({ password }) }).then(parseResponse<SourceCredentials>),
     create: (input: SourceCreateInput): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources`, { method: 'POST', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<SourceResponse>),
     update: (id: string, input: SourceUpdateInput): Promise<SourceResponse> => fetch(`${BASE_URL}/owner/sources/${id}`, { method: 'PATCH', credentials: 'include', headers: JSON_HEADERS, body: JSON.stringify(input) }).then(parseResponse<SourceResponse>),
     remove: (id: string): Promise<void> => fetch(`${BASE_URL}/owner/sources/${id}`, { method: 'DELETE', credentials: 'include' }).then(parseResponse<void>),
