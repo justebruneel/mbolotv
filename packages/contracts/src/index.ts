@@ -414,7 +414,13 @@ export const sourceDetailSchema = sourceResponseSchema.extend({ connectionMasked
 export type SourceDetail = z.infer<typeof sourceDetailSchema>;
 export const sourceCredentialsSchema = z.object({ connection: z.record(z.string()) });
 export type SourceCredentials = z.infer<typeof sourceCredentialsSchema>;
-export const sourceUpdateSchema = z.object({ name: z.string().min(2).max(80).optional(), priority: z.number().int().min(1).max(1000).optional(), status: z.enum(['READY', 'DEGRADED', 'FAILED', 'DISABLED']).optional(), vodEnabled: z.boolean().optional(), scope: importScopeSchema.optional() });
+// Révélation des identifiants : re-saisie du mot de passe owner exigée
+// (vérifiée côté serveur, chaque affichage journalisé dans l'AuditLog).
+export const sourceCredentialsRevealSchema = z.object({ password: z.string().min(1).max(200) });
+export type SourceCredentialsRevealInput = z.infer<typeof sourceCredentialsRevealSchema>;
+// `connection` (PATCH) : remplacement des credentials sans révélation — les
+// clés fournies écrasent les existantes, les autres sont conservées (fusion).
+export const sourceUpdateSchema = z.object({ name: z.string().min(2).max(80).optional(), priority: z.number().int().min(1).max(1000).optional(), status: z.enum(['READY', 'DEGRADED', 'FAILED', 'DISABLED']).optional(), vodEnabled: z.boolean().optional(), scope: importScopeSchema.optional(), connection: z.record(z.string()).optional() });
 export type SourceUpdateInput = z.infer<typeof sourceUpdateSchema>;
 export const connectTestResponseSchema = z.object({ ok: z.boolean(), latencyMs: z.number().nullable(), error: z.string().nullable() });
 export type ConnectTestResponse = z.infer<typeof connectTestResponseSchema>;

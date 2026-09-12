@@ -52,7 +52,12 @@ export async function requireOwner(ctx) {
 
 const loginBuckets = new Map();
 
-function rateLimit(key, limit, windowMs) {
+// Limiteur en mémoire, par isolate : suffisant pour ce qu'il borne (bruteforce
+// du mot de passe de LOGIN, déjà derrière un captcha implicite Cloudflare, et
+// re-tentatives de RÉVÉLATION, déjà derrière une session owner valide). Pour
+// une protection qui survit aux redéploiements et traverse les isolates, voir
+// AccessAttempt (access.js) — plus lourd, non justifié ici.
+export function rateLimit(key, limit, windowMs) {
   const now = Date.now();
   const entry = loginBuckets.get(key);
   if (!entry || entry.reset <= now) {
