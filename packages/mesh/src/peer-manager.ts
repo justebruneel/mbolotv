@@ -9,7 +9,7 @@
 // §23). Le coordinateur fournit des candidats ; LE CLIENT CHOISIT (spec §12).
 // Pas de super-seeding, pas de multi-hop : hors périmètre (§40).
 
-import { PeerLink, type AnnouncedWindow, type MeshPeerLinkState, type RtcEnv, type SegmentResult } from './peer-link';
+import { PeerLink, type AnnouncedWindow, type MeshPeerLinkState, type RtcEnv, type SegmentResult, type UploadAdmission } from './peer-link';
 import type { SegmentCache } from './memory-cache';
 import { PeerScore, type PeerFailureKind } from './peer-score';
 import type { MeshTrace } from './trace';
@@ -32,6 +32,11 @@ export interface PeerManagerOptions {
   peerTimeoutMs: number;
   /** Un pair échoué/retiré est remisé 10 min (ne pas retenter l'impossible). */
   cooldownMs?: number;
+  /** Uploads SERVIS simultanés par ce client (tous liens, §9). Optionnel :
+   *  défaut 2. Le PeerManager ne connaît pas l'uplink réel — ce plafond
+   *  conservateur évite le relais involontaire ; un refus local = OVERLOADED
+   *  (échec souple) côté lien. */
+  maxUploads?: number;
   /** Télémétrie POC (§46) : octets servis aux pairs / reçus des pairs. */
   onServed?(bytes: number): void;
   onDownloaded?(bytes: number): void;
@@ -63,6 +68,21 @@ export class PeerManager {
   private scoreConfig: Partial<MeshScoreConfig> | undefined;
   private selectionCursor = 0; // rotation déterministe de diversité (§23)
   maxPeers: number;
+  /** Uploads SERVIS simultanés (tous liens) — jamais un client-relais (§9).
+   *  Défaut 2 : assez pour A→B et A→C en parallèle, jamais une fan-out qui
+   *  saturerait l'uplink résidentiel. Borné dur [1..maxPeers]. */
+  private maxUploads: number;
+  private activeUploads = 0;
+  /** Porte d'admission partagée par les liens de CE manager (un jeton par
+   *  transfert servi, rendu à la fin — voir PeerLink.releaseServing). */
+  private readonly admission: UploadAdmission = {
+    tryAcquire: () => {
+      if (this.activeUploads >= this.maxUploads) return false;
+      this.activeUploads += 1;
+      return true;
+    },
+    release: () => { this.activeUploads = Math.max(0, this.activeUploads - 1); },
+  };
 
   constructor(private readonly opts: PeerManagerOptions) {
     this.chunkBytes = opts.chunkBytes;
@@ -71,7 +91,11 @@ export class PeerManager {
     this.now = opts.now ?? ((): number => Date.now());
     this.scoreConfig = opts.scoreConfig;
     this.maxPeers = Math.max(0, Math.min(opts.maxPeers, 6));
+    this.maxUploads = Math.max(1, Math.min(opts.maxUploads ?? 2, Math.max(1, this.maxPeers)));
   }
+
+  /** Uploads servis en cours (télémétrie/debug — jamais remonté au serveur). */
+  get uploadsInFlight(): number { return this.activeUploads; }
 
   /** Rendition active (rid) : les NOUVEAUX liens la portent. Un CHANGEMENT de
    *  rid (montée ABR) invalide TOUS les liens existants : leurs pairs peuvent
@@ -96,6 +120,12 @@ export class PeerManager {
       this.scoreConfig = { ...this.scoreConfig, ...cfg.score };
       for (const m of this.peers.values()) m.score.reconfigure(this.scoreConfig);
     }
+  }
+
+  /** Plafond d'uploads simultanés (testabilité + reconfiguration) : borné
+   *  [1..maxPeers], jamais 0 (0 = personne ne servirait plus rien). */
+  setMaxUploads(n: number): void {
+    this.maxUploads = Math.max(1, Math.min(Math.trunc(n) || 2, Math.max(1, this.maxPeers)));
   }
 
   /** Le coordinateur a livré des candidats : on crée les liens (≤ maxPeers). */
@@ -134,7 +164,7 @@ export class PeerManager {
       served: (bytes) => this.opts.onServed?.(bytes),
       downloaded: (bytes) => this.opts.onDownloaded?.(bytes),
       trace: this.opts.trace,
-    }, this.chunkBytes);
+    }, this.chunkBytes, this.admission);
     this.peers.set(candidate.id, { link, cap: candidate.cap, win: candidate.win ?? null, failedAt: null, score: new PeerScore(candidate.id, candidate.cap, this.now, this.scoreConfig) });
     link.knownWin = candidate.win ?? null;
     if (candidate.win) this.peers.get(candidate.id)!.score.markWindowFresh();
@@ -170,7 +200,7 @@ export class PeerManager {
       served: (bytes) => this.opts.onServed?.(bytes),
       downloaded: (bytes) => this.opts.onDownloaded?.(bytes),
       trace: this.opts.trace,
-    }, this.chunkBytes);
+    }, this.chunkBytes, this.admission);
     link.ensurePc();
     return link;
   }
@@ -271,10 +301,11 @@ export class PeerManager {
     return { ok: false, reason: ranked.length > 1 ? 'timeout' : (ranked[0] ? 'timeout' : 'dead') };
   }
 
-  /** Sélection §21 : éliminer invalides / cooldown / rid divergent / hors
-   *  fenêtre probable, TRIER par score décroissant, puis diversifier
-   *  déterministement (§23) parmi les scores « équivalents » (à moins de
-   *  `diversityEpsilon`) pour ne pas toujours pomper le même seeder. */
+  /** Sélection §21 (+ charge §8) : éliminer invalides / cooldown / rid
+   *  divergent / hors fenêtre probable, TRIER par score décroissant puis lien
+   *  libre d'abord, puis diversifier déterministement (§23) parmi les scores
+   *  « équivalents » (à moins de `diversityEpsilon`) pour ne pas toujours
+   *  pomper le même seeder. */
   private rank(cc: number, sn: number): Managed[] {
     const trace = this.opts.trace;
     const eligible: Managed[] = [];
@@ -287,8 +318,13 @@ export class PeerManager {
       eligible.push(managed);
     }
     if (!eligible.length) return [];
-    const scored = eligible.map((m) => ({ m, score: m.score.score(), rtt: m.link.rttMs ?? 9999 }));
-    scored.sort((a, b) => b.score - a.score || a.rtt - b.rtt); // score d'abord, RTT arbitre en cas d'égalité stricte
+    // Tri : score décroissant, puis LIEN LIBRE d'abord (un lien en train de
+    // servir/demander garde son transfert mais n'en attire pas un second —
+    // §8 : pas de meute sur le même seeder), puis RTT arbitre. La pénalité de
+    // charge est un ORDRE, pas une exclusion : un pair occupé reste meilleur
+    // qu'aucun pair (le timeout borne le pari de toute façon).
+    const scored = eligible.map((m) => ({ m, score: m.score.score(), busy: (m.link.servingActive || m.link.inFlight > 0) ? 1 : 0, rtt: m.link.rttMs ?? 9999 }));
+    scored.sort((a, b) => b.score - a.score || a.busy - b.busy || a.rtt - b.rtt); // score d'abord, charge ensuite, RTT arbitre
     // Diversité déterministe : rotation à l'intérieur du plateau de scores
     // équivalents. `selectionCursor` n'est QUE fonction de l'histoire locale →
     // reproductible en test, aucune randomisation incontrôlée.

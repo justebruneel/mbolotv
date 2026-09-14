@@ -45,6 +45,11 @@ export interface MeshSessionOptions {
   /** Store du cache persistant (InMemoryStore en test ; IndexedDB par défaut
    *  en navigateur ; null = persistant désactivé, le mémoire suffit). */
   persistentStore?: SegmentStore | null;
+  /** Nature du contenu (le Player la connaît ; le mesh ne la devine jamais).
+   *  Défaut 'live'. GlobalPlayer ne monte le mesh QUE pour le live — le VOD
+   *  n'arrive jamais ici ; ce champ fige le contexte pour un futur réglage
+   *  (ex. IDB plus utile en VOD stable) SANS changer le comportement v1. */
+  contentKind?: 'live' | 'vod';
   /** Instrumentation [mesh-test] (§8) — branchée par poc.ts uniquement quand
    *  le POC est monté. Absente = zéro log, zéro coût. */
   trace?: MeshTrace;
@@ -60,6 +65,12 @@ export interface MeshStats {
   persistentCacheHits: number; // servis par IndexedDB (aucun réseau, promotion mémoire)
   peerHits: number;            // servis par un pair
   originHits: number;          // rendu par origin après tentative mesh perdue
+  /** Téléchargements origin ÉVITÉS (bande passante, §20-21) : +1 par segment
+   *  logique servi SANS origin (mémoire, IDB ou pair). Exactement un par
+   *  segment : le loader s'arrête au premier hit, donc mémoire→IDB ne compte
+   *  jamais double. Une ESTIMATION prudente (un hit local aurait nécessité un
+   *  fetch origin), jamais une mesure réseau absolue. */
+  originRequestsAvoided: number;
   peerFailures: number;        // tentatives pair non soldées (toutes raisons)
   peerTimeouts: number;
   peerHashFailures: number;
@@ -76,6 +87,7 @@ export interface MeshStats {
 export function emptyMeshStats(): MeshStats {
   return {
     meshAttempts: 0, memoryHits: 0, persistentCacheHits: 0, peerHits: 0, originHits: 0,
+    originRequestsAvoided: 0,
     peerFailures: 0, peerTimeouts: 0, peerHashFailures: 0, webrtcSuccess: 0, webrtcFailure: 0,
     bytesFromPeers: 0, bytesFromOrigin: 0, bytesFromMemory: 0, bytesFromIndexedDB: 0, bytesServedToPeers: 0, peers: 0,
   };
@@ -207,7 +219,7 @@ export class MeshSession {
       metrics: {
         ...NOOP_METRICS, ...this.opts.metrics,
         attempt: () => { this.stats.meshAttempts += 1; this.opts.metrics?.attempt(); },
-        success: (n) => { this.stats.peerHits += 1; this.stats.bytesFromPeers += n; this.opts.metrics?.success(n); },
+        success: (n) => { this.stats.peerHits += 1; this.stats.originRequestsAvoided += 1; this.stats.bytesFromPeers += n; this.opts.metrics?.success(n); },
         timeout: () => { this.stats.peerTimeouts += 1; this.opts.metrics?.timeout(); },
         hashFail: () => { this.stats.peerHashFailures += 1; this.opts.metrics?.hashFail(); },
         peerFailure: (reason) => { this.stats.peerFailures += 1; this.opts.metrics?.peerFailure?.(reason); },
@@ -252,16 +264,32 @@ export class MeshSession {
       promoteMemory: (cc, sn, bytes) => client.promoteMemory(cc, sn, bytes),
       cacheSeed: (cc, sn, bytes) => void client.seedOrigin(cc, sn, bytes),
       requestSegment: (cc, sn) => client.requestSegment(cc, sn),
+      // Pari d'avance §16 — UNIQUEMENT si le buffer est CONFORTABLE (≥ 2× le
+      // seuil critique : jamais en zone tendue), hors live edge dangereux, et
+      // client digne de confiance. Le prefetch lui-même re-vérifie trusted()
+      // et reste peer-only : ici on ne fait que refuser tôt les cas évidents.
+      prefetch: (cc, sn) => {
+        if (this.disposed || !client.enabled || !client.trusted()) return;
+        const critical = client.config?.bufferCriticalSec ?? 12;
+        if ((hls.mainForwardBufferInfo?.len ?? 0) < 2 * critical) return;
+        const details = hls.latestLevelDetails;
+        if (details && sn > details.endSN - (client.config?.liveEdgeSafetySegments ?? 2)) return;
+        client.prefetchSegment(cc, sn);
+      },
       trace: this.opts.trace,
       metrics: {
-        cacheHit: (bytes) => { this.stats.memoryHits += 1; this.stats.bytesFromMemory += bytes; },
-        idbHit: (bytes) => { this.stats.persistentCacheHits += 1; this.stats.bytesFromIndexedDB += bytes; },
+        cacheHit: (bytes) => { this.stats.memoryHits += 1; this.stats.originRequestsAvoided += 1; this.stats.bytesFromMemory += bytes; },
+        idbHit: (bytes) => { this.stats.persistentCacheHits += 1; this.stats.originRequestsAvoided += 1; this.stats.bytesFromIndexedDB += bytes; },
         origin: () => { this.stats.originHits += 1; metrics?.fallbackOrigin(); },
       },
     };
   }
 
   get enabled(): boolean { return Boolean(this.client?.enabled); }
+
+  /** Nature du contenu vu par cette session ('live' par défaut — le seul
+   *  contexte monté aujourd'hui ; VOD préparé, comportement identique). */
+  get contentKind(): 'live' | 'vod' { return this.opts.contentKind ?? 'live'; }
 
   /** swarmId tronqué (8 hex) pour l'[mesh-test] — jamais l'identité complète,
    *  jamais sourceId/channelId (le swarmId est lui-même un HMAC opaque). */

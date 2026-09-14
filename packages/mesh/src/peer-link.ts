@@ -54,6 +54,17 @@ export interface PeerEvents {
   trace?: MeshTrace;
 }
 
+/** Porte d'admission des uploads (bande passante, §9) : le PeerManager limite
+ *  le nombre de transferts SERVIS simultanément par CE client (tous liens
+ *  confondus) pour ne jamais transformer un client en relais involontaire.
+ *  tryAcquire() faux = répondre OVERLOADED (échec SOUPLE, jamais de sanction).
+ *  release() libère — TOUJOURS appelée exactement une fois par acquire réussi
+ *  (fin/abandon/fermeture du lien). Absente = pas de limite (tests unitaires). */
+export interface UploadAdmission {
+  tryAcquire(): boolean;
+  release(): void;
+}
+
 export interface SegmentResult { ok: boolean; bytes?: Uint8Array; reason?: 'timeout' | 'refused' | 'hash' | 'dead' | 'overloaded' | 'unavailable' }
 export interface AnnouncedWindow { cc: number; first: number; last: number }
 
@@ -95,6 +106,17 @@ export class PeerLink {
   private dcErrors = 0;
   private readonly pendingReq = new Map<string, { cc: number; sn: number; at: number }>();
   private servingAt = 0;
+  /** Jeton d'admission tenu pendant un transfert servi (rendu exactement une
+   *  fois : fin, abandon ou fermeture — jamais de fuite de quota). */
+  private servingHeld = false;
+
+  /** Libère le jeton d'admission (idempotent) — TOUJOURS appeler en binôme
+   *  avec la fin d'un transfert servi, quel qu'en soit le chemin. */
+  private releaseServing(): void {
+    if (!this.servingHeld) return;
+    this.servingHeld = false;
+    try { this.admission?.release(); } catch { /* quota local : jamais bloquant */ }
+  }
   /** capacity=off → on ne SERT RIEN, même sur requête directe (règle serveur
    *  doublée côté client — défense en profondeur, §18/§39 du brief). */
   canSeed = true;
@@ -110,10 +132,14 @@ export class PeerLink {
     private readonly env: RtcEnv,
     private readonly events: PeerEvents,
     private readonly chunkBytes: number,
+    private readonly admission?: UploadAdmission,
   ) {}
 
   get linkState(): MeshPeerLinkState { return this.state; }
   get usable(): boolean { return this.state === 'ready' && this.helloOk; }
+  /** Un transfert SERVI est en cours sur ce lien (pénalité de charge §8 :
+   *  le PeerManager préfère un lien libre à score égal). */
+  get servingActive(): boolean { return this.serving !== null; }
   private dead = false; // close() : le lien ne doit plus RIEN monter après sa mort
 
   // ------------------------------------------------------------- établissement
@@ -344,6 +370,11 @@ export class PeerLink {
     if (this.serving) { this.traceTransferSrv(d.n, d.cc, d.sn, false, 0, 0, 'overloaded'); this.replyError(d.n, 'OVERLOADED'); return; } // 1 transfert à la fois par lien (POC)
     const segment = this.cache.get(d.cc, d.sn);
     if (!segment) { this.traceTransferSrv(d.n, d.cc, d.sn, false, 0, 0, 'unavailable'); this.replyError(d.n, 'SEGMENT_NOT_AVAILABLE'); return; }
+    // Plafond d'uploads simultanés du CLIENT (tous liens) : au-delà, on se
+    // déclare occupé (OVERLOADED = échec souple, le demandeur retente ailleurs
+    // ou en origin — jamais de file d'attente qui retiendrait son loader).
+    if (this.admission && !this.admission.tryAcquire()) { this.traceTransferSrv(d.n, d.cc, d.sn, false, 0, 0, 'overloaded'); this.replyError(d.n, 'OVERLOADED'); return; }
+    this.servingHeld = true;
     const frames = splitFrames(segment.bytes, nextBid(), this.chunkBytes);
     const serving: Serving = { nonce: d.n, cc: d.cc, sn: d.sn, bid: frames[0] ? decodeBid(frames[0]) : 0, frames, at: 0, paused: false, timer: null };
     this.serving = serving;
@@ -375,6 +406,7 @@ export class PeerLink {
     const bytes = serving.frames.reduce((sum, frame) => sum + frame.byteLength - 7, 0);
     const ms = Math.max(0, Math.round(this.nowMs() - (this.servingAt || this.nowMs())));
     this.serving = null;
+    this.releaseServing();
     const segment = this.cache.get(serving.cc, serving.sn);
     this.sendJson({ v: MESH_PROTOCOL_VERSION, t: 'SEGMENT_COMPLETE', seq: ++this.seq, d: { n: serving.nonce, sha256: segment?.sha256 ?? '' } });
     this.events.served(bytes);
@@ -396,6 +428,7 @@ export class PeerLink {
     if (!serving) return;
     if (serving.timer) clearTimeout(serving.timer);
     this.serving = null;
+    this.releaseServing();
     this.dcAborts += 1;
     this.traceTransferSrv(serving.nonce, serving.cc, serving.sn, false, 0, Math.max(0, Math.round(this.nowMs() - (this.servingAt || this.nowMs()))), 'aborted');
     this.replyError(serving.nonce, 'OVERLOADED');
@@ -512,6 +545,7 @@ export class PeerLink {
     this.pingTimer = null;
     if (this.serving?.timer) clearTimeout(this.serving.timer);
     this.serving = null;
+    this.releaseServing();
     if (this.download?.timer) clearTimeout(this.download.timer);
     this.download = null;
     for (const timer of this.active.values()) clearTimeout(timer);
@@ -533,6 +567,7 @@ export class PeerLink {
   private onChannelClosed(): void {
     if (this.serving?.timer) clearTimeout(this.serving.timer);
     this.serving = null;
+    this.releaseServing();
     if (this.download) {
       if (this.download.timer) clearTimeout(this.download.timer);
       const dl = this.download;

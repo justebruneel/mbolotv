@@ -578,3 +578,58 @@ toute IP.
 Tout déploiement (worker `mbolo-tv-mesh`, `packages/mesh`, `MeshLoader`,
 Player, `play.js`, wrangler, TURN, migrations Prisma). Cet ADR + ce document +
 les contrats Zod testés sont les seuls livrables.
+
+## 17. Optimisation bande passante (v1.1, production)
+
+### Avant
+
+```
+Origin ──┬──► Client A
+         ├──► Client B
+         └──► Client C
+```
+
+Chaque client télécharge chaque segment depuis l'origine : N clients = N
+téléchargements origin du même segment.
+
+### Après
+
+```
+                ┌──► Client B
+Origin ──► A ───┤
+                └──► Client C
+```
+
+A = seeder (reçoit d'origin, annonce sa fenêtre), B/C = receivers (parient P2P
+sous gardes, fallback origin sinon). Et, dans les limites v1 (fenêtre live,
+TTL cache, pas de fetch-pour-servir) :
+
+```
+Origin → A → B → C
+```
+
+un segment validé chez B (hash vérifié à réception) est servable à C — sans
+jamais faire de A un relais généraliste (plafond `maxUploads = 2`, 1 transfert
+à la fois par lien, OVERLOADED = échec souple).
+
+### Ce que cela signifie physiquement
+
+La bande passante résidentielle n'est pas « déplacée » depuis l'adresse IP du
+fournisseur. Le fournisseur envoie les octets au premier client ; WebRTC
+permet ensuite à ce client de transmettre directement les MÊMES octets à
+d'autres clients, ce qui évite des téléchargements supplémentaires depuis
+l'origine. Le Mesh Worker ne voit jamais ces octets (signaling seul).
+
+### Règles conservées (fluidité > économie, toujours)
+
+- Buffer critique / live edge dangereux → origin, sans pari pair.
+- Buffer normal → pair si score ≥ confiance ; confortable (≥ 2× critique) →
+  prefetch peer-only du segment suivant (jamais origin, jamais bloquant).
+- Sélection : score EWMA (succès, débit, RTT, fraîcheur, upload, stabilité) +
+  lien libre d'abord (pas de meute sur le même seeder) + rotation déterministe.
+- Débit réel mesuré (octets/durée) en EWMA ; un seul transfert ne décide jamais.
+- Coalescence `cc:sn` : N demandes simultanées = 1 transfert, 1 métrique.
+- Sécurité inchangée : clé `swarmId:cc:sn` uniquement, hash+longueur vérifiés
+  avant cache, cross-swarm/rendition refusés, aucun token/IP/URL au pair.
+- Métriques : `originRequestsAvoided` (+1 par segment logique sans origin ;
+  mémoire→IDB ne compte jamais double), ratios existants inchangés.

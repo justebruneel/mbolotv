@@ -55,6 +55,11 @@ export interface LoaderDeps {
   promoteMemory?(cc: number, sn: number, bytes: Uint8Array): void;
   /** ≤ 2 pairs tentés en interne (PeerManager). Résout toujours ; jamais de rejet. */
   requestSegment(cc: number, sn: number): Promise<{ ok: boolean; bytes?: Uint8Array; reason?: string }>;
+  /** Pari d'avance peer-only (sn suivant) : fire-and-forget, JAMAIS origin,
+   *  jamais bloquant. Optionnel : absent = pas de prefetch, hiérarchie
+   *  inchangée. Appelé par le loader UNIQUEMENT après un succès pair (le
+   *  segment suivant est le plus probablement demandé ensuite). */
+  prefetch?(cc: number, sn: number): void;
   /** Le LOADER ne compte que ce que le client mesh ignore (succès/échecs pair
    *  sont comptés par le client lui-même) : hits de cache et retours origin. */
   metrics: { cacheHit(bytes: number): void; origin(): void; idbHit(bytes: number): void };
@@ -131,6 +136,11 @@ export class MeshLoader implements Loader<FragmentLoaderContext> {
       if (result.ok && result.bytes) {
         tier('peer');
         this.deps.cacheSeed(frag.cc, frag.sn, result.bytes); // reçu d'un pair : je le tiens à mon tour
+        // Pari d'avance (§16) : le succès pair prouve un seeder vivant pour CE
+        // flux ; préparer sn+1 ne coûte qu'un pari gratuit (peer-only, borné,
+        // coalescé avec la future vraie demande). La garde de confort
+        // (buffer, live edge) est évaluée côté session, pas ici.
+        try { this.deps.prefetch?.(frag.cc, frag.sn + 1); } catch { /* pari gratuit : jamais bloquant */ }
         this.deliver(result.bytes, context, callbacks, gen);
         return;
       }

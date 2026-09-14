@@ -67,6 +67,11 @@ export interface PeerScoreSnapshot {
   throughputBps: number | null;
   rttMs: number | null;
   windowFreshAt: number; // 0 = inconnue
+  /** Compteurs par cause (bande passante utile, §22) : timeouts réseau vs
+   *  hash invalides (pair menteur). Additifs, jamais de division par zéro. */
+  timeouts: number;
+  hashFailures: number;
+  timeoutRate: number; // timeouts / max(1, requêtes soldées)
 }
 
 /** Le niveau d'upload autorisé d'un pair → facteur [0..1]. */
@@ -119,6 +124,8 @@ export class PeerScore {
   private recentHardAt: number[] = []; // horodatages des derniers échecs durs (fenêtre de « rapprochés »)
   private successfulRequests = 0;
   private failedRequests = 0;
+  private timeoutCount = 0; // échecs 'timeout' (lenteur réseau / pair saturé)
+  private hashFailCount = 0; // échecs 'hash' (octets non conformes — grave)
   private bytesDownloaded = 0;
   private connectedSince = 0;
   private coolingUntil = 0;
@@ -169,6 +176,8 @@ export class PeerScore {
   recordFailure(kind: PeerFailureKind): void {
     if (this.disposed) return;
     this.failedRequests += 1;
+    if (kind === 'timeout') this.timeoutCount += 1;
+    if (kind === 'hash') this.hashFailCount += 1;
     const weight = VERY_HARD.has(kind) ? 2 : 1;
     if (HARD_FAILURES.has(kind)) {
       this.consecutiveHard += weight;
@@ -264,6 +273,7 @@ export class PeerScore {
   }
 
   snapshot(): PeerScoreSnapshot {
+    const settled = this.successfulRequests + this.failedRequests;
     return {
       score: this.score(),
       state: this.state(),
@@ -274,12 +284,15 @@ export class PeerScore {
       throughputBps: this.throughputEwma,
       rttMs: this.rttEwma,
       windowFreshAt: this.winFreshAt,
+      timeouts: this.timeoutCount,
+      hashFailures: this.hashFailCount,
+      timeoutRate: settled === 0 ? 0 : this.timeoutCount / settled,
     };
   }
 
   /** Compteurs agrégés pour STATS_REPORT (§28/§29 — agrégés, jamais détaillés). */
-  counters(): { ok: number; fail: number; bytes: number } {
-    return { ok: this.successfulRequests, fail: this.failedRequests, bytes: this.bytesDownloaded };
+  counters(): { ok: number; fail: number; bytes: number; timeouts: number; hashFailures: number } {
+    return { ok: this.successfulRequests, fail: this.failedRequests, bytes: this.bytesDownloaded, timeouts: this.timeoutCount, hashFailures: this.hashFailCount };
   }
 
   dispose(): void { this.disposed = true; }

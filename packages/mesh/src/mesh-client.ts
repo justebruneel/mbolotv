@@ -36,6 +36,9 @@ export interface MeshClientOptions {
   /** Store persistant injecté (tests : InMemoryStore). Absent → IndexedDB
    *  navigateur, ou no-op si IndexedDB indisponible. */
   persistentStore?: SegmentStore;
+  /** Plafond d'uploads servis simultanés (tous liens, §9) — défaut 2.
+   *  Conservateur : jamais un client-relais. */
+  maxUploads?: number;
   /** Instrumentation [mesh-test] (§8) — absente = aucun coût. */
   trace?: MeshTrace;
 }
@@ -77,6 +80,12 @@ export class MeshClient {
    *  ne livre pas. Un succès remet le compteur à zéro. */
   private consecutivePeerFails = 0;
   private backoffUntil = 0;
+  /** Requêtes en vol par segment (request coalescing §15) : clé `cc:sn` —
+   *  le client ne vit que dans UN swarm, c'est l'identité complète. Deux
+   *  appels simultanés pour le même segment PARTAGENT le même transfert
+   *  (jamais de double téléchargement), y compris loader ↔ prefetch. La
+   *  promesse ne rejette jamais ; cleanup garanti par finally. */
+  private readonly inflight = new Map<string, Promise<{ ok: boolean; bytes?: Uint8Array; reason?: string }>>();
 
   constructor(private readonly opts: MeshClientOptions) {
     this.capacity = opts.capacity;
@@ -89,7 +98,7 @@ export class MeshClient {
     this.peerManager = new PeerManager({
       selfPid: opts.selfPid, sid: opts.swarmId, rid: null, cache: this.cache,
       env: opts.env, signals, maxPeers: 4, chunkBytes: 65536, peerTimeoutMs: 1500,
-      now: opts.now, trace: opts.trace,
+      maxUploads: opts.maxUploads, now: opts.now, trace: opts.trace,
       onServed: (bytes) => { this.metrics.bytesServed(bytes); this.statsDelta.upBytes += bytes; },
       onDownloaded: () => undefined, // octets déjà comptés dans requestSegment
     });
@@ -249,10 +258,63 @@ export class MeshClient {
   }
 
   /** Le loader demande un segment (cc, sn) : ≤ 2 pairs (sélection par score),
-   *  jamais d'exception. En pause (kill-switch), échec immédiat 'dead'. */
+   *  jamais d'exception. En pause (kill-switch), échec immédiat 'dead'.
+   *  Coalescence (§15) : un transfert déjà en vol pour ce (cc,sn) est
+   *  PARTAGÉ, pas relancé — une seule requête logique = une seule métrique. */
   async requestSegment(cc: number, sn: number): Promise<{ ok: boolean; bytes?: Uint8Array; reason?: string }> {
     if (!this.cfg?.p2pEnabled || this.paused || !this.signaling) return { ok: false, reason: 'dead' };
-    this.metrics.attempt();
+    const key = `${cc}:${sn}`;
+    const running = this.inflight.get(key);
+    if (running) return running;
+    const flight = this.fetchFromPeers(cc, sn);
+    this.inflight.set(key, flight);
+    try {
+      return await flight;
+    } finally {
+      if (this.inflight.get(key) === flight) this.inflight.delete(key);
+    }
+  }
+
+  /** Préchargement P2P contrôlé (§16) : pari d'avance PEER-ONLY, fire-and-
+   *  forget. Ne va JAMAIS en origin, ne bloque jamais, ne pollue ni le
+   *  backoff ni la télémétrie de repli (un pari d'avance perdu n'est pas un
+   *  échec de lecture). Le succès remplit mémoire+IDB pour le vrai load qui
+   *  suit — et si le loader demande pendant le vol, il REJOINT ce transfert
+   *  (coalescence) au lieu d'en lancer un second. Appelé par le loader quand
+   *  le buffer est CONFORTABLE (garde côté session), jamais en zone critique. */
+  prefetchSegment(cc: number, sn: number): void {
+    if (this.disposed || this.paused || !this.cfg?.p2pEnabled || !this.signaling) return;
+    if (!this.trusted()) return; // pas de pari sans pairs fiables — surtout pas en tâche de fond
+    const key = `${cc}:${sn}`;
+    if (this.inflight.has(key)) return; // le loader (ou un prefetch) s'en occupe déjà
+    if (this.cache.get(cc, sn)) return; // déjà en mémoire : rien à préparer
+    const rid = this.rid;
+    const flight = (async (): Promise<{ ok: boolean; bytes?: Uint8Array; reason?: string }> => {
+      let result: { ok: boolean; bytes?: Uint8Array; reason?: string };
+      try {
+        result = await this.peerManager.requestSegment(cc, sn);
+      } catch {
+        result = { ok: false, reason: 'dead' };
+      }
+      // Succès : seed mémoire (déjà fait par PeerLink) + persistant. Le score
+      // pair est déjà à jour via le manager. Échec : silence total — c'était
+      // un pari gratuit, pas une demande du lecteur.
+      if (result.ok && result.bytes && this.rid === rid && !this.disposed) {
+        void this.persist.put(cc, sn, result.bytes, 'peer', this.rid);
+      }
+      return result;
+    })();
+    this.inflight.set(key, flight);
+    void flight.catch(() => undefined).finally(() => {
+      if (this.inflight.get(key) === flight) this.inflight.delete(key);
+    });
+  }
+
+  /** Le transfert pair réel (≤ 2 pairs séquentiels, §24 brief étape 5).
+   *  Exécuté UNE fois par (cc,sn) en vol — voir requestSegment. */
+  private async fetchFromPeers(cc: number, sn: number): Promise<{ ok: boolean; bytes?: Uint8Array; reason?: string }> {
+    const rid = this.rid;
+    this.metrics.attempt(); // UNE requête logique = UNE tentative comptée (coalescence §15)
     const t0 = this.opts.now?.() ?? Date.now();
     let result: { ok: boolean; bytes?: Uint8Array; reason?: string };
     try {
@@ -261,6 +323,10 @@ export class MeshClient {
       result = { ok: false, reason: 'dead' }; // règle n°1 : le loader doit pouvoir retomber origin, quoi qu'il arrive ici
     }
     if (result.ok && result.bytes) {
+      // Rendition changée en vol (ABR) : les octets reçus appartiennent à
+      // l'ANCIENNE rendition — jetés SANS bruit (ni cache, ni métrique de
+      // succès) ; le loader retombera origin sur la bonne rendition.
+      if (this.rid !== rid || this.disposed) return { ok: false, reason: 'dead' };
       this.consecutivePeerFails = 0; this.backoffUntil = 0; // un succès rétablit la confiance immédiatement
       this.metrics.success(result.bytes.length);
       this.metrics.bytesReceived(result.bytes.length);
