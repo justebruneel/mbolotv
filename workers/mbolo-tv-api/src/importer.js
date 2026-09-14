@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { query as gatewaySql } from './db.js';
 import { importKey, encryptLocator, decryptLocator, sha256Hex } from './crypto.js';
 import { slugify, detectCountry } from './normalize.js';
 import { parseM3uStream } from './m3u.js';
@@ -39,6 +40,15 @@ class ImportError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 
+// Signale interne : budget de sous-requêtes de l'invocation épuisé.
+// N'est jamais une erreur visible de l'owner — le run repart en QUEUED.
+// Propriété `.paused` en plus de la classe : les modules connecteurs
+// (xtream.js) ré-enveloppent les erreurs ; tout catch qui voit `.paused`
+// doit relancer l'objet tel quel sans le travestir en panne fournisseur.
+class ImportPaused extends Error {
+  constructor() { super('budget passerelle épuisé'); this.paused = true; }
+}
+
 async function fetchWithLimits(url, { maxBytes = 512 * 1024 * 1024, timeoutMs = 300_000 } = {}) {
   let host = 'hôte inconnu';
   try { host = new URL(url).host; } catch { /* URL déjà validée par l'appelant */ }
@@ -76,18 +86,43 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
   const moviesActive = normalizedScope !== 'live' && normalizedScope !== 'series';
   const seriesActive = normalizedScope !== 'live' && normalizedScope !== 'movies';
   const key = await importKey(env.ENCRYPTION_KEY);
-  const client = new pg.Client(env.HYPERDRIVE.connectionString);
+  // Transition passerelle SQL (quota Neon) : l'import DOIT passer par la
+  // passerelle comme tout le reste — un pg.Client direct sur Hyperdrive
+  // parlerait à la base Neon gelée, où aucun ImportRun n'existe (le run
+  // était repris puis laissés QUEUED éternellement). Chaque requête
+  // comptant comme sous-requête Cloudflare (50/invocation, plan gratuit),
+  // le budget SQL met le run en pause : le curseur déjà persisté dans
+  // metrics permet au cron `*/2` de le reprendre à l'endroit exact.
+  const gateway = Boolean(env.DB_GATEWAY_URL);
+  const SQL_BUDGET = gateway ? Number(env.IMPORT_SQL_BUDGET ?? 40) : Infinity;
+  const client = gateway
+    ? { connect: async () => {}, end: async () => {}, query: (sql, params) => gatewaySql(env, sql, params) }
+    : new pg.Client(env.HYPERDRIVE.connectionString);
   await client.connect();
-  const q = (sql, params = []) => client.query(sql, params);
+  const q = (sql, params = []) => {
+    if (gateway) {
+      if (!env.__gwCount) env.__gwCount = { n: 0 };
+      // Rejet asynchrone (pas de throw synchrone) : les call-sites
+      // `q(...).catch(...)` doivent garder leur garde fonctionnelle.
+      if (env.__gwCount.n >= SQL_BUDGET) return Promise.reject(new ImportPaused());
+    }
+    return client.query(sql, params);
+  };
 
   const fail = async (code, error) => {
     const message = String(error instanceof Error ? error.message : error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300);
-    await q(`UPDATE "ImportRun" SET state = 'FAILED', "errorCode" = $2, "errorMessage" = $3, "completedAt" = now() WHERE id = $1`, [importRunId, code, message]).catch(() => undefined);
-    await q(`UPDATE "Source" SET status = 'FAILED' WHERE id = $1`, [sourceId]).catch(() => undefined);
+    // client.query direct : q() est bloqué par le budget, et un FAILED sans
+    // raison laisserait le run figé (reprise orpheline de 15 min en 15 min).
+    await client.query(`UPDATE "ImportRun" SET state = 'FAILED', "errorCode" = $2, "errorMessage" = $3, "completedAt" = now() WHERE id = $1`, [importRunId, code, message]).catch(() => undefined);
+    await client.query(`UPDATE "Source" SET status = 'FAILED' WHERE id = $1`, [sourceId]).catch(() => undefined);
   };
 
   try {
-    const runRows = await q(`SELECT state FROM "ImportRun" WHERE id = $1`, [importRunId]);
+    // `metrics` est indispensable ici : c'est le seul point où le run est
+    // relu (les crons de reprise passent par cette fonction) — sans cette
+    // colonne, liveCursor/vodMoviesCursor repartaient à 0 à chaque passe et
+    // un gros catalogue se ré-ingérait indéfiniment sans jamais converger.
+    const runRows = await q(`SELECT state, metrics FROM "ImportRun" WHERE id = $1`, [importRunId]);
     const sourceRows = await q(`SELECT id, kind, status, "vodEnabled", "connectionEncrypted" FROM "Source" WHERE id = $1`, [sourceId]);
     const run = runRows.rows[0];
     const source = sourceRows.rows[0];
@@ -239,6 +274,9 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
             await persistMetrics();
           });
         } catch (error) {
+          // ImportPaused n'est PAS une panne connecteur : il doit remonter
+          // tel quel jusqu'au catch principal qui remet le run en QUEUED.
+          if (error?.paused) throw error;
           throw new ImportError('CONNECTOR_ERROR', error.message);
         }
         livePassed = true;
@@ -259,6 +297,7 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
       try {
         ({ entries } = await fetchMacPortalEntries(env, { url, macAddress }));
       } catch (error) {
+        if (error?.paused) throw error;
         throw new ImportError('CONNECTOR_ERROR', error.message);
       }
       metrics.read = entries.length;
@@ -335,6 +374,7 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
           await persistMetrics();
           console.log(`[import ${sourceId}] VOD terminé: ${JSON.stringify({ vodRead: metrics.vodRead, vodCreated: metrics.vodCreated, vodUpdated: metrics.vodUpdated, vodDuplicates: metrics.vodDuplicates, vodErrors: metrics.vodErrors })}`);
         } catch (error) {
+          if (error?.paused) throw error;
           const message = String(error instanceof Error ? error.message : error).replace(/https?:\/\/[^\s]+/g, '[url masquée]').slice(0, 300);
           console.log(`[import ${sourceId}] VOD erreur (non fatale): ${message}`);
           metrics.vodErrors += 1;
@@ -405,6 +445,14 @@ export async function runSourceImport(env, sourceId, importRunId, scope = 'all')
     }
     return { ok: true, metrics };
   } catch (error) {
+    if (error?.paused) {
+      // Budget d'invocation touché : le run retourne en QUEUED avec son
+      // curseur (déjà persisté par persistMetrics à chaque lot) ; le cron
+      // `*/2` le reprend à l'endroit exact, et l'owner voit la progression.
+      // client.query direct : q() rejetterait encore (budget épuisé).
+      await client.query(`UPDATE "ImportRun" SET state = 'QUEUED' WHERE id = $1`, [importRunId]).catch(() => undefined);
+      return { ok: false, paused: true };
+    }
     if (!(error instanceof ImportError)) await fail('INTERNAL', error);
     else await fail(error.code, error);
     return { ok: false };

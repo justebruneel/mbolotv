@@ -31,3 +31,4 @@ packages/db/generated/
 .zcode/
 # Plans de l'outil opencode (outil local, sans rapport avec le dépôt)
 .opencode/
+**/.wrangler/

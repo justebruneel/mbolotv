@@ -1,4 +1,14 @@
 import { z } from 'zod';
+import { meshPlayFieldsSchema } from './mesh';
+
+// MeshStream (ADR-0004) — protocole de coordination P2P. Descriptions pures :
+// rien dans le chemin de streaming actuel ne les utilise ; le champ `p2p` de
+// PlayResponse est optionnel et absent tant que le mesh est désactivé.
+// mesh-token.ts porte la SEULE implémentation du HMAC de jeton/swarm, partagée
+// par l'API (émission) et le worker mesh (vérification) — cohérence garantie
+// par construction.
+export * from './mesh';
+export * from './mesh-token';
 
 export const userRoleSchema = z.enum(['USER', 'SUPPORT', 'ADMIN', 'OWNER']);
 export type UserRole = z.infer<typeof userRoleSchema>;
@@ -103,7 +113,7 @@ export const matchQuerySchema = z.object({ state: matchStateSchema.optional(), s
 export type MatchQuery = z.infer<typeof matchQuerySchema>;
 export const matchListResponseSchema = z.object({ items: z.array(matchSchema), total: z.number() });
 export type MatchListResponse = z.infer<typeof matchListResponseSchema>;
-export const playResponseSchema = z.object({ url: z.string().url(), expiresAt: z.string(), qualityCap: z.number().int().optional() });
+export const playResponseSchema = z.object({ url: z.string().url(), expiresAt: z.string(), qualityCap: z.number().int().optional() }).merge(meshPlayFieldsSchema);
 export type PlayResponse = z.infer<typeof playResponseSchema>;
 // ---- VOD (films & séries) ----
 export const vodKindSchema = z.enum(['MOVIE', 'SERIES']);

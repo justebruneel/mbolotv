@@ -20,6 +20,9 @@ importers:
       '@mbolo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@mbolo/mesh':
+        specifier: workspace:*
+        version: link:../../packages/mesh
       '@mbolo/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -106,11 +109,33 @@ importers:
 
   packages/eslint-config: {}
 
+  packages/mesh:
+    dependencies:
+      '@mbolo/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      idb-keyval:
+        specifier: ^6.3.0
+        version: 6.3.0
+    devDependencies:
+      hls.js:
+        specifier: ^1.5.17
+        version: 1.6.17
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.12
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/ui:
     dependencies:
       '@mbolo/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@mbolo/mesh':
+        specifier: workspace:*
+        version: link:../mesh
       hls.js:
         specifier: ^1.5.17
         version: 1.6.17

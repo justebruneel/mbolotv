@@ -1,0 +1,95 @@
+{
+  "v": 1,
+  "runId": "run-example-origin-only-mock",
+  "scenario": "B",
+  "createdAt": "2026-09-14T18:59:25.065Z",
+  "note": "Exemple SYNTHETIQUE origin-only (baseline sans peer)",
+  "sessions": [
+    {
+      "sessionIndex": 0,
+      "provenance": "mock",
+      "deviceClass": "mobile",
+      "swarm": "ef56ab78",
+      "peer": "peerCCCCCCCCCCCCCCCCCC",
+      "startedAt": "2026-09-14T11:00:00.000Z",
+      "stats": {
+        "meshAttempts": 0,
+        "memoryHits": 1,
+        "persistentCacheHits": 0,
+        "peerHits": 0,
+        "originHits": 15,
+        "peerFailures": 0,
+        "peerTimeouts": 0,
+        "peerHashFailures": 0,
+        "webrtcSuccess": 0,
+        "webrtcFailure": 0,
+        "bytesFromPeers": 0,
+        "bytesFromOrigin": 7680000,
+        "bytesFromMemory": 512000,
+        "bytesFromIndexedDB": 0,
+        "bytesServedToPeers": 0,
+        "peers": 0,
+        "peerHitRate": 0,
+        "meshOffload": 0
+      },
+      "dropped": 0,
+      "eventCount": 5,
+      "sourceFile": "/tmp/opencode/raw-c.json"
+    }
+  ],
+  "events": [
+    {
+      "sessionIndex": 0,
+      "t": "session",
+      "sid8": "ef56ab78",
+      "pid": "peerCCCCCCCCCCCCCCCCCC",
+      "proto": 1,
+      "cap": "off",
+      "net": "cellular",
+      "deviceClass": "mobile",
+      "visibility": "foreground",
+      "peers": 0,
+      "at": 1000,
+      "rel": 0
+    },
+    {
+      "sessionIndex": 0,
+      "t": "tier",
+      "cc": 0,
+      "sn": 100,
+      "tier": "origin",
+      "ms": 310,
+      "at": 2000,
+      "rel": 1000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "tier",
+      "cc": 0,
+      "sn": 101,
+      "tier": "origin",
+      "ms": 295,
+      "at": 6000,
+      "rel": 5000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "tier",
+      "cc": 0,
+      "sn": 102,
+      "tier": "memory",
+      "ms": 1,
+      "at": 10000,
+      "rel": 9000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "capacity",
+      "cap": "off",
+      "at": 1100,
+      "rel": 100
+    }
+  ],
+  "eventCount": 5,
+  "sessionCount": 1
+}

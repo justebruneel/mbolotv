@@ -77,7 +77,7 @@ export async function fetchXtreamEntries(env, connection, touch) {
   await sleep(INTER_CALL_DELAY_MS);
   let payload;
   try { payload = await fetchJson(`${base}/player_api.php?username=${user}&password=${pass}&action=get_live_streams`, env, touch); }
-  catch (error) { throw new Error(`Échec de récupération du flux Xtream : ${error.message}`); }
+  catch (error) { if (error?.paused) throw error; throw new Error(`Échec de récupération du flux Xtream : ${error.message}`); }
   const streams = Array.isArray(payload) ? payload : Array.isArray(payload?.live_streams) ? payload.live_streams : [];
   if (streams.length === 0) throw new Error('Le panel Xtream a renvoyé une liste de chaînes vide, import conservé sans suppression');
   const entries = [];
@@ -126,6 +126,7 @@ export async function fetchXtreamLiveBatches(env, connection, touch, onBatch) {
       if (pending.length >= LIVE_STREAM_BATCH_SIZE) await flush();
     }, maxBytes);
   } catch (error) {
+    if (error?.paused) throw error; // pause budgétaire : à remonter telle quelle
     throw new Error(`Échec de récupération du flux Xtream : ${error.message}`);
   }
   await flush();
@@ -283,6 +284,7 @@ async function streamXtreamAction(url, env, touch, onBatch, maxBytes) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await streamJsonArrayBatches(response.body, onBatch, { maxBytes });
     } catch (error) {
+      if (error?.paused) throw error; // pause : ne PAS relancer tout le flux en secours
       lastError = error;
       // Même règle que fetchJson : 403 ≠ refus d'identifiants → relais.
       if (/identifiants|HTTP 401/i.test(String(error?.message ?? error))) throw error;

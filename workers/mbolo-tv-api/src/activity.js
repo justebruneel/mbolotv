@@ -2,10 +2,36 @@ import { sha256Hex } from "./crypto.js";
 
 const TTL_SECONDS = 60;
 
+// Provisión au même patron que featured.js : la table vit hors du schéma
+// Prisma (télémétrie jetable, recréée en 5 secondes si elle tombe). Le
+// prometteur est mis en cache : une seule requête DDL par isolate.
+let schemaReady = null;
+
+function ensureActivityTable(env) {
+  if (!schemaReady) {
+    schemaReady = env.db
+      .query(
+        env,
+        `CREATE TABLE IF NOT EXISTS "ActivityHeartbeat" (
+           "deviceHash" TEXT PRIMARY KEY,
+           "channelId" TEXT,
+           "lastSeenAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+         )`,
+      )
+      .catch((error) => {
+        console.error("activity schema:", String(error?.message ?? error));
+        schemaReady = null;
+        throw error;
+      });
+  }
+  return schemaReady;
+}
+
 // Remplace ActivityService (Redis) par une table Neon à TTL applicatif :
 // un heartbeat = upsert, les compteurs filtrent sur la fenêtre de 60 s.
 export async function heartbeat(env, deviceId, channelId) {
   const deviceHash = await sha256Hex(deviceId ?? "");
+  await ensureActivityTable(env);
   await env.db.query(
     env,
     `INSERT INTO "ActivityHeartbeat" ("deviceHash", "channelId", "lastSeenAt")
@@ -24,6 +50,7 @@ export async function heartbeat(env, deviceId, channelId) {
 }
 
 export async function globalCount(env) {
+  await ensureActivityTable(env);
   const result = await env.db.query(
     env,
     `SELECT COUNT(*)::int AS count FROM "ActivityHeartbeat" WHERE "lastSeenAt" > now() - interval '${TTL_SECONDS} seconds'`,
@@ -32,6 +59,7 @@ export async function globalCount(env) {
 }
 
 export async function channelCount(env, channelId) {
+  await ensureActivityTable(env);
   const result = await env.db.query(
     env,
     `SELECT COUNT(*)::int AS count FROM "ActivityHeartbeat" WHERE "channelId" = $1 AND "lastSeenAt" > now() - interval '${TTL_SECONDS} seconds'`,
@@ -53,6 +81,7 @@ let channelCountCache = { at: 0, value: 0 };
 export async function activeChannelCount(env, windowSeconds = 120) {
   const now = Date.now();
   if (now - channelCountCache.at < CHANNEL_COUNT_CACHE_MS) return channelCountCache.value;
+  await ensureActivityTable(env);
   const seconds = Math.max(1, Math.floor(Number(windowSeconds) || 120));
   const result = await env.db.query(
     env,

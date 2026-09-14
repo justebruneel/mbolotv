@@ -90,7 +90,7 @@ export async function findMatchVariants(env, id) {
   if (match.rows.length === 0) return null;
   const variants = await env.db.query(
     env,
-    `SELECT v.id, v."encryptedLocator", v."healthScore", v."healthStatus", v."isActive",
+    `SELECT v.id, v."encryptedLocator", v."healthScore", v."healthStatus", v."isActive", v."sourceId",
             s.status AS source_status, s.priority AS source_priority, c.id AS channel_id
      FROM "MatchStream" ms
      JOIN "StreamVariant" v ON v.id = ms."streamVariantId"

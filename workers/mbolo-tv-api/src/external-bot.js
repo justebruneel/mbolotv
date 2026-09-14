@@ -108,6 +108,29 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Semis groupé d'une page de listing : un seul INSERT multi-lignes au lieu
+ *  d'un par item (~40). Sous la transition passerelle SQL, chaque requête
+ *  compte comme sous-requête Cloudflare (50/tick sur le plan gratuit) et
+ *  l'aller-retour ~0,5 s rendait le semis item-à-item intenable. */
+async function seedQueue(env, category, items, priority, kind) {
+  if (!items.length) return 0;
+  const params = [];
+  const tuples = [];
+  for (const item of items) {
+    const b = params.length;
+    params.push(crypto.randomUUID(), SITE, category, item.newsid, kind, priority);
+    tuples.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6})`);
+  }
+  const result = await env.db.query(
+    env,
+    `INSERT INTO "ExternalImportQueue" (id, site, category, newsid, kind, priority)
+     VALUES ${tuples.join(',')}
+     ON CONFLICT (site, newsid) DO NOTHING`,
+    params,
+  );
+  return result.rowCount ?? 0;
+}
+
 /** Curseur du rattrapage (MetadataCache) : dernière page semée par
  *  catégorie + liste des catégories terminées. */
 async function readBacklogCursor(env) {
@@ -157,17 +180,7 @@ export async function discoverBacklog(env) {
     }
     summary.pages += 1;
     const kind = listingKind(category) ?? 'MOVIE';
-    let seededCat = 0;
-    for (const item of listing.items) {
-      const inserted = await env.db.query(
-        env,
-        `INSERT INTO "ExternalImportQueue" (id, site, category, newsid, kind, priority)
-         VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT (site, newsid) DO NOTHING`,
-        [crypto.randomUUID(), SITE, category, item.newsid, kind, 0],
-      );
-      if ((inserted.rowCount ?? 0) > 0) seededCat += 1;
-    }
+    const seededCat = await seedQueue(env, category, listing.items, 0, kind);
     next[category] = fromPage + 1;
     summary.byCategory[category] = { page: fromPage + 1, maxPage: listing.maxPage, seeded: seededCat };
     summary.seeded += seededCat;
@@ -197,16 +210,7 @@ export async function discoverNew(env, pages = 1) {
       summary.maxPage[category] = listing.maxPage;
       const kind = listingKind(category) ?? 'MOVIE';
       const priority = index === 0 ? 10 : 0;
-      for (const item of listing.items) {
-        const inserted = await env.db.query(
-          env,
-          `INSERT INTO "ExternalImportQueue" (id, site, category, newsid, kind, priority)
-           VALUES ($1,$2,$3,$4,$5,$6)
-           ON CONFLICT (site, newsid) DO NOTHING`,
-          [crypto.randomUUID(), SITE, category, item.newsid, kind, priority],
-        );
-        if ((inserted.rowCount ?? 0) > 0) seededCat += 1;
-      }
+      seededCat += await seedQueue(env, category, listing.items, priority, kind);
     }
     summary.byCategory[category] = seededCat;
     summary.seeded += seededCat;
@@ -237,12 +241,18 @@ export async function runExternalBotTick(env) {
     // Claim atomique : l'item le plus prioritaire, le moins tenté, le plus
     // ancien — jamais au plafond de tentatives (déjà exclus par exhaustStale
     // Pending, mais la garde reste dans la requête).
+    // Transition passerelle SQL (quota Neon épuisé) : les SÉRIES restent en
+    // file — une fiche de série coûte ~20 INSERT (un par épisode) et dépasse
+    // le plafond gratuit de 50 sous-requêtes par invocation dès que chaque
+    // requête compte comme fetch. Les films (~25) passent ; le blocage se
+    // lève tout seul au retour Neon (disparition de DB_GATEWAY_URL).
+    const kindGuard = env.DB_GATEWAY_URL ? "AND kind = 'MOVIE'" : "";
     const claim = await env.db.query(
       env,
       `UPDATE "ExternalImportQueue" SET state = 'RUNNING', "processedAt" = now(), attempts = attempts + 1
        WHERE id = (
          SELECT id FROM "ExternalImportQueue"
-         WHERE state = 'PENDING' AND attempts < $1
+         WHERE state = 'PENDING' AND attempts < $1 ${kindGuard}
          ORDER BY priority DESC, attempts ASC, "discoveredAt" ASC
          LIMIT 1
        )

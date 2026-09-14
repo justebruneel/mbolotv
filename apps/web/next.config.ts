@@ -28,7 +28,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const nextConfig: NextConfig = {
-  transpilePackages: ['@mbolo/ui'],
+  transpilePackages: ['@mbolo/ui', '@mbolo/mesh'],
   poweredByHeader: false,
   images: {
     // Prêt pour next/image quand les tuiles basculeront : AVIF/WebP servis et

@@ -1,0 +1,37 @@
+# MeshStream — worker de coordination (ADR-0004, étape 3).
+# Ce worker NE DOIT JAMAIS recevoir de binding vers le relay, le video-proxy,
+# les fournisseurs IPTV ou Hyperdrive : il n'est pas sur le chemin de la vidéo.
+# (Test d'isolation figé : test/mesh.test.mjs « ISOLATION ».)
+name = "mbolo-tv-mesh"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Un Durable Object par swarm (idFromName(swarmId)). Plan gratuit : classes
+# SQLite obligatoires (même convention que mbolo-tv-video-proxy), même si
+# l'état chaud reste en mémoire — membership éphémère par conception.
+[[durable_objects.bindings]]
+name = "MESH_SWARM"
+class_name = "SwarmCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SwarmCoordinator"]
+
+[vars]
+# Origines autorisées pour le polling en navigateur (mêmes conventions CORS
+# que l'API ; l'upgrade WebSocket ne négocie pas de pré-vol).
+CORS_ALLOWED_ORIGINS = "https://mbolotv-web.vercel.app"
+# MESH_KILL_SWITCH="1" = éteindre le P2P à chaud sans redéploiement (les pairs
+# reçoivent CONFIG{p2pEnabled:false} et /play refuse d'émettre des jetons via
+# MESH_ENABLED="0" côté API). Défaut : nonkillé mais INACTIF tant que l'API
+# n'a pas MESH_ENABLED + MESH_URL_SECRET + MESH_PUBLIC_URL configurés.
+# Les secrets MESH_URL_SECRET (les DEUX workers, API et mesh — même relation
+# que PROXY_URL_SECRET entre API et video-proxy) se règlent par :
+#   wrangler secret put MESH_URL_SECRET           (mesh)
+#   wrangler secret put MESH_URL_SECRET           (api)
+#   wrangler secret put MESH_URL_SECRET           -- c'est le même secret partagé.
+# Déploiement (volontairement NON fait à cette étape) :
+#   cd workers/mbolo-tv-mesh && npm ci && wrangler deploy
+# DNS/route : pas de domaine propre nécessaire — les workers.dev suffisent
+# en bêta ; documenter la route custom (mesh.mbolo.tv) à l'étape 5 si needed.

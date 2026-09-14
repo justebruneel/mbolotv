@@ -7,6 +7,10 @@ compatibility_flags = ["nodejs_compat"]
 crons = ["*/2 * * * *", "*/5 * * * *", "*/10 * * * *", "*/15 * * * *", "0 5 * * *"]
 
 [vars]
+# Transition Neon (sept. 2026) : SQL via la passerelle HTTP du relay résidentiel
+# (scripts/db-gateway.mjs). Pour revenir à Hyperdrive/Neon : supprimer cette ligne,
+# redéployer, et rendre à HYPERDRIVE son origine Neon d'origine.
+DB_GATEWAY_URL = "https://db-api.mbolotv.dpdns.org/query"
 VIDEO_PROXY_URL = "https://mbolo-tv-video-proxy.mbolo-tv-video-proxy.workers.dev"
 PUBLIC_API_URL = "https://mbolo-tv-api.mbolo-tv-video-proxy.workers.dev"
 # Origines autorisées à appeler l'API depuis un navigateur (CORS). Une origine
@@ -54,9 +58,10 @@ EXTERNAL_FICHE_BASES = "https://french-stream.one"
 # traitées (4 ≈ 38 sous-requêtes, sous les plafonds Workers du plan
 # gratuit). Catégories de listings crawlées : films (MOVIE), s-tv (SERIES).
 EXTERNAL_BOT_ENABLED = "1"
-EXTERNAL_BOT_BATCH = "4"
+EXTERNAL_BOT_BATCH = "1"
 EXTERNAL_BOT_CATEGORIES = "films,s-tv"
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
 id = "75d74bf3c4b24e36ab9666697030b0fb"
+

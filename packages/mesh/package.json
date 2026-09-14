@@ -1,0 +1,21 @@
+{
+  "name": "@mbolo/mesh",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MeshStream (ADR-0004 étapes 4-5) — client de partage de segments HLS par WebRTC DataChannel. Couche opportuniste : l'origin reste la source de vérité ; sans P2P, ce package n'est jamais chargé.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@mbolo/contracts": "workspace:*",
+    "idb-keyval": "^6.3.0"
+  },
+  "devDependencies": {
+    "hls.js": "^1.5.17",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.2"
+  }
+}

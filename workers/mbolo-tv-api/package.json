@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=\"$(node -p 'require(\"fs\").readFileSync(\"../../packages/db/.env\",\"utf8\").match(/^DATABASE_URL=(.*)$/m)[1]')\" wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@mbolo/contracts": "file:../../packages/contracts",

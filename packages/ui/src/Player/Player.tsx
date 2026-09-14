@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import Hls, { ErrorTypes } from 'hls.js';
 import type { ErrorData } from 'hls.js';
 import type MpegtsPlayer from 'mpegts.js';
+// MeshStream (ADR-0004, étape 4 POC) — type SEULEMENT (effacé au build : le
+// code du mesh n'entre dans le bundle que si GlobalPlayer l'importe en
+// dynamique, ce qui n'arrive que si le flag POC local + le jeton serveur sont
+// présents). Le Player ignore cette prop sinon, chemin strictement actuel.
+import type { MeshSession } from '@mbolo/mesh';
 import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
 import styles from './Player.module.css';
@@ -16,7 +21,7 @@ export interface PlayerSourceOption { id: string; host: string; versions: string
 /** Fenêtre d'introduction (secondes) : le bouton « Sauter l'intro » s'affiche
  *  quand la position courante est dans [start, end) et seeke vers end. */
 export interface PlayerIntroWindow { start: number; end: number; }
-export interface PlayerProps { urls: string[]; title: string; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; mode?: 'live' | 'vod'; initialTime?: number; onProgress?: (seconds: number, duration: number) => void; onEnded?: () => void; intro?: PlayerIntroWindow | null; sources?: PlayerSourceOption[]; activeSourceId?: string; onSourceChange?: (sourceId: string) => void; }
+export interface PlayerProps { urls: string[]; title: string; /** Session MeshStream POC (ADR-0004) — absente/à faux : chemin actuel strict. */ mesh?: MeshSession | null; initialVolume?: number; initialLevel?: number; initialDataSaver?: boolean; autoPlay?: boolean; onVolumeChange?: (volume: number) => void; onLevelChange?: (level: number) => void; onDataSaverChange?: (enabled: boolean) => void; onRefreshSource?: () => Promise<boolean>; mode?: 'live' | 'vod'; initialTime?: number; onProgress?: (seconds: number, duration: number) => void; onEnded?: () => void; intro?: PlayerIntroWindow | null; sources?: PlayerSourceOption[]; activeSourceId?: string; onSourceChange?: (sourceId: string) => void; }
 interface QualityLevel { index: number; height: number; bitrate?: number; }
 interface PlaybackStats { startupMs: number | null; rebufferCount: number; bufferAhead: number; bitrate: number | null; latency: number | null; }
 interface GestureState { startX: number; startY: number; startTime: number; }
@@ -136,11 +141,28 @@ function getErrorMessage(errorType: string | null, httpCode: number | null): str
   return 'Le fournisseur ne répond pas ou la session a expiré.';
 }
 
-export function Player({ urls, title, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource, mode = 'live', initialTime, onProgress, onEnded, intro, sources, activeSourceId, onSourceChange }: PlayerProps) {
+export function Player({ urls, title, mesh, initialVolume, initialLevel, initialDataSaver, autoPlay = true, onVolumeChange, onLevelChange, onDataSaverChange, onRefreshSource, mode = 'live', initialTime, onProgress, onEnded, intro, sources, activeSourceId, onSourceChange }: PlayerProps) {
   const isVod = mode === 'vod';
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  // MeshStream POC : le branchement fLoader est POSÉ par bind() sur l'instance
+  // hls créée (relue à chaque fragment par hls.js) et RETIRÉ au destroy —
+  // jamais la session (propriété du web) n'est détruite ici.
+  const meshUnbindRef = useRef<(() => void) | null>(null);
+  // La session POC arrive en asynchrone (import lazy + jeton serveur) : le
+  // reflet en ref évite aux chemins impératifs (loadCurrent, événements hls)
+  // de lire une valeur périmée dans la closure de l'effet [urlsKey].
+  const meshRef = useRef<MeshSession | null | undefined>(undefined);
+  useEffect(() => { meshRef.current = mesh; }, [mesh]);
+  useEffect(() => {
+    // Branchement tardif : session créée APRÈS le Hls courant. Sans effet si
+    // déjà branchée sur CETTE instance (loadCurrent a bindé) ou pas de Hls.
+    const hls = hlsRef.current;
+    if (!mesh || !hls) return;
+    if ((hls.config as { fLoader?: unknown }).fLoader === mesh.fLoader) return;
+    try { meshUnbindRef.current = mesh.bind(hls, Hls.DefaultConfig.loader); } catch { meshUnbindRef.current = null; }
+  }, [mesh]);
   // Flux MPEG-TS bruts (portails Stalker) : lus par mpegts.js (MSE) — hls.js
   // n'accepte qu'un manifest .m3u8 et bouclerait en erreur sur un TS direct.
   // Import dynamique : le paquet touche `self` au top-level (SSR interdit).
@@ -440,6 +462,9 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       }
       const hls = hlsRef.current;
       if (hls) {
+        // MeshStream : débrancher le loader AVANT hls.destroy (restore la
+        // config fLoader d'origine — propre même en cas de retry/advance).
+        if (meshUnbindRef.current) { try { meshUnbindRef.current(); } catch { /* ignore */ } meshUnbindRef.current = null; }
         // Chaque étape est isolée : une exception dans hls.js ne doit jamais
         // empêcher le nettoyage du <video> (sinon l'ancien flux continue de
         // jouer en arrière-plan après un changement de chaîne).
@@ -749,7 +774,13 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
       // bas) puis l'ABR est libéré après une lecture stable — l'estimation
       // réseau (abrEwmaDefaultEstimate) ne sert plus qu'au warm-up cap.
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false, startFragPrefetch: true, backBufferLength: 6, maxBufferLength: profile.buffer, maxMaxBufferLength: 90, maxBufferSize: 60 * 1000 * 1000, maxBufferHole: 0.5, liveSyncDuration: profile.liveSyncSeconds, liveMaxLatencyDuration: profile.liveMaxLatencySeconds, startLevel: -1, abrEwmaDefaultEstimate: profile.estimate, abrEwmaFastVoD: 2, abrEwmaSlowVoD: 5, abrBandWidthFactor: 0.7, abrBandWidthUpFactor: 0.5, abrMaxWithRealBitrate: true, capLevelToPlayerSize: true, maxLoadingDelay: 2, maxFragLookUpTolerance: 0.3, manifestLoadingTimeOut: 15_000, manifestLoadingMaxRetry: 3, levelLoadingTimeOut: 15_000, levelLoadingMaxRetry: 3, fragLoadingTimeOut: 20_000, fragLoadingMaxRetry: 4, maxStarvationDelay: 8 });
-      hlsRef.current = hls; retryRef.current = loadCurrent; hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
+      hlsRef.current = hls; retryRef.current = loadCurrent;
+      // MeshStream POC : branchement optionnel UNIQUEMENT si GlobalPlayer a
+      // créé une session (flag POC local + jeton serveur + capacités réelles).
+      // Sans prop mesh : config fLoader absente → loader natif, chemin actuel.
+      const meshSession = meshRef.current;
+      if (meshSession) { try { meshUnbindRef.current = meshSession.bind(hls, Hls.DefaultConfig.loader); } catch { meshUnbindRef.current = null; } }
+      hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
         logSession('hls-error', `${data.type}/${data.details}${data.response ? ` http ${data.response.code}` : ''}${data.fatal ? ' [fatal]' : ''}`);
@@ -812,8 +843,11 @@ export function Player({ urls, title, initialVolume, initialLevel, initialDataSa
           hls.currentLevel = resolveHeightIndex(discovered, preferredHeight);
         }
         if (bufferAhead() >= startupBufferTarget()) attemptPlayback();
+        // MeshStream : identité de rendition courante (rid, spec §6.1) —
+        // purement métadonnée ; sans session mesh, rien ne se passe.
+        if (meshRef.current) { const idx = hls.currentLevel >= 0 ? hls.currentLevel : 0; try { meshRef.current.levelChanged(hls.levels[idx]?.attrs); } catch { /* ignore */ } }
       });
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); } });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); if (meshRef.current) { try { meshRef.current.levelChanged(hls.levels[data.level]?.attrs); } catch { /* ignore */ } } } });
       hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { fragDurationRef.current = targetDurationOf(data.details) || fragDurationRef.current; const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
       hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startupBufferTarget()) attemptPlayback(); else resumeIfBuffered(); });
     }

@@ -17,6 +17,7 @@ import * as external from "./external.js";
 import { refreshExternalGenreMap, applyExternalGenreMap } from "./external-genres.js";
 import * as notifications from "./notifications.js";
 import { selectVariant, assertGrantActive, playResponse } from "./play.js";
+import { meshFieldsForPlay } from "./mesh.js";
 import { handleOwnerRoute, resumeQueuedImports, failStaleImports } from "./owner-routes.js";
 import * as externalBot from "./external-bot.js";
 import { scanDueVariants } from "./healthcheck.js";
@@ -151,7 +152,12 @@ async function readJson(request) {
 // qu'aux appareils munis d'un DeviceGrant actif (x-device-id). L'éco adaptatif
 // (affluence) est évalué APRÈS les contrôles 403/404 : seules les demandes
 // légitimes peuvent être plafonnées ou refusées par la garde de saturation.
-async function respondWithPlay(ctx, locatorPromise, explicitEco) {
+// MeshStream (ADR-0004) : quand MESH_ENABLED est absent, la réponse reste
+// BYTE-PER-BYTE celle d'avant (meshFieldsForPlay renvoie {}). Les métadonnées
+// mesh éventuelles sont fusionnées APRÈS la décision éco (le swarm reflète le
+// maxh réellement appliqué) ; une anomalie mesh ne devient JAMAIS une erreur
+// de lecture. Le Player actuel ignore ces champs optionnels.
+async function respondWithPlay(ctx, locatorPromise, explicitEco, session) {
   const deviceId = ctx.request.headers.get("x-device-id") ?? undefined;
   if (!(await assertGrantActive(ctx.env, deviceId)))
     return ctx.fail(403, "Un code d’accès actif est requis");
@@ -175,7 +181,9 @@ async function respondWithPlay(ctx, locatorPromise, explicitEco) {
       429,
       { "retry-after": "30" },
     );
-  return ctx.json(await playResponse(ctx.env, providerUrl, decision.maxHeight, { qualityCap: decision.maxHeight }));
+  const payload = await playResponse(ctx.env, providerUrl, decision.maxHeight, { qualityCap: decision.maxHeight });
+  const mesh = await meshFieldsForPlay(ctx.env, deviceId, { ...session, eco: Boolean(decision.maxHeight) }, payload.expiresAt);
+  return ctx.json({ ...payload, ...mesh });
 }
 
 async function categoriesList(ctx) {
@@ -284,7 +292,11 @@ async function route(ctx, url) {
   const method = ctx.request.method;
 
   if (path === "/api/health" && method === "GET") {
-    await withClient(env, async () => undefined);
+    // SELECT 1 et non une simple connexion : la panne Neon de sept. 2026
+    // (quota de transfert) laissait l'health-check à 200 — Hyperdrive ne
+    // joint l'origine qu'au premier query. Un check sans requête ne prouve
+    // rien.
+    await withClient(env, (client) => client.query("SELECT 1"));
     return ctx.json({ status: "ok" });
   }
 
@@ -330,6 +342,7 @@ async function route(ctx, url) {
       ctx,
       decryptLocatorWithSecret(env.ENCRYPTION_KEY, variant.encryptedLocator),
       url.searchParams.get("eco") === "1",
+      { channelId, sourceId: variant.sourceId, variantId: variant.id },
     );
   }
 
@@ -381,6 +394,7 @@ async function route(ctx, url) {
       ctx,
       decryptLocatorWithSecret(env.ENCRYPTION_KEY, variant.encryptedLocator),
       url.searchParams.get("eco") === "1",
+      { channelId: variant.channel_id, sourceId: variant.sourceId, variantId: variant.id },
     );
   }
 
@@ -788,9 +802,13 @@ export async function scheduled(event, env) {
       // son budget de sous-requêtes avec santé/resync/genres.
       if (String(env.EXTERNAL_BOT_ENABLED ?? "0") === "1") {
         try {
-          console.log("[cron] external-bot:", JSON.stringify(await externalBot.runExternalBotTick(env)));
+          // Diagnostic budget passerelle : chaque SQL = 1 sous-requête.
+          env.__gwCount = { n: 0 };
+          const t0 = Date.now();
+          const summary = await externalBot.runExternalBotTick(env);
+          console.log("[cron] external-bot:", JSON.stringify(summary), "sql:", env.__gwCount.n, "ms:", Date.now() - t0);
         } catch (error) {
-          console.error("[cron] external-bot", error instanceof Error ? error.message : error);
+          console.error("[cron] external-bot", error instanceof Error ? error.message : error, "sql:", env.__gwCount?.n ?? "?");
         }
       }
     } else if (cron === "*/10 * * * *") {
@@ -856,6 +874,14 @@ export default {
     try {
       return await route(context, url);
     } catch (caught) {
+      // Les erreurs métier lancées avec un status explicite (ex. « import
+      // déjà en cours », quota YouTube) méritent leur message réel plutôt
+      // qu'un 500 opaque ; les autres restent « Erreur interne ».
+      const status = caught?.status;
+      if (Number.isInteger(status) && status >= 400 && status < 500) {
+        console.warn("[api]", String(caught?.message ?? caught));
+        return context.fail(status, String(caught.message ?? "Conflit"));
+      }
       console.error(
         "[api]",
         caught instanceof Error ? (caught.stack ?? caught.message) : caught,

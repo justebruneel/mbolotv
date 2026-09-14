@@ -4,6 +4,7 @@ import { Button, EmptyState, Icon, Player, Spinner } from '@mbolo/ui';
 import { usePathname, useRouter } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChannel, usePlayUrl, useVodItem, useVodPlayUrl, useActivityHeartbeat } from '../../shared/api/queries';
+import { createMeshBridge, type MeshBridge } from '../mesh/poc';
 import { usePlayerStore, useVodPlayerStore } from '../stores/player';
 import { useSettingsStore } from '../stores/settings';
 import { internalNavigationCount } from './RouteTracker';
@@ -95,6 +96,30 @@ function GlobalPlayerInner() {
       return false;
     }
   }, [activeQuery]);
+
+  // ---- MeshStream POC (ADR-0004 étape 4) ---------------------------------
+  // Session LIVE uniquement, et seulement si le flag de build POC est actif :
+  // sans lui, AUCUN octet du code mesh n'est téléchargé (import dynamique
+  // court-circuité) et la prop Player reste absente → chemin strictement actuel.
+  // Le refus/échec du mesh (crée ou join) ne touche jamais la lecture : le
+  // loader hls.js retombe origin et cette session vaut simplement « rien ».
+  const meshData = playQuery.data;
+  const [meshBridge, setMeshBridge] = useState<MeshBridge | null>(null);
+  useEffect(() => {
+    if (vodId || !channelId || !meshData?.p2p || !meshData.meshToken) { setMeshBridge(null); return; }
+    let disposed = false;
+    let bridge: MeshBridge | null = null;
+    void createMeshBridge(meshData).then((created) => {
+      if (disposed) { created.dispose(); return; }
+      bridge = created;
+      setMeshBridge(created);
+    });
+    return () => {
+      disposed = true;
+      bridge?.dispose();
+    };
+  }, [vodId, channelId, meshData?.p2p, meshData?.meshToken]);
+  useEffect(() => () => { meshBridge?.dispose(); }, [meshBridge]);
 
   // Reprise VOD : au-delà de 30 s et avant la fin, on repart de la position
   // enregistrée (sinon du début).
@@ -259,6 +284,7 @@ function GlobalPlayerInner() {
           key={playerKey}
           urls={playUrls}
           title={playerTitle}
+          mesh={vodId ? undefined : (meshBridge?.session ?? undefined)}
           mode={vodId ? 'vod' : 'live'}
           initialTime={initialTime}
           onProgress={vodId ? handleVodProgress : undefined}

@@ -6,7 +6,7 @@ export async function selectVariant(env, channelId, filterChannelId) {
   const params = [channelId];
   let filter = 'v."channelId" = $1';
   if (filterChannelId) { params.push(filterChannelId); filter += ` AND c.id = $${params.length}`; }
-  const result = await env.db.query(env, `SELECT v.id, v."encryptedLocator", v."healthScore", v."healthStatus", s.status AS source_status, s.priority AS source_priority, s.priority FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" JOIN "Channel" c ON c.id = v."channelId" WHERE ${filter} AND v."isActive" AND s.status <> 'DISABLED' ORDER BY v."healthScore" DESC, s.priority ASC`, params);
+  const result = await env.db.query(env, `SELECT v.id, v."encryptedLocator", v."healthScore", v."healthStatus", s."id" AS "sourceId", s.status AS source_status, s.priority AS source_priority, s.priority FROM "StreamVariant" v JOIN "Source" s ON s.id = v."sourceId" JOIN "Channel" c ON c.id = v."channelId" WHERE ${filter} AND v."isActive" AND s.status <> 'DISABLED' ORDER BY v."healthScore" DESC, s.priority ASC`, params);
   return result.rows.find((row) => row.healthStatus !== 'DOWN') ?? result.rows[0] ?? null;
 }
 export async function assertGrantActive(env, deviceId) {

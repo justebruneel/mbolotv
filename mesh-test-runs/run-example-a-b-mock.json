@@ -1,0 +1,459 @@
+{
+  "v": 1,
+  "runId": "run-example-a-b-mock",
+  "scenario": "A",
+  "createdAt": "2026-09-14T18:59:06.189Z",
+  "note": "Exemple SYNTHETIQUE (provenance mock) — format de référence, pas une preuve réelle",
+  "sessions": [
+    {
+      "sessionIndex": 0,
+      "provenance": "mock",
+      "deviceClass": "desktop",
+      "swarm": "ab12cd34",
+      "peer": "peerAAAAAAAAAAAAAAAAAA",
+      "startedAt": "2026-09-14T10:00:00.000Z",
+      "stats": {
+        "meshAttempts": 0,
+        "memoryHits": 4,
+        "persistentCacheHits": 1,
+        "peerHits": 0,
+        "originHits": 12,
+        "peerFailures": 0,
+        "peerTimeouts": 0,
+        "peerHashFailures": 0,
+        "webrtcSuccess": 1,
+        "webrtcFailure": 0,
+        "bytesFromPeers": 0,
+        "bytesFromOrigin": 6144000,
+        "bytesFromMemory": 2048000,
+        "bytesFromIndexedDB": 512000,
+        "bytesServedToPeers": 1536000,
+        "peers": 1,
+        "peerHitRate": 0,
+        "meshOffload": 0
+      },
+      "dropped": 0,
+      "eventCount": 13,
+      "sourceFile": "/tmp/opencode/raw-a.json"
+    },
+    {
+      "sessionIndex": 1,
+      "provenance": "mock",
+      "deviceClass": "desktop",
+      "swarm": "ab12cd34",
+      "peer": "peerBBBBBBBBBBBBBBBBBB",
+      "startedAt": "2026-09-14T10:00:05.000Z",
+      "stats": {
+        "meshAttempts": 5,
+        "memoryHits": 2,
+        "persistentCacheHits": 0,
+        "peerHits": 3,
+        "originHits": 9,
+        "peerFailures": 2,
+        "peerTimeouts": 1,
+        "peerHashFailures": 0,
+        "webrtcSuccess": 1,
+        "webrtcFailure": 0,
+        "bytesFromPeers": 1536000,
+        "bytesFromOrigin": 4608000,
+        "bytesFromMemory": 1024000,
+        "bytesFromIndexedDB": 0,
+        "bytesServedToPeers": 0,
+        "peers": 1,
+        "peerHitRate": 0.25,
+        "meshOffload": 0.25
+      },
+      "dropped": 0,
+      "eventCount": 22,
+      "sourceFile": "/tmp/opencode/raw-b.json"
+    }
+  ],
+  "events": [
+    {
+      "sessionIndex": 0,
+      "t": "session",
+      "sid8": "ab12cd34",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "proto": 1,
+      "cap": "normal",
+      "net": "wifi",
+      "deviceClass": "desktop",
+      "visibility": "foreground",
+      "peers": 0,
+      "at": 1000,
+      "rel": 0
+    },
+    {
+      "sessionIndex": 0,
+      "t": "ice",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "ms": 120,
+      "state": {
+        "ice": "checking",
+        "gathering": "complete",
+        "connection": "connecting"
+      },
+      "at": 1500,
+      "rel": 500
+    },
+    {
+      "sessionIndex": 0,
+      "t": "ice",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "ms": 420,
+      "state": {
+        "ice": "connected",
+        "gathering": "complete",
+        "connection": "connected"
+      },
+      "at": 1800,
+      "rel": 800
+    },
+    {
+      "sessionIndex": 0,
+      "t": "iceResult",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "ok": true,
+      "ms": 300,
+      "reason": "connected",
+      "at": 1810,
+      "rel": 810
+    },
+    {
+      "sessionIndex": 0,
+      "t": "candidatePair",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "local": "host",
+      "remote": "host",
+      "at": 1820,
+      "rel": 820
+    },
+    {
+      "sessionIndex": 0,
+      "t": "dc",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "state": "open",
+      "at": 1900,
+      "rel": 900
+    },
+    {
+      "sessionIndex": 0,
+      "t": "hello",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "ok": true,
+      "at": 1950,
+      "rel": 950
+    },
+    {
+      "sessionIndex": 0,
+      "t": "transfer",
+      "tid": "AbCdEfGhIjKlMnOp",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "role": "srv",
+      "cc": 0,
+      "sn": 42,
+      "ok": true,
+      "bytes": 512000,
+      "ms": 120,
+      "at": 5000,
+      "rel": 4000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "transfer",
+      "tid": "BcDeFgHiJkLmNoPq",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "role": "srv",
+      "cc": 0,
+      "sn": 43,
+      "ok": true,
+      "bytes": 512000,
+      "ms": 110,
+      "at": 9000,
+      "rel": 8000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "transfer",
+      "tid": "CdEfGhIjKlMnOpQr",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "role": "srv",
+      "cc": 0,
+      "sn": 44,
+      "ok": true,
+      "bytes": 512000,
+      "ms": 140,
+      "at": 13000,
+      "rel": 12000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "tier",
+      "cc": 0,
+      "sn": 40,
+      "tier": "origin",
+      "ms": 320,
+      "at": 2000,
+      "rel": 1000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "tier",
+      "cc": 0,
+      "sn": 41,
+      "tier": "memory",
+      "ms": 2,
+      "at": 3000,
+      "rel": 2000
+    },
+    {
+      "sessionIndex": 0,
+      "t": "capacity",
+      "cap": "normal",
+      "at": 1100,
+      "rel": 100
+    },
+    {
+      "sessionIndex": 1,
+      "t": "session",
+      "sid8": "ab12cd34",
+      "pid": "peerBBBBBBBBBBBBBBBBBB",
+      "proto": 1,
+      "cap": "off",
+      "net": "wifi",
+      "deviceClass": "desktop",
+      "visibility": "foreground",
+      "peers": 0,
+      "at": 1000,
+      "rel": 0
+    },
+    {
+      "sessionIndex": 1,
+      "t": "ice",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "ms": 130,
+      "state": {
+        "ice": "checking",
+        "gathering": "complete",
+        "connection": "connecting"
+      },
+      "at": 1500,
+      "rel": 500
+    },
+    {
+      "sessionIndex": 1,
+      "t": "ice",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "ms": 430,
+      "state": {
+        "ice": "connected",
+        "gathering": "complete",
+        "connection": "connected"
+      },
+      "at": 1800,
+      "rel": 800
+    },
+    {
+      "sessionIndex": 1,
+      "t": "iceResult",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "ok": true,
+      "ms": 310,
+      "reason": "connected",
+      "at": 1810,
+      "rel": 810
+    },
+    {
+      "sessionIndex": 1,
+      "t": "candidatePair",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "local": "host",
+      "remote": "host",
+      "at": 1820,
+      "rel": 820
+    },
+    {
+      "sessionIndex": 1,
+      "t": "dc",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "state": "open",
+      "at": 1900,
+      "rel": 900
+    },
+    {
+      "sessionIndex": 1,
+      "t": "hello",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "ok": true,
+      "at": 1950,
+      "rel": 950
+    },
+    {
+      "sessionIndex": 1,
+      "t": "selected",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "score": 0.82,
+      "cc": 0,
+      "sn": 42,
+      "at": 4900,
+      "rel": 3900
+    },
+    {
+      "sessionIndex": 1,
+      "t": "transfer",
+      "tid": "AbCdEfGhIjKlMnOp",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "role": "req",
+      "cc": 0,
+      "sn": 42,
+      "ok": true,
+      "bytes": 512000,
+      "ms": 210,
+      "at": 5200,
+      "rel": 4200
+    },
+    {
+      "sessionIndex": 1,
+      "t": "tier",
+      "cc": 0,
+      "sn": 42,
+      "tier": "peer",
+      "ms": 215,
+      "at": 5210,
+      "rel": 4210
+    },
+    {
+      "sessionIndex": 1,
+      "t": "selected",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "score": 0.8,
+      "cc": 0,
+      "sn": 43,
+      "at": 8900,
+      "rel": 7900
+    },
+    {
+      "sessionIndex": 1,
+      "t": "transfer",
+      "tid": "BcDeFgHiJkLmNoPq",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "role": "req",
+      "cc": 0,
+      "sn": 43,
+      "ok": true,
+      "bytes": 512000,
+      "ms": 190,
+      "at": 9200,
+      "rel": 8200
+    },
+    {
+      "sessionIndex": 1,
+      "t": "tier",
+      "cc": 0,
+      "sn": 43,
+      "tier": "peer",
+      "ms": 195,
+      "at": 9210,
+      "rel": 8210
+    },
+    {
+      "sessionIndex": 1,
+      "t": "selected",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "score": 0.79,
+      "cc": 0,
+      "sn": 44,
+      "at": 12900,
+      "rel": 11900
+    },
+    {
+      "sessionIndex": 1,
+      "t": "transfer",
+      "tid": "CdEfGhIjKlMnOpQr",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "role": "req",
+      "cc": 0,
+      "sn": 44,
+      "ok": true,
+      "bytes": 512000,
+      "ms": 230,
+      "at": 13300,
+      "rel": 12300
+    },
+    {
+      "sessionIndex": 1,
+      "t": "tier",
+      "cc": 0,
+      "sn": 44,
+      "tier": "peer",
+      "ms": 235,
+      "at": 13310,
+      "rel": 12310
+    },
+    {
+      "sessionIndex": 1,
+      "t": "selected",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "score": 0.5,
+      "cc": 0,
+      "sn": 45,
+      "at": 16900,
+      "rel": 15900
+    },
+    {
+      "sessionIndex": 1,
+      "t": "transfer",
+      "tid": "DeFgHiJkLmNoPqRs",
+      "pid": "peerAAAAAAAAAAAAAAAAAA",
+      "role": "req",
+      "cc": 0,
+      "sn": 45,
+      "ok": false,
+      "bytes": 0,
+      "ms": 1500,
+      "reason": "timeout",
+      "at": 18500,
+      "rel": 17500
+    },
+    {
+      "sessionIndex": 1,
+      "t": "fallback",
+      "cc": 0,
+      "sn": 45,
+      "reason": "timeout",
+      "ms": 1505,
+      "at": 18510,
+      "rel": 17510
+    },
+    {
+      "sessionIndex": 1,
+      "t": "tier",
+      "cc": 0,
+      "sn": 45,
+      "tier": "origin",
+      "ms": 1820,
+      "at": 18800,
+      "rel": 17800
+    },
+    {
+      "sessionIndex": 1,
+      "t": "tier",
+      "cc": 0,
+      "sn": 46,
+      "tier": "origin",
+      "ms": 300,
+      "at": 22800,
+      "rel": 21800
+    },
+    {
+      "sessionIndex": 1,
+      "t": "stall",
+      "durMs": 800,
+      "bufferSec": 1.2,
+      "at": 19000,
+      "rel": 18000
+    }
+  ],
+  "eventCount": 35,
+  "sessionCount": 2
+}

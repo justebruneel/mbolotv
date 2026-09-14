@@ -11,7 +11,8 @@
     "@mbolo/contracts": "workspace:*",
     "hls.js": "^1.5.17",
     "lucide-react": "^1.31.0",
-    "mpegts.js": "^1.7.3"
+    "mpegts.js": "^1.7.3",
+    "@mbolo/mesh": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
