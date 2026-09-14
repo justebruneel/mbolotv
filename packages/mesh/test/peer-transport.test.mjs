@@ -104,12 +104,13 @@ describe('échecs contrôlés (§50)', () => {
     const { linkA, linkB, cacheA, pcs } = await connectedPair(t);
     await cacheA.put(0, 100, SEG(2_000_000, 2), 'origin');
     linkB.knownWin = { cc: 0, first: 95, last: 100 };
+    // Panne réseau totale DÈS LE DÉPART sur les trames binaires (les contrôles
+    // passent) : aucun octet ne peut arriver, quelle que soit la vitesse du
+    // runner — puis le pair meurt. Échec garanti (timeout ou dead), jamais de
+    // promesse pendue, jamais de succès fantôme.
+    for (const pc of pcs) for (const dc of [pc._created, pc._received]) if (dc) dc._drop = () => true;
     const promise = linkB.requestSegment(0, 100, 150);
     await new Promise((r) => setTimeout(r, 10));
-    // Panne réseau TOTALE (toutes les trames binaires jetées — les contrôles
-    // passent) puis mort du pair : l'achèvement est IMPOSSIBLE quelle que soit
-    // la vitesse du runner (l'ancienne version perdait la course sur CI chargé).
-    for (const pc of pcs) for (const dc of [pc._created, pc._received]) if (dc) dc._drop = () => true;
     linkA.close('test-disparait'); // DATA CHANNEL + PC fermés chez A → B voit fermer
     const result = await promise;
     assert.equal(result.ok, false);
