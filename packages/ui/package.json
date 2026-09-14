@@ -5,19 +5,21 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.mjs"
   },
   "dependencies": {
     "@mbolo/contracts": "workspace:*",
+    "@mbolo/mesh": "workspace:*",
     "hls.js": "^1.5.17",
     "lucide-react": "^1.31.0",
-    "mpegts.js": "^1.7.3",
-    "@mbolo/mesh": "workspace:*"
+    "mpegts.js": "^1.7.3"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.7.2"
   },
   "peerDependencies": {

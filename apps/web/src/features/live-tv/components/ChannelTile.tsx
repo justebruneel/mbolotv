@@ -1,7 +1,7 @@
 'use client';
 
 import type { Channel, PlayResponse } from '@mbolo/contracts';
-import { FavoriteButton, ProgrammeProgress } from '@mbolo/ui';
+import { FavoriteButton, ProgrammeProgress, warmStream, shouldWarm, cancelWarm } from '@mbolo/ui';
 import Link from 'next/link';
 import { memo, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -19,7 +19,11 @@ export const ChannelTile = memo(function ChannelTile({ channel, watchContext, hi
   // Préchauffage différé : sans délai, un simple scroll souris déclenche
   // 2 requêtes + un fetch de manifest par carte survolée (saccades réseau).
   const prefetchTimer = useRef(0);
-  useEffect(() => () => window.clearTimeout(prefetchTimer.current), []);
+  // Démonter la tuile annule le warm éventuellement en vol (fetch ≤ 3 s de
+  // toute façon ; abort silencieux, et sans AbortController : simple no-op).
+  // Cas rare : le fetch annulé appartenait à une autre tuile encore visible —
+  // il sera simplement relancé à son prochain survol, sans boucle.
+  useEffect(() => () => { window.clearTimeout(prefetchTimer.current); cancelWarm(); }, []);
   const schedulePrefetch = (): void => {
     if (down || useSettingsStore.getState().dataSaver) return;
     window.clearTimeout(prefetchTimer.current);
@@ -52,6 +56,21 @@ export const ChannelTile = memo(function ChannelTile({ channel, watchContext, hi
         // Aligné sur usePlayUrl (même clé, même politique) pour que le
         // survol réchauffe réellement le cache utilisé par la page watch.
         staleTime: 60_000,
+      })
+      .then((play) => {
+        // Préchauffage du manifest (pas du flux) : réchauffe DNS/TLS/edge
+        // pour le clic qui suit. Gardes strictes (shouldWarm) : manifests
+        // HLS uniquement — jamais un TS brut (téléchargement infini) —,
+        // jamais en économie de données / 2G / arrière-plan. Échec silencieux.
+        try {
+          const conn = (navigator as Navigator & { connection?: { effectiveType?: string; saveData?: boolean } }).connection;
+          if (!shouldWarm(play?.url ?? '', {
+            saveData: Boolean(conn?.saveData) || useSettingsStore.getState().dataSaver,
+            effectiveType: conn?.effectiveType ?? null,
+            visible: typeof document === 'undefined' ? true : document.visibilityState === 'visible',
+          })) return;
+          warmStream(play.url, { timeoutMs: 3000 });
+        } catch { /* préchauffage : jamais bloquant */ }
       })
       .catch(() => undefined);
   };

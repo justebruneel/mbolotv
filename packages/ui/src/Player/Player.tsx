@@ -11,6 +11,8 @@ import type MpegtsPlayer from 'mpegts.js';
 import type { MeshSession } from '@mbolo/mesh';
 import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
+import { createPlayerTelemetry, appendBounded, computeLevelCaps, MAX_PLAYER_LOG_ENTRIES, type PlayerTelemetry } from './telemetry';
+import { updateMediaSession, clearMediaSession } from './mediaSession';
 import styles from './Player.module.css';
 
 // Lecteur tiers sélectionnable depuis l'UI du player (films externes) : le
@@ -155,14 +157,25 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   // de lire une valeur périmée dans la closure de l'effet [urlsKey].
   const meshRef = useRef<MeshSession | null | undefined>(undefined);
   useEffect(() => { meshRef.current = mesh; }, [mesh]);
+  // Façade télémétrie : le lecteur mesh (s'il existe) alimente le snapshot
+  // commun — lecture seule des compteurs, jamais de pilotage.
+  const attachMeshTelemetry = useCallback((session: MeshSession | null | undefined): void => {
+    if (!session) { telemetryRef.current?.attachMeshReader(null); return; }
+    telemetryRef.current?.attachMeshReader(() => {
+      try {
+        const s = session.stats;
+        return s ? { peerHits: s.peerHits, originHits: s.originHits, peerBytes: s.bytesFromPeers, originBytes: s.bytesFromOrigin } : null;
+      } catch { return null; }
+    });
+  }, []);
   useEffect(() => {
     // Branchement tardif : session créée APRÈS le Hls courant. Sans effet si
     // déjà branchée sur CETTE instance (loadCurrent a bindé) ou pas de Hls.
     const hls = hlsRef.current;
     if (!mesh || !hls) return;
     if ((hls.config as { fLoader?: unknown }).fLoader === mesh.fLoader) return;
-    try { meshUnbindRef.current = mesh.bind(hls, Hls.DefaultConfig.loader); } catch { meshUnbindRef.current = null; }
-  }, [mesh]);
+    try { meshUnbindRef.current = mesh.bind(hls, Hls.DefaultConfig.loader); attachMeshTelemetry(mesh); } catch { meshUnbindRef.current = null; }
+  }, [mesh, attachMeshTelemetry]);
   // Flux MPEG-TS bruts (portails Stalker) : lus par mpegts.js (MSE) — hls.js
   // n'accepte qu'un manifest .m3u8 et bouclerait en erreur sur un TS direct.
   // Import dynamique : le paquet touche `self` au top-level (SSR interdit).
@@ -209,7 +222,9 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   const sessionLogRef = useRef<Array<{ ts: number; type: string; detail: string }>>([]);
   const sessionStartRef = useRef(0);
   const logSession = useCallback((type: string, detail: string): void => {
-    sessionLogRef.current.push({ ts: Date.now() - sessionStartRef.current, type, detail });
+    // Journal borné (mémoire des longues sessions) : on conserve les entrées
+    // récentes, les anciennes sont évincées — le vidage reste représentatif.
+    appendBounded(sessionLogRef.current, { ts: Date.now() - sessionStartRef.current, type, detail }, MAX_PLAYER_LOG_ENTRIES);
   }, []);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gestureRef = useRef<GestureState | null>(null);
@@ -233,6 +248,15 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   const [stats, setStats] = useState<PlaybackStats>({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
   const [retrying, setRetrying] = useState(false);
   const [errorInfo, setErrorInfo] = useState<{ type: string | null; httpCode: number | null }>({ type: null, httpCode: null });
+  // Façade de télémétrie (§14) : agrégation pure, no-throw, aucun pilotage.
+  // Une instance par montage (le Player est remonté par clé à chaque source).
+  const telemetryRef = useRef<PlayerTelemetry | null>(null);
+  if (!telemetryRef.current) telemetryRef.current = createPlayerTelemetry();
+  // Miroir de l'état d'erreur pour le retry sur retour réseau (effet monté
+  // une fois, sans dépendance au state) — même style que onProgressRef.
+  const errorActiveRef = useRef(false);
+  const errorInfoRef = useRef(errorInfo);
+  errorInfoRef.current = errorInfo;
   const [volume, setVolume] = useState(initialVolume ?? 1);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -248,6 +272,13 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   onProgressRef.current = onProgress;
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+  // Miroir du mode Éco pour les handlers réseau montés une fois (même style
+  // que onProgressRef : évite une closure périmée sur dataSaver).
+  const dataSaverRef = useRef(dataSaver);
+  dataSaverRef.current = dataSaver;
+  // Pause douce posée par offline (reprise startLoad au online) — évite un
+  // startLoad superflu sur un lecteur jamais mis en pause.
+  const offlineStoppedRef = useRef(false);
   const [bandwidth, setBandwidth] = useState<number | null>(null);
   const [gestureOverlay, setGestureOverlay] = useState<{ type: 'volume'; value: number } | null>(null);
   const gestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -282,6 +313,70 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     check(); mq.addEventListener('change', check); return () => mq.removeEventListener('change', check);
   }, []);
   useEffect(() => { setPipSupported(document.pictureInPictureEnabled); const el = containerRef.current; const hasNativeFs = Boolean(el && ('requestFullscreen' in el || 'webkitRequestFullscreen' in el)); const hasWebkitFs = typeof document !== 'undefined' && 'webkitEnterFullscreen' in HTMLVideoElement.prototype; setFsSupported(hasNativeFs || hasWebkitFs || isMobile); }, [isMobile]);
+  // MediaSession : métadonnées + état système, progressif (silencieux si
+  // indisponible, jamais obligatoire pour lire). Placé après les states
+  // status/isPaused qu'il observe.
+  useEffect(() => {
+    const video = videoRef.current;
+    updateMediaSession(
+      { title, artist: 'Mbolo', album: isVod ? title : 'Direct' },
+      status !== 'ready' || isPaused ? 'paused' : 'playing',
+      {
+        onPlay: () => { try { void video?.play?.(); } catch { /* ignore */ } },
+        onPause: () => { try { video?.pause?.(); } catch { /* ignore */ } },
+      },
+    );
+  }, [title, isVod, status, isPaused]);
+  // Réseau dynamique : le profil lu au chargement se périme dès que la
+  // connexion évolue (Wi-Fi → 4G faible). Ce handler SANS recreate hls.js :
+  //  - connection.change → recalcule les plafonds (MÊME formule que
+  //    MANIFEST_PARSED/effet Éco, via computeLevelCaps) et les applique à
+  //    chaud (autoLevelCapping) : hls.js s'ajuste progressivement ;
+  //  - offline → pause DOUCE du chargement hls (stopLoad : buffer et position
+  //    conservés, jamais destroy/advance/refresh) ; mpegts/natif : le
+  //    navigateur gère, on ne touche à rien ;
+  //  - online → si erreur : retry existant ; sinon reprise (startLoad) seulement
+  //    si on avait mis en pause ; lecteur sain : on laisse hls.js tranquille.
+  // Compat : navigator.connection absent (Safari/iOS/Firefox partiel) →
+  // aucun listener, comportement actuel strictement conservé.
+  useEffect(() => {
+    const onConnectionChange = (): void => {
+      const hls = hlsRef.current;
+      if (!hls || !Array.isArray(hls.levels) || hls.levels.length === 0) return;
+      if (fastStartActiveRef.current) return; // fenêtre fast-start (6 s) : ne pas écraser le warmup cap en vol
+      try {
+        const profile = networkProfile(); // relit navigator.connection FRAIS
+        const discovered = hls.levels.map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate), bitrate: level.bitrate }));
+        const caps = computeLevelCaps(discovered, dataSaverRef.current, profile.capHeight, DATA_SAVER_MAX_HEIGHT);
+        if (caps.baseCap < -1) return;
+        networkCapRef.current = caps.networkCap;
+        hls.autoLevelCapping = caps.baseCap;
+        logSession('network-change', `cap ${caps.baseCap} (réseau ${caps.networkCap}, éco ${caps.dataCap})`);
+      } catch { /* ignore */ }
+    };
+    const onOffline = (): void => {
+      const hls = hlsRef.current;
+      if (!hls) return;
+      try { hls.stopLoad(); offlineStoppedRef.current = true; } catch { /* ignore */ }
+    };
+    const onOnline = (): void => {
+      if (errorActiveRef.current) { try { retryRef.current?.(); } catch { /* ignore */ } return; }
+      const hls = hlsRef.current;
+      if (hls && offlineStoppedRef.current) {
+        offlineStoppedRef.current = false;
+        try { hls.startLoad(-1); } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    const conn = (navigator as Navigator & { connection?: { addEventListener?: (t: string, fn: () => void) => void; removeEventListener?: (t: string, fn: () => void) => void } }).connection;
+    try { conn?.addEventListener?.('change', onConnectionChange); } catch { /* API absente : rien */ }
+    return () => {
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+      try { conn?.removeEventListener?.('change', onConnectionChange); } catch { /* ignore */ }
+    };
+  }, []);
   const hideDelay = isMobile ? MOBILE_CONTROLS_HIDE_DELAY_MS : CONTROLS_HIDE_DELAY_MS;
   const showControls = useCallback(() => { setControlsVisible(true); if (hideTimerRef.current) clearTimeout(hideTimerRef.current); hideTimerRef.current = setTimeout(() => setControlsVisible(false), hideDelay); }, [hideDelay]);
   useEffect(() => {
@@ -449,7 +544,9 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     sessionStartRef.current = Date.now();
     sessionLogRef.current = [];
     logSession('session-start', urls[urlIndex] ? `source ${urlIndex + 1}/${urls.length}` : 'aucune source');
-    setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null });
+    setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null }); errorActiveRef.current = false;
+    telemetryRef.current?.reset();
+    try { const net = getNetworkInfo(); telemetryRef.current?.setNetworkType(net.effectiveType); } catch { /* ignore */ }
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); if (startupPoll) clearInterval(startupPoll); if (fastStartTimerRef.current) clearTimeout(fastStartTimerRef.current); deadlineTimer = retryTimer = warmupTimer = null; startupPoll = null; fastStartTimerRef.current = null; };
     const destroy = (): void => {
@@ -465,6 +562,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         // MeshStream : débrancher le loader AVANT hls.destroy (restore la
         // config fLoader d'origine — propre même en cas de retry/advance).
         if (meshUnbindRef.current) { try { meshUnbindRef.current(); } catch { /* ignore */ } meshUnbindRef.current = null; }
+        attachMeshTelemetry(null);
         // Chaque étape est isolée : une exception dans hls.js ne doit jamais
         // empêcher le nettoyage du <video> (sinon l'ancien flux continue de
         // jouer en arrière-plan après un changement de chaîne).
@@ -489,8 +587,8 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       try { el.removeAttribute('src'); el.load(); } catch { /* ignore */ }
     };
     const bufferAhead = (): number => el.buffered.length === 0 ? 0 : Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
-    const updateStats = (latency: number | null = null): void => setStats((c) => ({ ...c, bufferAhead: bufferAhead(), latency }));
-    const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; levelRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); setStats((c) => ({ ...c, startupMs: c.startupMs ?? performance.now() - startupAtRef.current, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); if (deadlineTimer) clearTimeout(deadlineTimer); scheduleFastStartRelease(); };
+    const updateStats = (latency: number | null = null): void => { const ahead = bufferAhead(); setStats((c) => ({ ...c, bufferAhead: ahead, latency })); telemetryRef.current?.setBufferAhead(ahead); telemetryRef.current?.setLatency(latency); };
+    const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; levelRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); const ms = performance.now() - startupAtRef.current; setStats((c) => ({ ...c, startupMs: c.startupMs ?? ms, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); telemetryRef.current?.recordStartup(ms, true); if (deadlineTimer) clearTimeout(deadlineTimer); scheduleFastStartRelease(); };
     // Fast-start : une fois la lecture lancée, on laisse FAST_START_STABLE_MS
     // de lecture SANS rebuffer avant de rendre la main à l'ABR (currentLevel
     // = -1). Un rebuffer pendant la fenêtre (fastStartRebuffered, posé dans
@@ -522,19 +620,22 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     // (le jeton fournisseur a pu expirer) avant d'abandonner sur l'erreur.
     const exhausted = (): void => {
       if (cancelled) return;
+      // Point unique d'abandon : on y comptabilise l'échec de démarrage et
+      // l'erreur (type meilleur-effort via le miroir, jamais bloquant).
+      const failActive = (): void => { errorActiveRef.current = true; telemetryRef.current?.recordStartup(performance.now() - startupAtRef.current, false); telemetryRef.current?.recordError(errorInfoRef.current.type); };
       if (!refreshUsed && onRefreshSource) {
         refreshUsed = true;
         setRetrying(true);
         void Promise.resolve(onRefreshSource()).then((refreshed) => {
           if (cancelled) return;
           if (refreshed) { urlIndex = 0; retries = 0; networkRetries = 0; levelRetries = 0; loadCurrent(); return; }
-          setStatus('error'); setRetrying(false);
+          failActive(); setStatus('error'); setRetrying(false);
         });
         return;
       }
-      setStatus('error'); setRetrying(false);
+      failActive(); setStatus('error'); setRetrying(false);
     };
-    const advance = (): void => { if (cancelled) return; retries += 1; logSession('advance', `tentative locale ${retries}/${MAX_RETRIES + 1}`); setRetrying(true); if (retries <= MAX_RETRIES) { retryTimer = setTimeout(loadCurrent, exponentialDelay(retries)); return; } if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; levelRetries = 0; logSession('advance', `source suivante ${urlIndex + 1}/${urls.length}`); loadCurrent(); return; } logSession('exhausted', 'retries épuisés, refresh source demandé'); exhausted(); };
+    const advance = (): void => { if (cancelled) return; retries += 1; logSession('advance', `tentative locale ${retries}/${MAX_RETRIES + 1}`); setRetrying(true); if (retries <= MAX_RETRIES) { retryTimer = setTimeout(loadCurrent, exponentialDelay(retries)); return; } if (urlIndex + 1 < urls.length) { urlIndex += 1; retries = 0; networkRetries = 0; levelRetries = 0; telemetryRef.current?.recordSourceChange(); telemetryRef.current?.recordFallback(); logSession('advance', `source suivante ${urlIndex + 1}/${urls.length}`); loadCurrent(); return; } logSession('exhausted', 'retries épuisés, refresh source demandé'); exhausted(); };
     function loadCurrent(): void {
       if (cancelled) return;
       clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
@@ -608,6 +709,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
           hls.attachMedia(el);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (cancelled || hlsRef.current !== hls) return;
+            telemetryRef.current?.recordManifest(performance.now() - startupAtRef.current);
             setLevels(hls.levels.map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate), bitrate: level.bitrate })));
           });
           // Recovery VOD (miroir de la branche live ci-dessous) : une erreur
@@ -659,7 +761,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
           // compteurs de recovery (sans ce reset, une pause utilisateur pendant
           // la recovery épuiserait les retries au stall suivant — la branche
           // live les réarme via son propre FRAG_BUFFERED).
-          hls.on(Hls.Events.FRAG_BUFFERED, () => { if (cancelled || hlsRef.current !== hls) return; levelRetries = 0; networkRetries = 0; mediaRecoveries = 0; });
+          hls.on(Hls.Events.FRAG_BUFFERED, () => { if (cancelled || hlsRef.current !== hls) return; levelRetries = 0; networkRetries = 0; mediaRecoveries = 0; telemetryRef.current?.recordFirstSegment(performance.now() - startupAtRef.current); });
         } else if (isHlsStream) {
           el.src = url;
           el.load();
@@ -779,7 +881,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       // créé une session (flag POC local + jeton serveur + capacités réelles).
       // Sans prop mesh : config fLoader absente → loader natif, chemin actuel.
       const meshSession = meshRef.current;
-      if (meshSession) { try { meshUnbindRef.current = meshSession.bind(hls, Hls.DefaultConfig.loader); } catch { meshUnbindRef.current = null; } }
+      if (meshSession) { try { meshUnbindRef.current = meshSession.bind(hls, Hls.DefaultConfig.loader); attachMeshTelemetry(meshSession); } catch { meshUnbindRef.current = null; } }
       hls.loadSource(urls[urlIndex]); hls.attachMedia(el);
       hls.on(Hls.Events.ERROR, (_event, data: ErrorData) => {
         if (cancelled || !data.fatal) return;
@@ -811,6 +913,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (cancelled || hlsRef.current !== hls) return;
+        telemetryRef.current?.recordManifest(performance.now() - startupAtRef.current);
         const discovered = hls.levels.map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate), bitrate: level.bitrate }));
         setLevels(discovered);
         networkCapRef.current = profile.capHeight === null ? -1 : Math.max(0, ...discovered.filter((l) => l.height <= profile.capHeight!).map((l) => l.index));
@@ -847,9 +950,23 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         // purement métadonnée ; sans session mesh, rien ne se passe.
         if (meshRef.current) { const idx = hls.currentLevel >= 0 ? hls.currentLevel : 0; try { meshRef.current.levelChanged(hls.levels[idx]?.attrs); } catch { /* ignore */ } }
       });
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); if (meshRef.current) { try { meshRef.current.levelChanged(hls.levels[data.level]?.attrs); } catch { /* ignore */ } } } });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); const height = hls.levels[data.level]?.height ?? null; setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); telemetryRef.current?.setBitrate(hls.levels[data.level]?.bitrate ?? null); telemetryRef.current?.recordQuality(height != null ? `${height}p` : 'auto', height); if (meshRef.current) { try { meshRef.current.levelChanged(hls.levels[data.level]?.attrs); } catch { /* ignore */ } } } });
       hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { fragDurationRef.current = targetDurationOf(data.details) || fragDurationRef.current; const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
-      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRetries = 0; setBandwidth(hls.bandwidthEstimate); updateStats(); if (!playbackInitiated && bufferAhead() >= startupBufferTarget()) attemptPlayback(); else resumeIfBuffered(); });
+      hls.on(Hls.Events.FRAG_BUFFERED, (_event, data) => {
+        networkRetries = 0; setBandwidth(hls.bandwidthEstimate); telemetryRef.current?.setBitrate(hls.bandwidthEstimate ?? null);
+        // Mesure lecteur du débit réel (segment, §6) : octets/durée issus des
+        // stats hls.js déjà disponibles — aucune sonde artificielle. Gardé :
+        // un format inattendu ne change strictement rien au chargement.
+        try {
+          const st = (data as unknown as { stats?: { loaded?: unknown; loading?: { start?: unknown; end?: unknown } } })?.stats;
+          const loaded = typeof st?.loaded === 'number' ? st.loaded : NaN;
+          const start = typeof st?.loading?.start === 'number' ? st.loading.start : NaN;
+          const end = typeof st?.loading?.end === 'number' ? st.loading.end : NaN;
+          if (Number.isFinite(loaded) && Number.isFinite(start) && Number.isFinite(end)) telemetryRef.current?.observeTransfer(loaded, end - start);
+        } catch { /* mesure : jamais bloquante */ }
+        updateStats(); if (!playbackInitiated && bufferAhead() >= startupBufferTarget()) attemptPlayback(); else resumeIfBuffered();
+        telemetryRef.current?.recordFirstSegment(performance.now() - startupAtRef.current);
+      });
     }
     const onPlaying = (): void => {
       // Garde-fou déterministe : un <video> détaché du DOM (ancien lecteur
@@ -860,12 +977,16 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         try { el.pause(); } catch { /* ignore */ }
         return;
       }
+      // Première image RÉELLE : événement playing + buffer non vide (sinon un
+      // playing bref sans données fausserait startup). First-wins, null sinon.
+      try { if (bufferAhead() > 0) telemetryRef.current?.recordFirstFrame(performance.now() - startupAtRef.current); } catch { /* mesure : jamais bloquante */ }
       markReady();
     };
     const onCanPlay = (): void => { if (!Hls.isSupported()) markReady(); };
     const onWaiting = (): void => {
       if (!started) return;
       rebufferCountRef.current += 1;
+      telemetryRef.current?.rebufferStart();
       logSession('rebuffer', `#${rebufferCountRef.current} buffer ${bufferAhead().toFixed(1)} s`);
       // Rebuffer pendant la fenêtre fast-start : la libération ABR est
       // annulée — elle ne repartra qu'après une nouvelle période de stabilité
@@ -908,12 +1029,12 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     // quel que soit le moteur (hls.js ou mpegts) — contrairement à
     // FRAG_BUFFERED qui est spécifique à hls.js.
     const onStalledOrCanplay = (): void => { resumeCheck(); };
-    const onPlayingReset = (): void => { if (started && !stallPauseRef.current) { setBuffering(false); updateStats(); } };
+    const onPlayingReset = (): void => { if (started && !stallPauseRef.current) { setBuffering(false); telemetryRef.current?.rebufferEnd(); updateStats(); } };
     const onError = (): void => { if (Hls.isSupported()) return; advance(); };
     el.addEventListener('playing', onPlaying); el.addEventListener('canplay', onCanPlay); el.addEventListener('waiting', onWaiting); el.addEventListener('playing', onPlayingReset); el.addEventListener('error', onError);
     el.addEventListener('canplay', onStalledOrCanplay); el.addEventListener('stalled', onStalledOrCanplay); el.addEventListener('progress', onStalledOrCanplay);
-    if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else setStatus('error');
-    return () => { cancelled = true; retryRef.current = null; clearTimers(); destroy(); logSession('session-end', `rebuffers ${rebufferCountRef.current}`); console.info('[player-session]', title, sessionLogRef.current); el.removeEventListener('playing', onPlaying); el.removeEventListener('canplay', onCanPlay); el.removeEventListener('waiting', onWaiting); el.removeEventListener('playing', onPlayingReset); el.removeEventListener('error', onError); el.removeEventListener('canplay', onStalledOrCanplay); el.removeEventListener('stalled', onStalledOrCanplay); el.removeEventListener('progress', onStalledOrCanplay); };
+    if (Hls.isSupported()) loadCurrent(); else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = urls[urlIndex]; video.load(); } else { errorActiveRef.current = true; telemetryRef.current?.recordStartup(performance.now() - startupAtRef.current, false); telemetryRef.current?.recordError('no-engine'); setStatus('error'); }
+    return () => { cancelled = true; retryRef.current = null; clearTimers(); destroy(); attachMeshTelemetry(null); clearMediaSession(); logSession('session-end', `rebuffers ${rebufferCountRef.current}`); console.info('[player-session]', title, sessionLogRef.current); try { console.info('[player-telemetry]', title, telemetryRef.current?.snapshot() ?? null); } catch { /* mesure : jamais bloquante */ } el.removeEventListener('playing', onPlaying); el.removeEventListener('canplay', onCanPlay); el.removeEventListener('waiting', onWaiting); el.removeEventListener('playing', onPlayingReset); el.removeEventListener('error', onError); el.removeEventListener('canplay', onStalledOrCanplay); el.removeEventListener('stalled', onStalledOrCanplay); el.removeEventListener('progress', onStalledOrCanplay); };
   }, [urlsKey]);
 
   const activeHeight = levels.find((l) => l.index === activeLevel)?.height;

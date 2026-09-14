@@ -48,6 +48,7 @@ function VodDetailContent() {
 
   const setVodSource = useVodPlayerStore((state) => state.setVodSource);
   const setVodEpisode = useVodPlayerStore((state) => state.setVodEpisode);
+  const activeVodId = useVodPlayerStore((state) => state.vodItemId);
   const storeVodSeason = useVodPlayerStore((state) => state.season);
   const storeVodEpisode = useVodPlayerStore((state) => state.episode);
   const isFavorite = useVodFavoritesStore((state) => state.ids.includes(id));
@@ -151,6 +152,17 @@ function VodDetailContent() {
           )}
         </div>
       </section>
+
+      {/* Emplacement du lecteur GlobalPlayer (mode follow) : sans cet ancrage,
+          le lecteur VOD restait invisible (PLAYER_HIDDEN, audio seul) car
+          GlobalPlayer ne trouvait aucun #vod-player-slot. Affiché uniquement
+          pendant une lecture de CE titre : pas d'espace vide sinon, et un seul
+          Player (celui du GlobalPlayer) — jamais de doublon. */}
+      {activeVodId === id && (
+        <div className="mx-auto w-full max-w-6xl px-4">
+          <div id="vod-player-slot" className="mt-4 aspect-video w-full overflow-hidden rounded-xl bg-black" />
+        </div>
+      )}
 
       <div className="mx-auto w-full max-w-6xl px-4">
         <div className="mt-6 flex flex-col gap-6 md:flex-row">
