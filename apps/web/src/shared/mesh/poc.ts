@@ -1,22 +1,25 @@
 'use client';
-// Pont POC MeshStream côté web (ADR-0004 étape 4).
+// Pont MeshStream côté web (ADR-0004, production v1).
 //
-// Triple condition AVANT toute création de session (règle n°1 — le P2P est
-// impossible à activer accidentellement, §32 du brief) :
-//   1. NEXT_PUBLIC_MESH_POC=1           (flag de build — éteint en production)
+// Triple condition AVANT toute création de session (le P2P est impossible à
+// activer accidentellement) :
+//   1. NEXT_PUBLIC_MESH_ENABLED=1      (flag de build production ; le legacy
+//      NEXT_PUBLIC_MESH_POC=1 reste accepté en repli)
 //   2. /play a renvoyé p2p:true + jeton (autorisation SERVEUR, DeviceGrant)
 //   3. capabilities réelles             (MSE + hls.js-path + WebRTC + DataChannel)
 // Plus : du code du package @mbolo/mesh n'est MÊME TÉLÉCHARGÉ sans ces
 // conditions (import dynamique — le bundle du chemin actuel ne change pas).
 //
-// Consentement upload (§39) : le seeding est TOUJOURS 'off' par défaut ; un
-// appareil de test l'active explicitement via localStorage `mbolo:mesh-cap`
-// (= 'low' | 'normal'). Consommer ne demande aucun consentement : un pair
-// 'off' rejoint le swarm pour RECEVOIR — jamais pour servir.
+// Seeding (production v1, décision opérateur) : ACTIF PAR DÉFAUT de manière
+// adaptée — jamais forcé aveuglément. `consentedCapacity()` renvoie 'normal'
+// sauf TV/WebView ('off', réception seule) et sauf refus explicite
+// (localStorage `mbolo:mesh-cap` = 'off'). `effectiveCapacity()` plafonne
+// ensuite : arrière-plan → off, saveData → off, cellulaire → low. Le kill-switch
+// serveur coupe tout sans redéploiement.
 import type { PlayResponse } from '@mbolo/contracts';
 import type { MeshSession } from '@mbolo/mesh';
 
-const POC_FLAG = process.env.NEXT_PUBLIC_MESH_POC === '1';
+const POC_FLAG = process.env.NEXT_PUBLIC_MESH_ENABLED === '1' || process.env.NEXT_PUBLIC_MESH_POC === '1';
 const STUN_LIST = (process.env.NEXT_PUBLIC_MESH_STUN ?? 'stun:stun.l.google.com:19302')
   .split(',')
   .map((url) => url.trim())
@@ -27,12 +30,18 @@ const CAP_KEY = 'mbolo:mesh-cap';
 
 export function meshPocEnabled(): boolean { return POC_FLAG; }
 
-/** Capacité de seeding CONSENTIE par cet appareil (défaut : off — jamais un
- *  seurs forcé, §39). Seul l'opérateur d'un appareil de test pose la clé. */
+/** Capacité de seeding de CET appareil (production v1 : active par défaut de
+ *  manière adaptée). 'off' explicite (localStorage) = refus respecté, jamais
+ *  écrasé. TV/WebView = 'off' par prudence (appareils limités, réception
+ *  seule). Tout le reste est plafonné par effectiveCapacity (réseau,
+ *  arrière-plan, saveData) et coupable par le kill-switch serveur. */
 export function consentedCapacity(): 'off' | 'low' | 'normal' {
   try {
     const raw = window.localStorage.getItem(CAP_KEY);
-    return raw === 'normal' || raw === 'low' ? raw : 'off';
+    if (raw === 'normal' || raw === 'low') return raw;
+    if (raw === 'off') return 'off'; // refus explicite : respecté
+    const dc = deviceClass();
+    return dc === 'tv' || dc === 'webview' ? 'off' : 'normal';
   } catch { return 'off'; }
 }
 
@@ -84,6 +93,10 @@ function deviceClass(): 'desktop' | 'mobile' | 'tv' | 'webview' | 'unknown' {
  *  offload) + les événements trace bornés SANS aucun secret (ni token, ni IP,
  *  ni URL fournisseur). Absent en production normale : cette fonction n'est
  *  jamais appelée (garde POC_FLAG).
+ *  `setRunId(id)` annote la session avec l'identifiant du run opérateur
+ *  (ex. `run-2026-09-14-a-b`, transmis par le responsable — jamais personnel ;
+ *  format alphanum + `-_`, 2-64 car.). Le dump porte ensuite ce runId pour
+ *  regrouper les exports des appareils d'une même session de test.
  *  `noteStall(durMs)` / `noteError(where, message)` permettent au testeur (ou
  *  à un futur pont Player opt-in) d'annoter stalls/erreurs de lecture.
  *  `export()` télécharge le JSON à transmettre au responsable du test. */
@@ -92,11 +105,20 @@ function exposeMeshTest(
   collector: { trace: (e: never) => void; events: () => unknown[]; dropped: () => number },
   meta: { deviceClass: string; provenance: string; startedAt: string },
 ): void {
+  const RUN_RE = /^[a-z0-9][a-z0-9-_]{1,64}$/i;
+  let runId: string | null = null;
   try {
     const w = window as unknown as { __meshTest?: unknown };
     w.__meshTest = {
+      setRunId: (id: unknown): boolean => {
+        const v = String(id ?? '').trim();
+        if (!RUN_RE.test(v)) return false;
+        runId = v;
+        return true;
+      },
       dump: () => ({
         v: 1,
+        runId,
         provenance: meta.provenance,
         deviceClass: meta.deviceClass,
         startedAt: meta.startedAt,
@@ -121,7 +143,7 @@ function exposeMeshTest(
           const blob = new Blob([payload], { type: 'application/json' });
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = `mesh-dump-${session.swarmLabel}-${Date.now()}.json`;
+          a.download = `${runId ?? `mesh-dump-${session.swarmLabel}`}-${Date.now()}.json`;
           document.body.appendChild(a);
           a.click();
           setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);

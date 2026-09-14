@@ -3,7 +3,8 @@
 //
 // Sink optionnel injecté de bout en bout du client mesh. ABSENT par défaut :
 // zéro coût, zéro log. Présent (uniquement dans l'environnement de test,
-// branché par poc.ts derrière NEXT_PUBLIC_MESH_POC + jeton serveur canary),
+// branché par poc.ts derrière le flag de build (NEXT_PUBLIC_MESH_ENABLED,
+// legacy NEXT_PUBLIC_MESH_POC) + jeton serveur),
 // il émet des ÉVÉNEMENTS STRUCTURÉS permettant de reconstituer, pour chaque
 // session et chaque segment : qui a servi, par quel tier, en combien de temps,
 // pourquoi un pair a été écarté, et — nouveauté canary — de CORRÉLER deux

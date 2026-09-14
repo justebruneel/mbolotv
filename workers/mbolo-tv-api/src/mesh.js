@@ -28,6 +28,11 @@
 //                               stocker l'identifiant brut dans l'env).
 //                               "*" = ouvert explicite (INTERDIT en canary).
 //                               Hors liste → { p2p:false } (lecture intacte).
+//   MESH_ENFORCE_ALLOWLIST="1"  → MODE STRICT canary (obligatoire sur l'API de
+//                               test) : une allowlist testeurs absente, vide ou
+//                               "*" REFUSE tout jeton (fail closed). Sans ce
+//                               mode, l'absence de liste reste permissive
+//                               (compatibilité historique).
 // Toute anomalie (secret absent, source hors liste, calcul qui échoue) donne
 // { p2p:false, …null } — JAMAIS une erreur de lecture : le refus P2P ne doit
 // jamais empêcher de regarder la chaîne.
@@ -66,8 +71,11 @@ const OFF = { p2p: false, meshToken: null, meshUrl: null, meshExpiresAt: null };
 export function meshTesterAllowed(env, deviceId, deviceHash) {
   try {
     const raw = String(env?.MESH_TESTER_ALLOWLIST ?? "").trim();
-    if (!raw) return true;
-    if (raw === "*") return true;
+    const strict = String(env?.MESH_ENFORCE_ALLOWLIST ?? "").trim() === "1";
+    // Mode strict (API canary) : sans liste explicite et non-"*", PERSONNE ne
+    // reçoit de jeton. Une mauvaise configuration coupe le P2P au lieu de
+    // l'ouvrir à tout le monde (fail closed).
+    if (!raw || raw === "*") return strict ? false : true;
     if (!deviceId) return false;
     const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
     if (list.length === 0) return false;

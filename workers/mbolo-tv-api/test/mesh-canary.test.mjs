@@ -50,6 +50,14 @@ describe("meshTesterAllowed — porte canary", () => {
     assert.equal(meshTesterAllowed(null, "x"), true);
     assert.equal(meshTesterAllowed({ MESH_TESTER_ALLOWLIST: "a" }, null), false);
   });
+  it("mode strict MESH_ENFORCE_ALLOWLIST=1 : vide/'*'/absent → refusé (fail closed)", () => {
+    const strict = (extra) => ({ MESH_ENFORCE_ALLOWLIST: "1", ...extra });
+    assert.equal(meshTesterAllowed(strict({}), "device-1"), false);
+    assert.equal(meshTesterAllowed(strict({ MESH_TESTER_ALLOWLIST: "" }), "device-1"), false);
+    assert.equal(meshTesterAllowed(strict({ MESH_TESTER_ALLOWLIST: "*" }), "n-importe-qui"), false);
+    assert.equal(meshTesterAllowed(strict({ MESH_TESTER_ALLOWLIST: "tester-a" }), "tester-a"), true);
+    assert.equal(meshTesterAllowed(strict({ MESH_TESTER_ALLOWLIST: "tester-a" }), "intrus"), false);
+  });
 });
 
 describe("meshFieldsForPlay — canary de bout en bout", () => {
