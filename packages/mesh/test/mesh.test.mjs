@@ -303,6 +303,39 @@ describe('MeshLoader — jamais bloquant, toujours opportuniste (§51)', () => {
     const delivered = await load(loader, CONTEXT(80));
     assert.deepEqual([...delivered], [0xde, 0xad]);
   });
+  it('repli origin : les stats du loader natif ne sont JAMAIS écrasées (loading.start pré-rempli = throw natif à chaque load)', async () => {
+    // Reproduit le bug prod bloquant : MeshLoader partageait this.stats
+    // (freshStats pose loading.start = timestamp) avec le natif, qui exige
+    // start=0 pour son unique load() → 'Loader can only be used once' à
+    // CHAQUE repli origin, lecture impossible dès que le mesh est actif.
+    let sharedViolated = false;
+    const nativeLikeOrigin = () => {
+      const stats = { aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0, loading: { start: 0, first: 0, end: 0 }, parsing: { start: 0, end: 0 }, buffering: { start: 0, end: 0 } };
+      const loader = {
+        stats, context: null,
+        load(ctx, _config, callbacks) {
+          if (loader.stats.loading.start) throw new Error('Loader can only be used once.');
+          if (loader.stats !== stats) sharedViolated = true; // le mesh ne doit pas remplacer l'objet stats du natif
+          loader.stats.loading.start = 1;
+          setTimeout(() => {
+            loader.stats.loaded = 2; loader.stats.loading.end = 2;
+            callbacks.onSuccess({ url: ctx.url, data: new Uint8Array([0xde, 0xad]).buffer, code: 200 }, loader.stats, ctx, {});
+          }, 0);
+        },
+        abort() {}, destroy() {},
+      };
+      return loader;
+    };
+    const { deps } = fakeLoaderDeps({
+      makeOrigin: nativeLikeOrigin,
+      requestSegment: async () => ({ ok: false, reason: 'timeout' }),
+    });
+    const loader = new MeshLoader(deps, {});
+    const delivered = await load(loader, CONTEXT(83));
+    assert.deepEqual([...delivered], [0xde, 0xad], 'le repli origin livre malgré le garde natif');
+    assert.equal(sharedViolated, false, 'stats natif jamais remplacées par le mesh');
+    assert.equal(loader.stats.loaded, 2, 'observabilité Player recopiée (pas partagée)');
+  });
   it('deux load() sur la MÊME instance (abort entre les deux, comme hls.js) : chaque repli origin utilise un loader natif FRAIS — jamais "Loader can only be used once"', async () => {
     // Reproduit le bug prod : le loader natif hls.js est single-use (son 2e
     // load() throw). MeshLoader réutilisait UNE seule instance origin.

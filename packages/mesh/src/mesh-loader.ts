@@ -176,7 +176,25 @@ export class MeshLoader implements Loader<FragmentLoaderContext> {
     // ses propres loads) et on détruit la précédente — jamais de réutilisation.
     if (this.origin) { try { this.origin.destroy(); } catch { /* déjà mort */ } this.origin = null; }
     const loader = this.origin = this.deps.makeOrigin(this.config);
-    loader.stats = this.stats; // l'observabilité du Player (bitrate, bwEstimate) reste cohérente
+    // JAMAIS `loader.stats = this.stats` : freshStats() pré-remplit
+    // loading.start (timestamp de construction) alors que le natif exige
+    // start=0 pour autoriser son UNIQUE load() — le partage faisait throw
+    // CHAQUE repli origin, même le premier (bug prod bloquant toute lecture
+    // dès que le mesh était actif). Le natif garde ses stats propres ; on les
+    // recopie PAR MUTATION (la référence this.stats est lue par hls via
+    // BoundLoader) à la fin, pour l'observabilité du Player.
+    const pullStats = (): void => {
+      try {
+        const dst = this.stats;
+        const src = loader.stats as LoaderStats | null | undefined;
+        if (!src) return;
+        dst.aborted = src.aborted; dst.loaded = src.loaded; dst.retry = src.retry;
+        dst.total = src.total; dst.chunkCount = src.chunkCount; dst.bwEstimate = src.bwEstimate;
+        if (src.loading) dst.loading = src.loading;
+        if (src.parsing) dst.parsing = src.parsing;
+        if (src.buffering) dst.buffering = src.buffering;
+      } catch { /* observabilité : jamais bloquante */ }
+    };
     loader.load(context, config, {
       onSuccess: (response, stats, ctx, networkDetails) => {
         if (gen !== this.gen || this.settled) return;
@@ -186,14 +204,15 @@ export class MeshLoader implements Loader<FragmentLoaderContext> {
           if (frag && typeof frag.sn === 'number') this.deps.cacheSeed(frag.cc, frag.sn, new Uint8Array(data)); // §20 : origin → cache → annonce
         }
         this.settled = true;
+        pullStats();
         onDelivered?.(); // [mesh-test] : tier 'origin' mesuré (fin du chargement réseau)
         callbacks.onSuccess(response, stats, ctx, networkDetails);
       },
       // Signatures exactes hls.js 1.6.17 : onError(error, context, networkDetails, stats) ;
       // onTimeout/onAbort(stats, context, networkDetails).
-      onError: (error, ctx, networkDetails, stats) => { if (gen === this.gen && !this.settled) { this.settled = true; callbacks.onError(error, ctx, networkDetails, stats); } },
-      onTimeout: (stats, ctx, networkDetails) => { if (gen === this.gen && !this.settled) { this.settled = true; callbacks.onTimeout(stats, ctx, networkDetails); } },
-      onAbort: (stats, ctx, networkDetails) => { if (gen === this.gen && !this.settled) { this.settled = true; callbacks.onAbort?.(stats, ctx, networkDetails); } },
+      onError: (error, ctx, networkDetails, stats) => { if (gen === this.gen && !this.settled) { this.settled = true; pullStats(); callbacks.onError(error, ctx, networkDetails, stats); } },
+      onTimeout: (stats, ctx, networkDetails) => { if (gen === this.gen && !this.settled) { this.settled = true; pullStats(); callbacks.onTimeout(stats, ctx, networkDetails); } },
+      onAbort: (stats, ctx, networkDetails) => { if (gen === this.gen && !this.settled) { this.settled = true; pullStats(); callbacks.onAbort?.(stats, ctx, networkDetails); } },
     });
   }
 
