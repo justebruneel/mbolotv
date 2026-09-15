@@ -11,4 +11,15 @@
     <string name="webview_message">Cette box ne fournit pas « Android System WebView », indispensable pour afficher le site. Installez-le depuis le Play Store (même compte que la box), puis « Réessayer ». Sans Play Store : installez l’APK \"WebView\" depuis un ordinateur ou demandez-nous sur WhatsApp.</string>
     <string name="install_webview">Installer WebView</string>
     <string name="webview_retry">Réessayer</string>
+    <!-- Phase 5 : UI native -->
+    <string name="loading">Chargement…</string>
+    <string name="empty_here">Rien à afficher pour le moment.</string>
+    <string name="need_access">Un code d\'accès actif est requis.</string>
+    <string name="open_access">Ouvrir l\'accès</string>
+    <string name="play">Lecture</string>
+    <string name="external_only">Source externe : ouvrir avec le navigateur</string>
+    <string name="cannot_play">Lecture impossible sur cet appareil.</string>
+    <string name="added_fav">Ajouté aux favoris</string>
+    <string name="removed_fav">Retiré des favoris</string>
+    <string name="fav_add">+ Favori</string>
 </resources>

@@ -5,17 +5,21 @@ plugins {
 
 android {
     namespace = "tv.mbolo.tv"
-    compileSdk = 34
+    // compileSdk 35 requis par Media3 1.8 (targetSdk reste 34, minSdk 23 inchangé).
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "tv.mbolo.tv"
         minSdk = 23
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.2.0"
 
         // Site embarqué à la compilation : modifiable ici sans toucher au code.
         buildConfigField("String", "MBOLTV_URL", "\"https://mbolotv-web.vercel.app\"")
+        // API Mbolo consommée directement par l'UI native (Phase 5 : plus de
+        // WebView pour l'interface principale). Inclut le suffixe /api.
+        buildConfigField("String", "MBOLO_API_URL", "\"https://mbolo-tv-api.mbolo-tv-video-proxy.workers.dev/api\"")
     }
 
     // Keystore injecté par la CI (secret ANDROID_KEYSTORE via env) — sans ces
@@ -50,6 +54,15 @@ android {
         buildConfig = true
     }
 
+    lint {
+        // Voir android/app/build.gradle.kts : faux positif AGP 8.5.2 + Kotlin 2.0.
+        disable += "UnsafeOptInUsageError"
+        // Faux positif Bytecode GeckoView : ses classes org.mozilla.thirdparty
+        // embarquent un exolayer obscurci qui référence POST_NOTIFICATIONS ;
+        // notre app ne déclare ni ne poste jamais de notification.
+        disable += "NotificationPermission"
+    }
+
     // Un flavor par ABI : GeckoView ne publie qu'un artefact par architecture
     // (l'artefact universel pèse 600 Mo en debug). Les box TV réelles sont
     // arm64 (récentes) ou arm32 (vieilles box AOSP, celles justement sans
@@ -73,6 +86,9 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // Media3 déclare ses factories en @UnstableApi : opt-in module assumé
+        // (PlayerController centralise tous les usages, annoté @OptIn).
+        freeCompilerArgs += "-opt-in=androidx.media3.common.util.UnstableApi"
     }
 }
 
@@ -80,6 +96,22 @@ dependencies {
     // Seule dépendance : insets/window compat (barres système) sur API 23+.
     // Pas d'AppCompat ni Material : thème plateforme + layouts XML purs.
     implementation("androidx.core:core-ktx:1.13.1")
+
+    // ---- Phase 5 : UI native (Views + RecyclerView, pas de Compose en v1) ----
+    implementation("androidx.recyclerview:recyclerview:1.3.1")
+    implementation("androidx.activity:activity:1.8.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.media3:media3-exoplayer:1.8.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
+    implementation("androidx.media3:media3-ui:1.8.0")
+    implementation("io.coil-kt.coil3:coil:3.0.4")
+
+    testImplementation("junit:junit:4.13.2")
+    // org.json réel pour les tests JVM (android.jar ne fournit que des stubs).
+    testImplementation("org.json:json:20240303")
 
     // GeckoView = moteur Firefox autonome, utilisé en secours quand la box
     // n'a pas de provider WebView ou une version trop vieille pour le site

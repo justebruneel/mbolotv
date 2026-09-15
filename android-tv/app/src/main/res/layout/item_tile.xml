@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tuile chaîne/VOD : hauteur stable, LARGEUR imposée par le parent
+     (colonne de grille en match_parent, 160dp fixe en rangée horizontale
+     via TileAdapter.fixedWidthDp). Image en match_parent : jamais de
+     dépassement/clipping sur téléphone 360dp. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_tile"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:orientation="vertical"
+    android:padding="6dp">
+
+    <ImageView
+        android:id="@+id/tile_image"
+        android:layout_width="match_parent"
+        android:layout_height="84dp"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        android:background="@color/tile_image_bg" />
+
+    <TextView
+        android:id="@+id/tile_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:textColor="@color/mbolo_text"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tile_sub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/mbolo_text_muted"
+        android:textSize="11sp" />
+</LinearLayout>

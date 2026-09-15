@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paramètres : accès (code), éco, secours web, télémétrie. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Accès"
+            android:textColor="@color/mbolo_text"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/access_state"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/mbolo_text_muted"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/access_code"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:hint="Votre code d'accès"
+            android:imeOptions="actionDone"
+            android:inputType="textCapCharacters"
+            android:singleLine="true"
+            android:textColor="@color/mbolo_text"
+            android:textColorHint="@color/mbolo_text_muted" />
+
+        <Button
+            android:id="@+id/access_submit"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_button"
+            android:focusable="true"
+            android:text="ACTIVER"
+            android:textColor="@color/mbolo_text_on_accent" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Lecture"
+            android:textColor="@color/mbolo_text"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <Switch
+            android:id="@+id/switch_eco"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:focusable="true"
+            android:text="Mode éco (480p max)"
+            android:textColor="@color/mbolo_text" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Application"
+            android:textColor="@color/mbolo_text"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_legacy_open"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_button_ghost"
+            android:focusable="true"
+            android:text="Ouvrir la version web (secours)"
+            android:textColor="@color/mbolo_text" />
+
+        <TextView
+            android:id="@+id/telemetry_view"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textColor="@color/mbolo_text_muted"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

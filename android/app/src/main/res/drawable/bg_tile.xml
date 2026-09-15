@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sélecteur de focus TV : élément focalisé = fond visible, sans animation. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true" android:drawable="@color/mbolo_accent" />
+    <item android:state_focused="true" android:drawable="@color/tile_focus" />
+    <item android:drawable="@android:color/transparent" />
+</selector>

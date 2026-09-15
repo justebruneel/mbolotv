@@ -1,149 +1,187 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Un seul écran : WebView plein écran + barre de progression + overlay
-     hors ligne + conteneur de plein écran vidéo (au-dessus de tout). -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- Shell natif : barre titre + navigation + contenu + bandeau offline.
+     Aucune WebView. Navigation D-pad (TV) et tactile (mobile). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/mbolo_bg">
+    android:background="@color/mbolo_bg"
+    android:orientation="vertical">
 
-    <WebView
-        android:id="@+id/webview"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Mbolo"
+            android:textColor="@color/mbolo_text"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/net_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:textColor="@color/mbolo_text_muted"
+            android:textSize="12sp" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <Button
+            android:id="@+id/btn_legacy"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_button_ghost"
+            android:focusable="true"
+            android:text="Secours web"
+            android:textColor="@color/mbolo_text"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/nav_row"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
+
+            <Button
+                android:id="@+id/nav_home"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Accueil"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_channels"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Chaînes"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_movies"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Films"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_series"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Séries"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_favorites"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Favoris"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_youtube"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="YouTube"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_external"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Externe"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_search"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Recherche"
+                android:textColor="@color/mbolo_text" />
+
+            <Button
+                android:id="@+id/nav_settings"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_ghost"
+                android:focusable="true"
+                android:text="Paramètres"
+                android:textColor="@color/mbolo_text" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <FrameLayout
+        android:id="@+id/content_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:id="@+id/offline_banner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#3a2a1a"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="10dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/offline_title"
+            android:textColor="@color/mbolo_text"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/offline_retry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_button"
+            android:focusable="true"
+            android:text="@string/retry"
+            android:textColor="@color/mbolo_text_on_accent" />
+    </LinearLayout>
 
     <ProgressBar
-        android:id="@+id/progress"
+        android:id="@+id/global_progress"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="3dp"
-        android:layout_gravity="top"
         android:progressTint="@color/mbolo_accent"
         android:progressBackgroundTint="@android:color/transparent"
         android:visibility="gone" />
-
-    <LinearLayout
-        android:id="@+id/offline_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@color/mbolo_bg"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:padding="32dp"
-        android:visibility="gone">
-
-        <ImageView
-            android:layout_width="72dp"
-            android:layout_height="72dp"
-            android:contentDescription="@null"
-            android:src="@drawable/ic_offline" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/offline_title"
-            android:textColor="@color/mbolo_text"
-            android:textSize="22sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:text="@string/offline_message"
-            android:textColor="@color/mbolo_text_muted"
-            android:textSize="14sp" />
-
-        <Button
-            android:id="@+id/retry_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
-            android:background="@drawable/bg_button"
-            android:focusable="true"
-            android:minWidth="200dp"
-            android:paddingStart="32dp"
-            android:paddingTop="14dp"
-            android:paddingEnd="32dp"
-            android:paddingBottom="14dp"
-            android:text="@string/retry"
-            android:textColor="@color/mbolo_text_on_accent"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <!-- Provider WebView absent (box AOSP sans Android System WebView) :
-         on explique et on oriente au lieu d'un écran à jamais blanc. -->
-    <LinearLayout
-        android:id="@+id/webview_missing_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@color/mbolo_bg"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:padding="32dp"
-        android:visibility="gone">
-
-        <ImageView
-            android:layout_width="72dp"
-            android:layout_height="72dp"
-            android:contentDescription="@null"
-            android:src="@drawable/ic_webview" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/webview_title"
-            android:textColor="@color/mbolo_text"
-            android:textSize="22sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center"
-            android:text="@string/webview_message"
-            android:textColor="@color/mbolo_text_muted"
-            android:textSize="14sp" />
-
-        <Button
-            android:id="@+id/install_webview_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
-            android:background="@drawable/bg_button"
-            android:focusable="true"
-            android:minWidth="220dp"
-            android:paddingStart="32dp"
-            android:paddingTop="14dp"
-            android:paddingEnd="32dp"
-            android:paddingBottom="14dp"
-            android:text="@string/install_webview"
-            android:textColor="@color/mbolo_text_on_accent"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/webview_retry_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/bg_button_ghost"
-            android:focusable="true"
-            android:minWidth="220dp"
-            android:paddingStart="32dp"
-            android:paddingTop="10dp"
-            android:paddingEnd="32dp"
-            android:paddingBottom="10dp"
-            android:text="@string/webview_retry"
-            android:textColor="@color/mbolo_text" />
-    </LinearLayout>
-
-    <FrameLayout
-        android:id="@+id/fullscreen_container"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@android:color/black"
-        android:visibility="gone" />
-</FrameLayout>
+</LinearLayout>

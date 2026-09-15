@@ -28,5 +28,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Player natif plein écran (Media3). -->
+        <activity
+            android:name=".ui.PlayerActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|density|locale|layoutDirection"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Fallback temporaire : ancien wrapper WebView (§51, à supprimer après validation). -->
+        <activity
+            android:name=".LegacyWebViewActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|density|locale|layoutDirection"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>

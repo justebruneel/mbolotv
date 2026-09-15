@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Player natif : PlayerView Media3 plein écran + états. Contrôles = ceux de
+     PlayerView (navigables au D-pad), maintien d'écran actif. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    android:keepScreenOn="true">
+
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/player_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <ProgressBar
+        android:id="@+id/player_loading"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="center" />
+
+    <LinearLayout
+        android:id="@+id/player_error_box"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC0f1419"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/player_error"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textColor="@color/mbolo_text"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/player_retry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_button"
+            android:focusable="true"
+            android:text="@string/retry"
+            android:textColor="@color/mbolo_text_on_accent" />
+
+        <Button
+            android:id="@+id/player_close"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_button_ghost"
+            android:focusable="true"
+            android:text="Fermer"
+            android:textColor="@color/mbolo_text" />
+    </LinearLayout>
+</FrameLayout>
