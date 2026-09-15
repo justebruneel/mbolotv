@@ -98,6 +98,35 @@ describe('telemetry — variante fast-start (benchmark §4)', () => {
   });
 });
 
+describe('telemetry — preload adaptatif (phase 4)', () => {
+  it('défauts NORMAL, transitions comptées, max observé, AGGRESSIVE compté', () => {
+    const t = createPlayerTelemetry();
+    assert.equal(t.snapshot().preloadProfile, 'NORMAL');
+    assert.equal(t.snapshot().preloadTransitions, 0);
+    t.recordPreload('PROTECT', 75, 60, 'soft-hold', { bufferAheadSec: 10, throughputMbps: 2, bitrate: 1 });
+    t.recordPreload('AGGRESSIVE', 90, 60, 'hard-hold-escalate', { bufferAheadSec: 4, throughputMbps: 0.8, bitrate: 1.2 });
+    const s = t.snapshot();
+    assert.equal(s.preloadProfile, 'AGGRESSIVE');
+    assert.equal(s.preloadTargetSec, 90);
+    assert.equal(s.preloadBaselineSec, 60);
+    assert.equal(s.preloadTransitions, 2);
+    assert.equal(s.preloadMaxObservedSec, 90);
+    assert.equal(s.preloadAggressiveCount, 1);
+    assert.equal(s.lastPreloadTransition.reason, 'hard-hold-escalate');
+    assert.equal(s.lastPreloadTransition.bufferAheadSec, 4);
+    t.reset();
+    assert.equal(t.snapshot().preloadProfile, 'NORMAL');
+    assert.equal(t.snapshot().preloadTransitions, 0);
+  });
+  it('valeurs invalides assainies, jamais de throw', () => {
+    const t = createPlayerTelemetry();
+    t.recordPreload('N-IMPORTE-QUOI', NaN, -5, null, {});
+    const s = t.snapshot();
+    assert.equal(s.preloadProfile, 'NORMAL');
+    assert.ok(Number.isFinite(s.preloadTargetSec));
+  });
+});
+
 describe('appendBounded — journal 500 max (§10)', () => {
   it('501 événements → 500 conservés, les plus récents', () => {
     const log = [];

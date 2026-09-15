@@ -13,6 +13,7 @@ import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
 import { createPlayerTelemetry, appendBounded, computeLevelCaps, MAX_PLAYER_LOG_ENTRIES, type PlayerTelemetry } from './telemetry';
 import { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction, resolveFastStartVariant, type FastStartVariant } from './fastStart';
+import { decidePreloadTarget } from './preloadController';
 import { updateMediaSession, clearMediaSession } from './mediaSession';
 import styles from './Player.module.css';
 
@@ -219,6 +220,17 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   // recharger la source (sinon la vidéo repart du début après un stall).
   const lastPositionRef = useRef(0);
   const networkCapRef = useRef(-1);
+  // État du préchargement adaptatif LIVE (phase 4) : profil/cible appliqués +
+  // rebuffers comptés depuis la dernière transition (fenêtre récente).
+  // Réinitialisés à chaque chargement (voir bloc reset) et au démontage par
+  // remontage (nouvelle instance par source).
+  const preloadProfileRef = useRef<'NORMAL' | 'PROTECT' | 'AGGRESSIVE'>('NORMAL');
+  const preloadTargetRef = useRef(0);
+  const preloadRebufferBaseRef = useRef(0);
+  // Miroir live (VOD/TS/natif exclus du preload adaptatif) — même pattern que
+  // dataSaverRef : la prop est constante par montage (remount par key sinon).
+  const liveRef = useRef(!isVod);
+  liveRef.current = !isVod;
   // Fast-start : actif + timer de libération ABR en refs pour que l'effet
   // qualité (un choix manuel hors Auto) puisse annuler la libération
   // programmée depuis l'extérieur de la closure du chargement.
@@ -368,6 +380,9 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         networkCapRef.current = caps.networkCap;
         hls.autoLevelCapping = caps.baseCap;
         logSession('network-change', `cap ${caps.baseCap} (réseau ${caps.networkCap}, éco ${caps.dataCap})`);
+        // Le changement réseau réévalue aussi la cible de préchargement
+        // (même garde LIVE HLS : pas d'effet en VOD/TS/natif).
+        try { evaluatePreload(); } catch { /* ignore */ }
       } catch { /* ignore */ }
     };
     const onOffline = (): void => {
@@ -385,6 +400,9 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         const hls = hlsRef.current;
         offlineStoppedRef.current = false;
         try { hls?.startLoad(-1); } catch { /* ignore */ }
+        // Retour réseau = conditions potentiellement nouvelles : réévaluer la
+        // cible (le contrôleur redescendra si tout va bien).
+        try { evaluatePreload(); } catch { /* ignore */ }
       }
     };
     window.addEventListener('offline', onOffline);
@@ -399,6 +417,58 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   }, []);
   const hideDelay = isMobile ? MOBILE_CONTROLS_HIDE_DELAY_MS : CONTROLS_HIDE_DELAY_MS;
   const showControls = useCallback(() => { setControlsVisible(true); if (hideTimerRef.current) clearTimeout(hideTimerRef.current); hideTimerRef.current = setTimeout(() => setControlsVisible(false), hideDelay); }, [hideDelay]);
+  // Préchargement adaptatif LIVE (phase 4) : évalue et applique la cible de
+  // buffer hls SANS toucher au chargement (hls.js reste l'unique propriétaire :
+  // pas de 2e loader, pas de fetch, pas de timer — appelé sur événements :
+  // FRAG_BUFFERED, rebuffer, connection.change, online). LIVE HLS uniquement
+  // (garde liveRef + hlsRef : VOD/TS/natif exclus), inactif en fast-start.
+  // No-throw par construction : une erreur ne change strictement rien.
+  const evaluatePreload = useCallback((): void => {
+    try {
+      const hls = hlsRef.current;
+      if (!liveRef.current || !hls) return;
+      if (fastStartPhaseRef.current !== 0) return; // démarrage prioritaire
+      const baseline = networkProfile().buffer;
+      if (!(baseline > 0)) return;
+      const el = videoRef.current;
+      const buf = el && el.buffered.length > 0
+        ? Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime) : 0;
+      const snap = telemetryRef.current?.snapshot() ?? null;
+      const tp = snap?.throughputMbps ?? null;
+      const lvl = hls.currentLevel >= 0 ? hls.levels?.[hls.currentLevel] : null;
+      const br = lvl?.bitrate ? lvl.bitrate / 1_000_000 : null;
+      const nav = typeof navigator !== 'undefined' ? navigator as Navigator & {
+        connection?: { effectiveType?: string; saveData?: boolean };
+        deviceMemory?: number; hardwareConcurrency?: number;
+      } : null;
+      const conn = nav?.connection;
+      const decision = decidePreloadTarget({
+        baselineSec: baseline,
+        currentProfile: preloadProfileRef.current,
+        currentTargetSec: preloadTargetRef.current > 0 ? preloadTargetRef.current : baseline,
+        bufferAheadSec: buf,
+        throughputMbps: tp,
+        currentBitrateMbps: br,
+        recentRebufferCount: (snap?.rebufferCount ?? 0) - preloadRebufferBaseRef.current,
+        networkType: conn?.effectiveType ?? null,
+        deviceMemoryGB: typeof nav?.deviceMemory === 'number' ? nav.deviceMemory : null,
+        hardwareConcurrency: typeof nav?.hardwareConcurrency === 'number' ? nav.hardwareConcurrency : null,
+        saveData: Boolean(conn?.saveData) || dataSaverRef.current,
+        visible: typeof document === 'undefined' ? true : document.visibilityState === 'visible',
+        online: typeof navigator === 'undefined' ? true : navigator.onLine !== false,
+        fastStart: false, // déjà gardé ci-dessus
+        live: true, // déjà gardé ci-dessus
+      });
+      if (!decision.changed) return;
+      try { hls.config.maxBufferLength = decision.targetBufferSec; } catch { /* ignore */ }
+      preloadProfileRef.current = decision.profile;
+      preloadTargetRef.current = decision.targetBufferSec;
+      preloadRebufferBaseRef.current = snap?.rebufferCount ?? 0;
+      telemetryRef.current?.recordPreload(decision.profile, decision.targetBufferSec, baseline, decision.reason, {
+        bufferAheadSec: buf, throughputMbps: tp, bitrate: br,
+      });
+    } catch { /* évaluation : jamais bloquante */ }
+  }, []);
   useEffect(() => {
     if (status !== 'ready') {
       setControlsVisible(true);
@@ -566,6 +636,11 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     logSession('session-start', urls[urlIndex] ? `source ${urlIndex + 1}/${urls.length}` : 'aucune source');
     setStatus('loading'); setBuffering(false); setLevels([]); setActiveLevel(-1); setAutoplayBlocked(false); setMutedAutoplay(false); setIsPaused(true); setRetrying(false); setLiveProgress(0); setBandwidth(null); setErrorInfo({ type: null, httpCode: null }); errorActiveRef.current = false;
     telemetryRef.current?.reset();
+    // Préchargement adaptatif : état neutre à chaque chargement (le profil
+    // sera réévalué sur les événements suivants, jamais hérité d'un flux).
+    preloadProfileRef.current = 'NORMAL';
+    preloadTargetRef.current = 0;
+    preloadRebufferBaseRef.current = 0;
     try { const net = getNetworkInfo(); telemetryRef.current?.setNetworkType(net.effectiveType); } catch { /* ignore */ }
     setStats({ startupMs: null, rebufferCount: 0, bufferAhead: 0, bitrate: null, latency: null });
     const clearTimers = (): void => { if (deadlineTimer) clearTimeout(deadlineTimer); if (retryTimer) clearTimeout(retryTimer); if (warmupTimer) clearTimeout(warmupTimer); if (startupPoll) clearInterval(startupPoll); if (fastStartTimerRef.current) clearTimeout(fastStartTimerRef.current); deadlineTimer = retryTimer = warmupTimer = null; startupPoll = null; fastStartTimerRef.current = null; };
@@ -1046,6 +1121,9 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         } catch { /* mesure : jamais bloquante */ }
         updateStats(); if (!playbackInitiated && bufferAhead() >= startupBufferTarget()) attemptPlayback(); else resumeIfBuffered();
         telemetryRef.current?.recordFirstSegment(performance.now() - startupAtRef.current);
+        // Préchargement adaptatif : réévaluation périodique naturelle (1× par
+        // segment, jamais de polling) — hls.js remplira jusqu'à la cible.
+        try { evaluatePreload(); } catch { /* ignore */ }
       });
     }
     const onPlaying = (): void => {
@@ -1067,6 +1145,9 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       if (!started) return;
       rebufferCountRef.current += 1;
       telemetryRef.current?.rebufferStart();
+      // Rebuffer = signal fort pour le préchargement adaptatif (escalade
+      // PROTECT/AGGRESSIVE) — évalué ici, appliqué sans toucher au chargement.
+      try { if (!isVod && hlsRef.current) evaluatePreload(); } catch { /* ignore */ }
       logSession('rebuffer', `#${rebufferCountRef.current} buffer ${bufferAhead().toFixed(1)} s`);
       // Rebuffer pendant la fenêtre fast-start : la libération ABR est
       // annulée — elle ne repartra qu'après une nouvelle période de stabilité

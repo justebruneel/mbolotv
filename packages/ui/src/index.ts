@@ -19,5 +19,7 @@ export { createPlayerTelemetry, bufferLevel, createNetworkEstimate } from './Pla
 export type { BufferLevel, NetworkEstimate, PlayerTelemetry, PlayerTelemetrySnapshot, MeshTelemetrySample, QualitySwitchSample } from './Player/telemetry';
 export { buildMediaMetadata, updateMediaSession, clearMediaSession } from './Player/mediaSession';
 export { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction, resolveFastStartVariant } from './Player/fastStart';
+export { decidePreloadTarget, PRELOAD_HARD_MAX_SEC, PRELOAD_PROTECT_STEP_SEC, PRELOAD_AGGRESSIVE_STEP_SEC, PRELOAD_TIGHT_RATIO } from './Player/preloadController';
+export type { PreloadProfile, PreloadInput, PreloadDecision } from './Player/preloadController';
 export type { FastStartLevel, ReleaseInput, ReleaseDecision, FastStartVariant } from './Player/fastStart';
 export type { MediaSessionInput, BuiltMediaMetadata, MediaSessionHandlers } from './Player/mediaSession';

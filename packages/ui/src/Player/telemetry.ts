@@ -159,6 +159,19 @@ export interface PlayerTelemetrySnapshot {
    *  'progressive' (défaut) ou 'baseline' (clé locale de test uniquement).
    *  Non personnel, indispensable pour comparer les comportements. */
   fastStartVariant: 'baseline' | 'progressive' | null;
+  /** Préchargement adaptatif LIVE (phase 4) : profil et cible appliqués,
+   *  transitions, max observé, passages en AGGRESSIVE — jamais d'URL/token. */
+  preloadProfile: 'NORMAL' | 'PROTECT' | 'AGGRESSIVE';
+  preloadTargetSec: number;
+  preloadBaselineSec: number;
+  preloadReason: string | null;
+  preloadTransitions: number;
+  preloadMaxObservedSec: number;
+  preloadAggressiveCount: number;
+  lastPreloadTransition: {
+    profile: string; targetSec: number; reason: string | null;
+    bufferAheadSec: number | null; throughputMbps: number | null; bitrate: number | null;
+  } | null;
   latencySec: number | null;
   sourceChanges: number;
   errors: Array<{ type: string; count: number }>;
@@ -190,6 +203,11 @@ export interface PlayerTelemetry {
   setNetworkType(t: string | null): void;
   attachMeshReader(reader: (() => MeshTelemetrySample | null) | null): void;
   setFastStartVariant(variant: 'baseline' | 'progressive' | null): void;
+  /** Transition de preload appliquée (appelée par le Player UNIQUEMENT quand
+   *  la décision change — pas à chaque évaluation). No-throw. */
+  recordPreload(profile: 'NORMAL' | 'PROTECT' | 'AGGRESSIVE', targetSec: number, baselineSec: number, reason: string, ctx?: {
+    bufferAheadSec?: number | null; throughputMbps?: number | null; bitrate?: number | null;
+  }): void;
   snapshot(): PlayerTelemetrySnapshot;
   reset(): void;
 }
@@ -221,6 +239,14 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
   const net = createNetworkEstimate();
   let meshReader: (() => MeshTelemetrySample | null) | null = null;
   let fastStartVariant: 'baseline' | 'progressive' | null = null;
+  let preloadProfile: 'NORMAL' | 'PROTECT' | 'AGGRESSIVE' = 'NORMAL';
+  let preloadTargetSec = 0;
+  let preloadBaselineSec = 0;
+  let preloadReason: string | null = null;
+  let preloadTransitions = 0;
+  let preloadMaxObservedSec = 0;
+  let preloadAggressiveCount = 0;
+  let lastPreloadTransition: PlayerTelemetrySnapshot['lastPreloadTransition'] = null;
   const safeNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
 
   return {
@@ -329,6 +355,25 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
         else if (variant === 'baseline' || variant === 'progressive') fastStartVariant = variant;
       } catch { /* no-op */ }
     },
+    recordPreload(profile, targetSec, baselineSec, reason, ctx) {
+      try {
+        const p = profile === 'PROTECT' || profile === 'AGGRESSIVE' ? profile : 'NORMAL';
+        const t = typeof targetSec === 'number' && Number.isFinite(targetSec) && targetSec >= 0 ? targetSec : 0;
+        const b = typeof baselineSec === 'number' && Number.isFinite(baselineSec) && baselineSec >= 0 ? baselineSec : 0;
+        preloadProfile = p;
+        preloadTargetSec = t;
+        preloadBaselineSec = b;
+        preloadReason = String(reason ?? '').slice(0, 48) || null;
+        preloadTransitions += 1;
+        if (t > preloadMaxObservedSec) preloadMaxObservedSec = t;
+        if (p === 'AGGRESSIVE') preloadAggressiveCount += 1;
+        const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+        lastPreloadTransition = {
+          profile: p, targetSec: t, reason: preloadReason,
+          bufferAheadSec: num(ctx?.bufferAheadSec), throughputMbps: num(ctx?.throughputMbps), bitrate: num(ctx?.bitrate),
+        };
+      } catch { /* no-op */ }
+    },
     snapshot() {
       try {
         let mesh: PlayerTelemetrySnapshot['mesh'] = null;
@@ -351,6 +396,9 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
           throughputMbps: net.throughputMbps(), bitrate, quality, qualityChanges,
           upSwitchCount, downSwitchCount, firstSwitch, lastSwitch, timeToFirstUpSwitchMs,
           fastStartVariant,
+          preloadProfile, preloadTargetSec, preloadBaselineSec, preloadReason,
+          preloadTransitions, preloadMaxObservedSec, preloadAggressiveCount,
+          lastPreloadTransition,
           latencySec, sourceChanges,
           errors: [...errors.entries()].map(([type, count]) => ({ type, count })),
           fallbacks, networkType, mesh,
@@ -364,6 +412,9 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
           qualityChanges: 0, upSwitchCount: 0, downSwitchCount: 0,
           firstSwitch: null, lastSwitch: null, timeToFirstUpSwitchMs: null,
           fastStartVariant: null,
+          preloadProfile: 'NORMAL', preloadTargetSec: 0, preloadBaselineSec: 0,
+          preloadReason: null, preloadTransitions: 0, preloadMaxObservedSec: 0,
+          preloadAggressiveCount: 0, lastPreloadTransition: null,
           latencySec: null, sourceChanges: 0, errors: [],
           fallbacks: 0, networkType: null, mesh: null,
         };
@@ -379,6 +430,9 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
         upSwitchCount = 0; downSwitchCount = 0; lastHeightPx = null;
         firstSwitch = null; lastSwitch = null; timeToFirstUpSwitchMs = null;
         fastStartVariant = null;
+        preloadProfile = 'NORMAL'; preloadTargetSec = 0; preloadBaselineSec = 0;
+        preloadReason = null; preloadTransitions = 0; preloadMaxObservedSec = 0;
+        preloadAggressiveCount = 0; lastPreloadTransition = null;
         latencySec = null;
         sourceChanges = 0; fallbacks = 0; networkType = null;
         errors.clear(); net.reset();
