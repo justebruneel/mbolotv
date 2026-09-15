@@ -121,6 +121,16 @@ export interface MeshTelemetrySample {
   originBytes: number;
 }
 
+export interface QualitySwitchSample {
+  label: string;
+  heightPx: number | null;
+  bitrate: number | null;
+  bufferAheadSec: number | null;
+  throughputMbps: number | null;
+  /** Millisecondes depuis le démarrage (fourni par l'appelant). */
+  atMs: number | null;
+}
+
 export interface PlayerTelemetrySnapshot {
   startupMs: number | null;
   startupSuccess: boolean | null;
@@ -140,6 +150,11 @@ export interface PlayerTelemetrySnapshot {
    *  simple) — permet de détecter les oscillations ABR sans toucher l'ABR. */
   upSwitchCount: number;
   downSwitchCount: number;
+  /** Diagnostic ABR (mesures brutes au moment des switches, jamais de
+   *  décision) : premier et dernier switch + délai du premier up-switch. */
+  firstSwitch: QualitySwitchSample | null;
+  lastSwitch: QualitySwitchSample | null;
+  timeToFirstUpSwitchMs: number | null;
   latencySec: number | null;
   sourceChanges: number;
   errors: Array<{ type: string; count: number }>;
@@ -160,7 +175,10 @@ export interface PlayerTelemetry {
   rebufferEnd(): void;
   observeTransfer(bytes: number, durationMs: number): void;
   setBitrate(bps: number | null): void;
-  recordQuality(label: string, heightPx?: number | null): void;
+  recordQuality(label: string, heightPx?: number | null, ctx?: {
+    bitrate?: number | null; bufferAheadSec?: number | null;
+    throughputMbps?: number | null; atMs?: number | null;
+  }): void;
   setLatency(sec: number | null): void;
   recordSourceChange(): void;
   recordError(type: string | null): void;
@@ -184,6 +202,9 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
   let upSwitchCount = 0;
   let downSwitchCount = 0;
   let lastHeightPx: number | null = null;
+  let firstSwitch: QualitySwitchSample | null = null;
+  let lastSwitch: QualitySwitchSample | null = null;
+  let timeToFirstUpSwitchMs: number | null = null;
   let manifestMs: number | null = null;
   let firstSegmentMs: number | null = null;
   let firstFrameMs: number | null = null;
@@ -237,7 +258,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
     setBitrate(bps) {
       try { bitrate = safeNum(bps); } catch { /* no-op */ }
     },
-    recordQuality(label, heightPx) {
+    recordQuality(label, heightPx, ctx) {
       try {
         const next = String(label ?? '').slice(0, 32) || null;
         if (next !== quality) {
@@ -247,10 +268,24 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
             // différentes ; sinon simple changement (jamais d'invention).
             const prev = lastHeightPx;
             const cur = typeof heightPx === 'number' && Number.isFinite(heightPx) ? heightPx : null;
+            const sample: QualitySwitchSample = {
+              label: next ?? 'unknown',
+              heightPx: cur,
+              bitrate: ctx?.bitrate ?? null,
+              bufferAheadSec: ctx?.bufferAheadSec ?? null,
+              throughputMbps: ctx?.throughputMbps ?? null,
+              atMs: ctx?.atMs ?? null,
+            };
             if (prev != null && cur != null && cur !== prev) {
-              if (cur > prev) upSwitchCount += 1;
-              else downSwitchCount += 1;
+              if (cur > prev) {
+                upSwitchCount += 1;
+                if (timeToFirstUpSwitchMs == null && typeof sample.atMs === 'number') {
+                  timeToFirstUpSwitchMs = sample.atMs;
+                }
+              } else downSwitchCount += 1;
             }
+            if (firstSwitch == null) firstSwitch = sample;
+            lastSwitch = sample;
           }
           quality = next;
           if (typeof heightPx === 'number' && Number.isFinite(heightPx)) lastHeightPx = heightPx;
@@ -300,7 +335,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
           startupMs, startupSuccess, manifestMs, firstSegmentMs, firstFrameMs,
           bufferAheadSec, rebufferCount, rebufferDurationMs,
           throughputMbps: net.throughputMbps(), bitrate, quality, qualityChanges,
-          upSwitchCount, downSwitchCount,
+          upSwitchCount, downSwitchCount, firstSwitch, lastSwitch, timeToFirstUpSwitchMs,
           latencySec, sourceChanges,
           errors: [...errors.entries()].map(([type, count]) => ({ type, count })),
           fallbacks, networkType, mesh,
@@ -312,6 +347,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
           bufferAheadSec: 0, rebufferCount: 0,
           rebufferDurationMs: 0, throughputMbps: null, bitrate: null, quality: null,
           qualityChanges: 0, upSwitchCount: 0, downSwitchCount: 0,
+          firstSwitch: null, lastSwitch: null, timeToFirstUpSwitchMs: null,
           latencySec: null, sourceChanges: 0, errors: [],
           fallbacks: 0, networkType: null, mesh: null,
         };
@@ -325,6 +361,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
         rebufferCount = 0; rebufferDurationMs = 0; rebufferSince = null;
         bitrate = null; quality = null; qualityChanges = 0;
         upSwitchCount = 0; downSwitchCount = 0; lastHeightPx = null;
+        firstSwitch = null; lastSwitch = null; timeToFirstUpSwitchMs = null;
         latencySec = null;
         sourceChanges = 0; fallbacks = 0; networkType = null;
         errors.clear(); net.reset();

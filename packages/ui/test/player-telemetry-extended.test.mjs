@@ -50,6 +50,36 @@ describe('telemetry — first-frame / manifest / segment (mesures ou null)', () 
   });
 });
 
+describe('telemetry — contexte des switches (diagnostic ABR)', () => {
+  it('first/last switch + délai du premier up-switch', () => {
+    const t = createPlayerTelemetry();
+    assert.equal(t.snapshot().firstSwitch, null);
+    assert.equal(t.snapshot().timeToFirstUpSwitchMs, null);
+    t.recordQuality('480p', 480, { bitrate: 800000, bufferAheadSec: 3, throughputMbps: 2, atMs: 8000 });
+    t.recordQuality('720p', 720, { bitrate: 2500000, bufferAheadSec: 12, throughputMbps: 6, atMs: 20000 });
+    t.recordQuality('480p', 480, { bitrate: 800000, bufferAheadSec: 4, throughputMbps: 3, atMs: 40000 });
+    const s = t.snapshot();
+    assert.equal(s.firstSwitch.label, '720p');
+    assert.equal(s.firstSwitch.bufferAheadSec, 12);
+    assert.equal(s.firstSwitch.throughputMbps, 6);
+    assert.equal(s.lastSwitch.label, '480p');
+    assert.equal(s.lastSwitch.atMs, 40000);
+    assert.equal(s.timeToFirstUpSwitchMs, 20000);
+    t.reset();
+    assert.equal(t.snapshot().firstSwitch, null);
+    assert.equal(t.snapshot().timeToFirstUpSwitchMs, null);
+  });
+  it('sans contexte : échantillons partiels mais jamais d’exception', () => {
+    const t = createPlayerTelemetry();
+    t.recordQuality('480p', 480);
+    t.recordQuality('720p', 720);
+    const s = t.snapshot();
+    assert.equal(s.firstSwitch.label, '720p');
+    assert.equal(s.firstSwitch.bufferAheadSec, null);
+    assert.equal(s.timeToFirstUpSwitchMs, null); // pas de atMs → pas de délai
+  });
+});
+
 describe('appendBounded — journal 500 max (§10)', () => {
   it('501 événements → 500 conservés, les plus récents', () => {
     const log = [];

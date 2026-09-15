@@ -12,6 +12,7 @@ import type { MeshSession } from '@mbolo/mesh';
 import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
 import { createPlayerTelemetry, appendBounded, computeLevelCaps, MAX_PLAYER_LOG_ENTRIES, type PlayerTelemetry } from './telemetry';
+import { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction } from './fastStart';
 import { updateMediaSession, clearMediaSession } from './mediaSession';
 import styles from './Player.module.css';
 
@@ -110,6 +111,15 @@ function formatDuration(ms: number | null): string { return ms === null ? '…' 
 function formatBuffer(seconds: number): string { return `${Math.max(0, seconds).toFixed(1)} s`; }
 function formatTime(seconds: number): string { const s = Math.max(0, Math.floor(seconds)); const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = s % 60; return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`; }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
+/** Niveaux hls.js normalisés (index + hauteur) pour les décisions pures
+ *  (fast-start, caps) — même mapping que MANIFEST_PARSED, sans état. */
+function hlsLevels(hls: Hls): Array<{ index: number; height: number }> {
+  try {
+    return (hls.levels ?? []).map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate) }));
+  } catch {
+    return [];
+  }
+}
 /** Index du niveau le plus haut ≤ hauteur demandée (le plus bas si la demande est sous le min) ; -1 = Auto. */
 function resolveHeightIndex(levels: QualityLevel[], height: number): number {
   if (height < 0 || levels.length === 0) return -1;
@@ -212,7 +222,9 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   // Fast-start : actif + timer de libération ABR en refs pour que l'effet
   // qualité (un choix manuel hors Auto) puisse annuler la libération
   // programmée depuis l'extérieur de la closure du chargement.
-  const fastStartActiveRef = useRef(false);
+  // Phase fast-start (0=inactif/ABR libre, 1=niveau bas, 2=palier
+  // intermédiaire) — remplace l'ancien booléen, même sémantique ≠0=actif.
+  const fastStartPhaseRef = useRef<0 | 1 | 2>(0);
   const fastStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startupAtRef = useRef(0);
   const rebufferCountRef = useRef(0);
@@ -343,7 +355,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     const onConnectionChange = (): void => {
       const hls = hlsRef.current;
       if (!hls || !Array.isArray(hls.levels) || hls.levels.length === 0) return;
-      if (fastStartActiveRef.current) return; // fenêtre fast-start (6 s) : ne pas écraser le warmup cap en vol
+      if (fastStartPhaseRef.current !== 0) return; // fenêtre fast-start (6 s) : ne pas écraser le warmup cap en vol
       try {
         const profile = networkProfile(); // relit navigator.connection FRAIS
         const discovered = hls.levels.map((level, index) => ({ index, height: level.height || heightFromBitrate(level.bitrate), bitrate: level.bitrate }));
@@ -360,11 +372,15 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       try { hls.stopLoad(); offlineStoppedRef.current = true; } catch { /* ignore */ }
     };
     const onOnline = (): void => {
-      if (errorActiveRef.current) { try { retryRef.current?.(); } catch { /* ignore */ } return; }
-      const hls = hlsRef.current;
-      if (hls && offlineStoppedRef.current) {
+      // Table de décision pure et testée (aucun destroy, aucune perte de
+      // position) : erreur → retry existant ; pause douce → startLoad ;
+      // sinon on laisse hls.js tranquille.
+      const action = resolveOnlineAction(errorActiveRef.current, offlineStoppedRef.current);
+      if (action === 'retry') { try { retryRef.current?.(); } catch { /* ignore */ } return; }
+      if (action === 'startLoad') {
+        const hls = hlsRef.current;
         offlineStoppedRef.current = false;
-        try { hls.startLoad(-1); } catch { /* ignore */ }
+        try { hls?.startLoad(-1); } catch { /* ignore */ }
       }
     };
     window.addEventListener('offline', onOffline);
@@ -589,29 +605,68 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     const bufferAhead = (): number => el.buffered.length === 0 ? 0 : Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
     const updateStats = (latency: number | null = null): void => { const ahead = bufferAhead(); setStats((c) => ({ ...c, bufferAhead: ahead, latency })); telemetryRef.current?.setBufferAhead(ahead); telemetryRef.current?.setLatency(latency); };
     const markReady = (): void => { if (cancelled) return; started = true; retries = 0; networkRetries = 0; levelRetries = 0; setStatus('ready'); setBuffering(false); setRetrying(false); const ms = performance.now() - startupAtRef.current; setStats((c) => ({ ...c, startupMs: c.startupMs ?? ms, rebufferCount: rebufferCountRef.current, bufferAhead: bufferAhead() })); telemetryRef.current?.recordStartup(ms, true); if (deadlineTimer) clearTimeout(deadlineTimer); scheduleFastStartRelease(); };
-    // Fast-start : une fois la lecture lancée, on laisse FAST_START_STABLE_MS
-    // de lecture SANS rebuffer avant de rendre la main à l'ABR (currentLevel
-    // = -1). Un rebuffer pendant la fenêtre (fastStartRebuffered, posé dans
-    // onWaiting) relance la fenêtre au lieu de libérer — l'ABR ne reprend que
-    // sur une lecture réellement stable. Les fragments basse qualité
-    // téléchargés pendant la fenêtre alimentent l'EWMA : à la libération,
-    // l'ABR monte en qualité selon la bande passante réellement mesurée (le
-    // warmup cap anti-overshoot, inchangé, borne ses premières montées).
+    // Fast-start en 2 phases (phase 3) : niveau bas (phase 1) → palier
+    // intermédiaire calculé sur les niveaux RÉELS (phase 2) → ABR libre.
+    // Un rebuffer en fenêtre fait REDESCENDRE au niveau bas + nouvelle
+    // fenêtre (jamais de libération dessus). À l'échéance sans rebuffer, on
+    // ne libère que si le buffer est CONFORTABLE (garde bufferLevel sur la
+    // cible de démarrage, seuils existants) — sinon la fenêtre est prolongée
+    // (rester au niveau bas est toujours plus sûr qu'une montée aveugle).
+    // Sans palier utile (mono-variante, cap contraint) : libération directe,
+    // comportement baseline strict. Choix manuel : pas de fast-start du tout.
     const scheduleFastStartRelease = (): void => {
-      if (cancelled || !fastStartActiveRef.current) return;
+      if (cancelled || fastStartPhaseRef.current === 0) return;
       if (fastStartTimerRef.current) clearTimeout(fastStartTimerRef.current);
       fastStartTimerRef.current = setTimeout(() => {
         fastStartTimerRef.current = null;
-        if (cancelled || !fastStartActiveRef.current) return;
+        if (cancelled || fastStartPhaseRef.current === 0) return;
+        const hls = hlsRef.current;
+        if (!hls) return;
+        const dropToLow = (): void => {
+          fastStartPhaseRef.current = 1;
+          try {
+            const low = lowestLevelIndex(hlsLevels(hls));
+            if (low >= 0) hls.currentLevel = low;
+          } catch { /* ignore */ }
+        };
         if (fastStartRebuffered) {
           fastStartRebuffered = false;
-          logSession('fast-start', 'rebuffer pendant la fenêtre — relance de la stabilité');
+          dropToLow();
+          logSession('fast-start', 'rebuffer pendant la fenêtre — retour au niveau bas');
           scheduleFastStartRelease();
           return;
         }
-        const hls = hlsRef.current;
-        if (!hls) return;
-        fastStartActiveRef.current = false;
+        // Garde buffer : pas de libération sans matelas confortable. Cible =
+        // la cible de démarrage fast-start (1 segment, bornée à 4 s — même
+        // formule que startupBufferTarget, inlined car cette fonction vit hors
+        // de loadCurrent) ; confortable = 2× (convention prefetch).
+        const seg = fragDurationRef.current;
+        const startupTarget = Math.max(1, Math.min(seg || 2, FAST_START_MAX_BUFFER_SECONDS));
+        const decision = shouldReleaseFastStart({
+          rebuffered: false,
+          bufferAheadSec: bufferAhead(),
+          startupTargetSec: startupTarget,
+        });
+        if (!decision.release) {
+          logSession('fast-start', `fenêtre prolongée (${decision.reason}, buffer ${bufferAhead().toFixed(1)} s)`);
+          scheduleFastStartRelease();
+          return;
+        }
+        if (fastStartPhaseRef.current === 1) {
+          try {
+            const lvls = hlsLevels(hls);
+            const cap = typeof hls.autoLevelCapping === 'number' ? hls.autoLevelCapping : -1;
+            const mid = midLevelIndex(lvls, lowestLevelIndex(lvls), cap);
+            if (mid != null && mid >= 0) {
+              fastStartPhaseRef.current = 2;
+              hls.currentLevel = mid;
+              logSession('fast-start', `palier intermédiaire ${mid} avant ABR libre`);
+              scheduleFastStartRelease();
+              return;
+            }
+          } catch { /* ignore → libération classique ci-dessous */ }
+        }
+        fastStartPhaseRef.current = 0;
         hls.currentLevel = -1;
         logSession('fast-start', `ABR libéré après ${FAST_START_STABLE_MS / 1000} s de lecture stable`);
       }, FAST_START_STABLE_MS);
@@ -641,7 +696,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       clearTimers(); destroy(); setStatus('loading'); setRetrying(false); setLevels([]); setActiveLevel(-1); startupAtRef.current = performance.now();
       fragDurationRef.current = 0;
       // Fast-start repart de zéro à chaque chargement (source suivante, retry…).
-      fastStartActiveRef.current = false;
+      fastStartPhaseRef.current = 0;
       fastStartRebuffered = false;
       // Si le navigateur refuse la lecture audible (politique autoplay), on
       // retente en muet pour ne jamais rester bloqué sur le spinner ; l'UI
@@ -784,7 +839,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       // Distinct du buffer cible de lecture (maxBufferLength 40-60 s) qui ne
       // s'applique qu'une fois la lecture lancée.
       const startupBufferTarget = (): number => {
-        if (fastStartActiveRef.current) {
+        if (fastStartPhaseRef.current !== 0) {
           const seg = fragDurationRef.current;
           return Math.max(1, Math.min(seg || 2, FAST_START_MAX_BUFFER_SECONDS));
         }
@@ -939,7 +994,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         // rien de plus bas où démarrer (voir la note FAST START en tête de
         // fichier) — seul le buffer de démarrage réduit s'applique.
         if (preferredHeight === -1 && discovered.length > 0) {
-          fastStartActiveRef.current = true;
+          fastStartPhaseRef.current = 1;
           fastStartRebuffered = false;
           hls.currentLevel = discovered.reduce((lowest, l) => (l.height < lowest.height ? l : lowest), discovered[0]).index;
         } else {
@@ -950,7 +1005,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         // purement métadonnée ; sans session mesh, rien ne se passe.
         if (meshRef.current) { const idx = hls.currentLevel >= 0 ? hls.currentLevel : 0; try { meshRef.current.levelChanged(hls.levels[idx]?.attrs); } catch { /* ignore */ } }
       });
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); const height = hls.levels[data.level]?.height ?? null; setStats((c) => ({ ...c, bitrate: hls.levels[data.level]?.bitrate ?? null })); telemetryRef.current?.setBitrate(hls.levels[data.level]?.bitrate ?? null); telemetryRef.current?.recordQuality(height != null ? `${height}p` : 'auto', height); if (meshRef.current) { try { meshRef.current.levelChanged(hls.levels[data.level]?.attrs); } catch { /* ignore */ } } } });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => { if (!cancelled) { setActiveLevel(data.level); const level = hls.levels[data.level]; const height = level?.height ?? null; setStats((c) => ({ ...c, bitrate: level?.bitrate ?? null })); telemetryRef.current?.setBitrate(level?.bitrate ?? null); try { telemetryRef.current?.recordQuality(height != null ? `${height}p` : 'auto', height, { bitrate: level?.bitrate ?? null, bufferAheadSec: bufferAhead(), throughputMbps: telemetryRef.current?.snapshot().throughputMbps ?? null, atMs: performance.now() - startupAtRef.current }); } catch { /* mesure : jamais bloquante */ } if (meshRef.current) { try { meshRef.current.levelChanged(level?.attrs); } catch { /* ignore */ } } } });
       hls.on(Hls.Events.LEVEL_UPDATED, (_event, data) => { fragDurationRef.current = targetDurationOf(data.details) || fragDurationRef.current; const edge = data.details.live ? data.details.edge : null; updateStats(edge === null ? null : Math.max(0, edge - el.currentTime)); });
       hls.on(Hls.Events.FRAG_BUFFERED, (_event, data) => {
         networkRetries = 0; setBandwidth(hls.bandwidthEstimate); telemetryRef.current?.setBitrate(hls.bandwidthEstimate ?? null);
@@ -991,7 +1046,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       // Rebuffer pendant la fenêtre fast-start : la libération ABR est
       // annulée — elle ne repartra qu'après une nouvelle période de stabilité
       // (le prochain 'playing' reprogramme la fenêtre via markReady).
-      if (fastStartActiveRef.current) {
+      if (fastStartPhaseRef.current !== 0) {
         fastStartRebuffered = true;
         if (fastStartTimerRef.current) { clearTimeout(fastStartTimerRef.current); fastStartTimerRef.current = null; }
       }
@@ -1063,8 +1118,8 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     // niveau bas et annulerait le démarrage rapide).
     if (resolvedIndex !== -1) {
       if (fastStartTimerRef.current) { clearTimeout(fastStartTimerRef.current); fastStartTimerRef.current = null; }
-      fastStartActiveRef.current = false;
-    } else if (fastStartActiveRef.current) return;
+      fastStartPhaseRef.current = 0;
+    } else if (fastStartPhaseRef.current !== 0) return;
     hls.currentLevel = resolvedIndex; }, [dataSaver, resolvedIndex, levels]);
   useEffect(() => { const video = videoRef.current; if (!video || initialVolume === undefined) return; video.volume = initialVolume; setVolume(initialVolume); const onVol = (): void => { setVolume(video.volume); onVolumeChange?.(video.volume); }; video.addEventListener('volumechange', onVol); return () => video.removeEventListener('volumechange', onVol); }, [initialVolume, onVolumeChange]);
 
