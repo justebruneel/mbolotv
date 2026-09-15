@@ -426,7 +426,10 @@ export default function WatchPage() {
                         </div>
                         <p className="mt-1 truncate text-xs font-bold text-foreground">{prog.title}</p>
                         {enriched.genres && enriched.genres.length > 0 && <p className="truncate text-[11px] text-muted">{enriched.genres.slice(0, 2).join(' · ')}</p>}
-                        <p className="text-[11px] text-muted">
+                        {/* Heures locales : le serveur rend en UTC, le navigateur dans
+                            son fuseau → suppressHydrationWarning (pattern React
+                            officiel pour les timestamps), le client gagne. */}
+                        <p className="text-[11px] text-muted" suppressHydrationWarning>
                           {time(prog.startsAt)} – {time(prog.endsAt)}
                         </p>
                         {prog.description && <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">{prog.description}</p>}

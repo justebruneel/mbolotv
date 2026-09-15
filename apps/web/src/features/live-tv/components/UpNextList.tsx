@@ -115,7 +115,7 @@ function UpNextCard({ channel, context }: { channel: Channel; context?: WatchCon
       <div className="min-w-0 flex-1 py-0.5">
         <p className="truncate text-[13px] font-bold text-foreground/90">{channel.name}</p>
         {programme ? (
-          <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted">
+          <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted" suppressHydrationWarning>
             {programme.title} · fin {new Date(programme.endsAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
           </p>
         ) : (
