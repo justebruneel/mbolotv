@@ -15,7 +15,7 @@ export { ProgrammeProgress, type ProgrammeProgressProps } from './ProgrammeProgr
 export { Skeleton, type SkeletonProps } from './Skeleton/Skeleton';
 export { Spinner, type SpinnerProps } from './Spinner/Spinner';
 export { warmStream, cancelWarm, shouldWarm, type WarmGuards } from './StreamPreloader/StreamPreloader';
-export { createPlayerTelemetry, bufferLevel, createNetworkEstimate } from './Player/telemetry';
+export { createPlayerTelemetry, bufferLevel, createNetworkEstimate, stallResumeTarget } from './Player/telemetry';
 export type { BufferLevel, NetworkEstimate, PlayerTelemetry, PlayerTelemetrySnapshot, MeshTelemetrySample, QualitySwitchSample } from './Player/telemetry';
 export { buildMediaMetadata, updateMediaSession, clearMediaSession } from './Player/mediaSession';
 export { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction, resolveFastStartVariant } from './Player/fastStart';

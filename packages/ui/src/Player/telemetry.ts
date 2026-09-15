@@ -87,6 +87,24 @@ export interface NetworkEstimate {
   reset(): void;
 }
 
+/** Cible de reprise après stall-pause : ~1,5× la durée réelle d'un segment
+ *  du flux (même esprit que START_BUFFER), bornée [baseSec, maxSec].
+ *  Rationnel : reprendre avec moins d'1 segment de marge garantit le
+ *  re-stall quand les segments sont longs (6-10 s) et lents — d'où
+ *  l'oscillation pause/reprise. Segments courts → base inchangée. */
+export function stallResumeTarget(fragDurationSec: number, baseSec = 3, maxSec = 8): number {
+  try {
+    const seg = typeof fragDurationSec === 'number' && Number.isFinite(fragDurationSec) && fragDurationSec > 0
+      ? fragDurationSec : 0;
+    const base = typeof baseSec === 'number' && Number.isFinite(baseSec) && baseSec > 0 ? baseSec : 3;
+    const max = typeof maxSec === 'number' && Number.isFinite(maxSec) && maxSec >= base ? maxSec : base;
+    if (seg <= 0) return base;
+    return Math.min(max, Math.max(base, seg * 1.5));
+  } catch {
+    return 3;
+  }
+}
+
 /** Estimation EWMA du débit lecteur (α=0.3, premier échantillon = mesure
  *  brute). Ignore les mesures invalides (0/négatif/NaN) : pas de
  *  division par zéro, pas de NaN propagé. */

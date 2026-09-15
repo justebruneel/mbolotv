@@ -11,7 +11,7 @@ import type MpegtsPlayer from 'mpegts.js';
 import type { MeshSession } from '@mbolo/mesh';
 import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
-import { createPlayerTelemetry, appendBounded, computeLevelCaps, MAX_PLAYER_LOG_ENTRIES, type PlayerTelemetry } from './telemetry';
+import { createPlayerTelemetry, appendBounded, computeLevelCaps, stallResumeTarget, MAX_PLAYER_LOG_ENTRIES, type PlayerTelemetry } from './telemetry';
 import { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction, resolveFastStartVariant, type FastStartVariant } from './fastStart';
 import { decidePreloadTarget } from './preloadController';
 import { updateMediaSession, clearMediaSession } from './mediaSession';
@@ -330,6 +330,11 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   // seuil de démarrage sur la granularité réelle du flux.
   const fragDurationRef = useRef(0);
   const stallPauseRef = useRef(false);
+  // Cible de reprise affichée (overlay « Lissage… ») : suit la cible réelle
+  // calculée dans resumeIfBuffered (3 s par défaut, davantage si segments
+  // longs). State (pas ref) car lue pendant le render.
+  const [resumeTargetSec, setResumeTargetSec] = useState(RESUME_BUFFER_SECONDS);
+  const resumeTargetSecRef = useRef(RESUME_BUFFER_SECONDS);
   const liveEdgeRef = useRef(0);
   const urlsRef = useRef(urls);
   urlsRef.current = urls;
@@ -630,6 +635,8 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     startupAtRef.current = performance.now();
     rebufferCountRef.current = 0;
     stallPauseRef.current = false;
+    resumeTargetSecRef.current = RESUME_BUFFER_SECONDS;
+    setResumeTargetSec(RESUME_BUFFER_SECONDS);
     liveEdgeRef.current = 0;
     sessionStartRef.current = Date.now();
     sessionLogRef.current = [];
@@ -1175,10 +1182,18 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
     // lecture en pause pour toujours (l'utilisateur devait relancer à la main).
     const resumeIfBuffered = (): void => {
       if (cancelled || !started || !stallPauseRef.current) return;
-      // TS : buffer plus épais avant reprise pour éviter une nouvelle stall
-      // immédiate (le prochain cycle couperait à nouveau l'image).
-      const target = mpegtsRef.current ? 6 : RESUME_BUFFER_SECONDS;
-      if (bufferAhead() >= target) { stallPauseRef.current = false; setBuffering(false); void el.play().catch(() => undefined); }
+      // Cible ADAPTATIVE (au lieu de 3 s fixes) : ~1,5× la durée réelle des
+      // segments du flux (fragDurationRef, mesuré sur LEVEL_UPDATED). Avec des
+      // segments de 6-10 s lents à arriver, reprendre à 3 s garantissait le
+      // re-stall immédiat → oscillation pause/reprise permanente. TS : 6 s
+      // (règle existante conservée).
+      const target = mpegtsRef.current ? 6 : stallResumeTarget(fragDurationRef.current, RESUME_BUFFER_SECONDS, 8);
+      if (target !== resumeTargetSecRef.current) { resumeTargetSecRef.current = target; setResumeTargetSec(target); }
+      if (bufferAhead() >= target) {
+        stallPauseRef.current = false; setBuffering(false);
+        telemetryRef.current?.rebufferEnd(); // fin mesurée ici (onPlayingReset la saute quand stallPause actif)
+        void el.play().catch(() => undefined);
+      }
     };
     const resumeCheck = (): void => {
       networkRetries = 0;
@@ -1248,7 +1263,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   return <div ref={containerRef} className={`${styles.player} ${controlsVisible ? styles.controlsVisible : ''} ${isMobile ? styles.mobile : ''} ${isVod ? styles.vod : ''} ${isPseudoFullscreen ? styles.pseudoFullscreen : ''}`} data-state={status} onMouseMove={!isMobile ? showControls : undefined} onMouseLeave={() => { if (!isMobile && status === 'ready') setControlsVisible(false); }} onTouchStart={(e) => { showControls(); handleTouchStart(e); }} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
     <video ref={videoRef} className={styles.video} playsInline preload="auto" onClick={handleVideoClick} aria-label={`Lecteur ${title}`} />
     {status !== 'ready' && <div className={styles.overlay} role="status" aria-live="polite"><div className={styles.signal}><span className={styles.signalDot} /><span>{retrying ? 'Reconnexion au flux…' : status === 'error' ? 'Flux indisponible' : isVod ? 'Chargement du fichier' : 'Connexion au direct'}</span></div>{status === 'loading' && (autoplayBlocked ? <><h2 className={styles.title}>Lecture en attente</h2><button type="button" className={styles.retryButton} onClick={startPlayback}>Lancer la lecture</button></> : <><Spinner />{retrying && <p className={styles.hint}>Nouvelle tentative…</p>}</>)}{status === 'error' && <><h2 className={styles.title}>Lecture interrompue</h2><p className={styles.hint}>{errorMsg}</p><div className={styles.errorMeta}><span className={styles.errorTag}>Réseau : {net.effectiveType}{net.downlink > 0 ? ` · ${net.downlink} Mbps` : ''}</span>{net.saveData && <span className={styles.errorTag}>Mode économie activé</span>}</div><button type="button" className={styles.retryButton} onClick={retry}>Réessayer</button></>}</div>}
-    {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner />{!isVod && <span>{stallPauseRef.current ? `Lissage du flux… reprise à ${RESUME_BUFFER_SECONDS} s de marge` : 'Rattrapage du direct…'}</span>}</div>}
+    {status === 'ready' && buffering && <div className={styles.bufferingOverlay} role="status" aria-label="Mise en mémoire tampon"><Spinner />{!isVod && <span>{stallPauseRef.current ? `Lissage du flux… reprise à ${resumeTargetSec} s de marge` : 'Rattrapage du direct…'}</span>}</div>}
     {bandwidth !== null && controlsVisible && <div className={styles.bandwidthBadge} role="status" aria-label="Débit réseau en temps réel"><Icon.Activity size={13} aria-hidden /><span>{formatBitrate(bandwidth)}</span></div>}
     {status === 'ready' && (autoplayBlocked || mutedAutoplay) && <button type="button" className={styles.playPrompt} onClick={startPlayback}>{autoplayBlocked ? 'Lancer la lecture' : 'Activer le son'}</button>}
     {gestureOverlay && <div className={styles.gestureOverlay} role="status" aria-live="polite"><span className={styles.gestureIcon}><Icon.Volume2 size={28} /></span><span className={styles.gestureValue}>{gestureOverlay.value}%</span></div>}
