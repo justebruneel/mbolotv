@@ -170,7 +170,12 @@ export class MeshLoader implements Loader<FragmentLoaderContext> {
   // ---------- ORIGIN : délégation au loader natif hls.js (DefaultConfig.loader) ----------
 
   private fetchOrigin(context: FragmentLoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<FragmentLoaderContext>, gen: number, onDelivered?: () => void): void {
-    const loader = this.origin ??= this.deps.makeOrigin(this.config);
+    // Le loader natif hls.js est SINGLE-USE : son 2e load() throw
+    // ('Loader can only be used once', vu en prod en boucle). On crée donc
+    // une instance FRAÎCHE à chaque repli origin (comme hls.js le fait pour
+    // ses propres loads) et on détruit la précédente — jamais de réutilisation.
+    if (this.origin) { try { this.origin.destroy(); } catch { /* déjà mort */ } this.origin = null; }
+    const loader = this.origin = this.deps.makeOrigin(this.config);
     loader.stats = this.stats; // l'observabilité du Player (bitrate, bwEstimate) reste cohérente
     loader.load(context, config, {
       onSuccess: (response, stats, ctx, networkDetails) => {

@@ -18,6 +18,6 @@ export { warmStream, cancelWarm, shouldWarm, type WarmGuards } from './StreamPre
 export { createPlayerTelemetry, bufferLevel, createNetworkEstimate } from './Player/telemetry';
 export type { BufferLevel, NetworkEstimate, PlayerTelemetry, PlayerTelemetrySnapshot, MeshTelemetrySample, QualitySwitchSample } from './Player/telemetry';
 export { buildMediaMetadata, updateMediaSession, clearMediaSession } from './Player/mediaSession';
-export { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction } from './Player/fastStart';
-export type { FastStartLevel, ReleaseInput, ReleaseDecision } from './Player/fastStart';
+export { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction, resolveFastStartVariant } from './Player/fastStart';
+export type { FastStartLevel, ReleaseInput, ReleaseDecision, FastStartVariant } from './Player/fastStart';
 export type { MediaSessionInput, BuiltMediaMetadata, MediaSessionHandlers } from './Player/mediaSession';

@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction,
+  resolveFastStartVariant,
 } from '../src/Player/fastStart.ts';
 
 const LEVELS = [
@@ -70,5 +71,18 @@ describe('online — table de décision (pas de destroy, pas de perte position)'
     assert.equal(resolveOnlineAction(true, true), 'retry'); // l’erreur prime
     assert.equal(resolveOnlineAction(false, true), 'startLoad');
     assert.equal(resolveOnlineAction(false, false), 'none');
+  });
+});
+
+describe('fast-start variant — benchmark baseline/progressive (§4)', () => {
+  it('défaut progressive ; seule la valeur exacte baseline bascule', () => {
+    assert.equal(resolveFastStartVariant(null), 'progressive');
+    assert.equal(resolveFastStartVariant(undefined), 'progressive');
+    assert.equal(resolveFastStartVariant(''), 'progressive');
+    assert.equal(resolveFastStartVariant('PROGRESSIVE'), 'progressive');
+    assert.equal(resolveFastStartVariant('quelque-chose'), 'progressive');
+    assert.equal(resolveFastStartVariant('baseline'), 'baseline');
+    assert.equal(resolveFastStartVariant('  baseline  '), 'baseline');
+    assert.equal(resolveFastStartVariant('BASELINE'), 'progressive'); // sensible à la casse : pas de bascule accidentelle
   });
 });

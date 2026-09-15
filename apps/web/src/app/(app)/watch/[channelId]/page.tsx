@@ -29,7 +29,17 @@ function time(iso: string): string {
 function ProgrammeProgressInline({ startsAt, endsAt }: { startsAt: string; endsAt: string }) {
   const start = new Date(startsAt).getTime();
   const end = new Date(endsAt).getTime();
-  const pct = Math.min(100, Math.max(0, ((Date.now() - start) / Math.max(1, end - start)) * 100));
+  // Date.now() DANS le render = HTML différent entre SSR et client à chaque
+  // milliseconde → erreur d'hydratation React #418 en production. On fige donc
+  // la valeur après le montage (rendu serveur et premier rendu client
+  // identiques), avec rafraîchissement léger ensuite.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [startsAt, endsAt]);
+  const pct = now === null ? 0 : Math.min(100, Math.max(0, ((now - start) / Math.max(1, end - start)) * 100));
   return (
     <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${pct}%` }} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} />
   );

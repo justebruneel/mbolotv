@@ -303,4 +303,35 @@ describe('MeshLoader — jamais bloquant, toujours opportuniste (§51)', () => {
     const delivered = await load(loader, CONTEXT(80));
     assert.deepEqual([...delivered], [0xde, 0xad]);
   });
+  it('deux load() sur la MÊME instance (abort entre les deux, comme hls.js) : chaque repli origin utilise un loader natif FRAIS — jamais "Loader can only be used once"', async () => {
+    // Reproduit le bug prod : le loader natif hls.js est single-use (son 2e
+    // load() throw). MeshLoader réutilisait UNE seule instance origin.
+    let made = 0;
+    const singleUseOrigin = () => {
+      made += 1;
+      let used = false;
+      return {
+        stats: null, context: null,
+        load(ctx, _config, callbacks) {
+          if (used) throw new Error('Loader can only be used once.');
+          used = true;
+          setTimeout(() => callbacks.onSuccess(
+            { url: ctx.url, data: new Uint8Array([0xde, 0xad]).buffer, code: 200 },
+            {}, ctx, {}), 0);
+        },
+        abort() {}, destroy() {},
+      };
+    };
+    const { deps } = fakeLoaderDeps({
+      makeOrigin: singleUseOrigin,
+      requestSegment: async () => ({ ok: false, reason: 'timeout' }),
+    });
+    const loader = new MeshLoader(deps, {});
+    const first = await load(loader, CONTEXT(81));
+    assert.deepEqual([...first], [0xde, 0xad]);
+    loader.abort();
+    const second = await load(loader, CONTEXT(82));
+    assert.deepEqual([...second], [0xde, 0xad], 'le 2e repli origin ne doit pas throw');
+    assert.equal(made, 2, 'un loader natif frais par repli origin');
+  });
 });

@@ -86,6 +86,23 @@ export function shouldReleaseFastStart(input: ReleaseInput): ReleaseDecision {
   }
 }
 
+/** Variante de transition fast-start (benchmark phase 4, §4) :
+ *  - 'progressive' (défaut) : niveau bas → palier médian → ABR (phase 3) ;
+ *  - 'baseline' : niveau bas → ABR direct (comportement pré-phase 3).
+ *  Sélection UNIQUEMENT via clé locale `mbolo:ff-variant` (console devtools
+ *  sur l'appareil de test) — AUCUN feature flag de production, AUCUN
+ *  comportement prod modifié par défaut. */
+export type FastStartVariant = 'baseline' | 'progressive';
+
+/** Résout la variante depuis une valeur brute (localStorage). Toute valeur
+ *  autre que 'baseline' (absente, vide, inconnue) → 'progressive'. */
+export function resolveFastStartVariant(override: unknown): FastStartVariant {
+  try {
+    return String(override ?? '').trim() === 'baseline' ? 'baseline' : 'progressive';
+  } catch {
+    return 'progressive';
+  }
+}
 /** Action réseau au retour online — table de décision pure (le composant ne
  *  fait qu'exécuter) : erreur affichée → 'retry' (refresh URL existant) ;
  *  pause douce posée → 'startLoad' (reprise position/buffer conservés) ;

@@ -80,6 +80,24 @@ describe('telemetry — contexte des switches (diagnostic ABR)', () => {
   });
 });
 
+describe('telemetry — variante fast-start (benchmark §4)', () => {
+  it('null par défaut, set/reset, valeur invalide refusée', () => {
+    const t = createPlayerTelemetry();
+    assert.equal(t.snapshot().fastStartVariant, null);
+    t.setFastStartVariant('progressive');
+    assert.equal(t.snapshot().fastStartVariant, 'progressive');
+    t.setFastStartVariant('baseline');
+    assert.equal(t.snapshot().fastStartVariant, 'baseline');
+    t.setFastStartVariant('n-importe-quoi');
+    assert.equal(t.snapshot().fastStartVariant, 'baseline'); // refusé : inchangé
+    t.setFastStartVariant(null);
+    assert.equal(t.snapshot().fastStartVariant, null);
+    t.setFastStartVariant('baseline');
+    t.reset();
+    assert.equal(t.snapshot().fastStartVariant, null);
+  });
+});
+
 describe('appendBounded — journal 500 max (§10)', () => {
   it('501 événements → 500 conservés, les plus récents', () => {
     const log = [];

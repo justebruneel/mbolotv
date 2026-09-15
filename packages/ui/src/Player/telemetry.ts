@@ -155,6 +155,10 @@ export interface PlayerTelemetrySnapshot {
   firstSwitch: QualitySwitchSample | null;
   lastSwitch: QualitySwitchSample | null;
   timeToFirstUpSwitchMs: number | null;
+  /** Variante fast-start de la session (benchmark phase 4, §4) :
+   *  'progressive' (défaut) ou 'baseline' (clé locale de test uniquement).
+   *  Non personnel, indispensable pour comparer les comportements. */
+  fastStartVariant: 'baseline' | 'progressive' | null;
   latencySec: number | null;
   sourceChanges: number;
   errors: Array<{ type: string; count: number }>;
@@ -185,6 +189,7 @@ export interface PlayerTelemetry {
   recordFallback(): void;
   setNetworkType(t: string | null): void;
   attachMeshReader(reader: (() => MeshTelemetrySample | null) | null): void;
+  setFastStartVariant(variant: 'baseline' | 'progressive' | null): void;
   snapshot(): PlayerTelemetrySnapshot;
   reset(): void;
 }
@@ -215,6 +220,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
   const errors = new Map<string, number>();
   const net = createNetworkEstimate();
   let meshReader: (() => MeshTelemetrySample | null) | null = null;
+  let fastStartVariant: 'baseline' | 'progressive' | null = null;
   const safeNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
 
   return {
@@ -315,6 +321,14 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
     attachMeshReader(reader) {
       try { meshReader = reader; } catch { /* no-op */ }
     },
+    setFastStartVariant(variant) {
+      try {
+        // null explicite = effacer ; valeur invalide = IGNORÉE (on ne perd
+        // jamais la variante réelle sur un appel bogué).
+        if (variant == null) fastStartVariant = null;
+        else if (variant === 'baseline' || variant === 'progressive') fastStartVariant = variant;
+      } catch { /* no-op */ }
+    },
     snapshot() {
       try {
         let mesh: PlayerTelemetrySnapshot['mesh'] = null;
@@ -336,6 +350,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
           bufferAheadSec, rebufferCount, rebufferDurationMs,
           throughputMbps: net.throughputMbps(), bitrate, quality, qualityChanges,
           upSwitchCount, downSwitchCount, firstSwitch, lastSwitch, timeToFirstUpSwitchMs,
+          fastStartVariant,
           latencySec, sourceChanges,
           errors: [...errors.entries()].map(([type, count]) => ({ type, count })),
           fallbacks, networkType, mesh,
@@ -348,6 +363,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
           rebufferDurationMs: 0, throughputMbps: null, bitrate: null, quality: null,
           qualityChanges: 0, upSwitchCount: 0, downSwitchCount: 0,
           firstSwitch: null, lastSwitch: null, timeToFirstUpSwitchMs: null,
+          fastStartVariant: null,
           latencySec: null, sourceChanges: 0, errors: [],
           fallbacks: 0, networkType: null, mesh: null,
         };
@@ -362,6 +378,7 @@ export function createPlayerTelemetry(now: () => number = () => Date.now()): Pla
         bitrate = null; quality = null; qualityChanges = 0;
         upSwitchCount = 0; downSwitchCount = 0; lastHeightPx = null;
         firstSwitch = null; lastSwitch = null; timeToFirstUpSwitchMs = null;
+        fastStartVariant = null;
         latencySec = null;
         sourceChanges = 0; fallbacks = 0; networkType = null;
         errors.clear(); net.reset();

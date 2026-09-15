@@ -12,7 +12,7 @@ import type { MeshSession } from '@mbolo/mesh';
 import { Spinner } from '../Spinner/Spinner';
 import { Icon } from '../icons';
 import { createPlayerTelemetry, appendBounded, computeLevelCaps, MAX_PLAYER_LOG_ENTRIES, type PlayerTelemetry } from './telemetry';
-import { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction } from './fastStart';
+import { lowestLevelIndex, midLevelIndex, shouldReleaseFastStart, resolveOnlineAction, resolveFastStartVariant, type FastStartVariant } from './fastStart';
 import { updateMediaSession, clearMediaSession } from './mediaSession';
 import styles from './Player.module.css';
 
@@ -225,6 +225,10 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
   // Phase fast-start (0=inactif/ABR libre, 1=niveau bas, 2=palier
   // intermédiaire) — remplace l'ancien booléen, même sémantique ≠0=actif.
   const fastStartPhaseRef = useRef<0 | 1 | 2>(0);
+  // Variante de transition (benchmark phase 4) : 'progressive' par défaut,
+  // 'baseline' uniquement via clé locale `mbolo:ff-variant` (devtools test).
+  // Lue une fois par chargement (déterministe pour toute la session).
+  const ffVariantRef = useRef<FastStartVariant>('progressive');
   const fastStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startupAtRef = useRef(0);
   const rebufferCountRef = useRef(0);
@@ -636,6 +640,15 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
           scheduleFastStartRelease();
           return;
         }
+        // Variante 'baseline' (benchmark phase 4, clé locale uniquement) :
+        // comportement pré-phase 3 EXACT — libération directe, ni palier ni
+        // garde buffer. La variante est tracée (telemetry + log ci-dessous).
+        if (ffVariantRef.current === 'baseline') {
+          fastStartPhaseRef.current = 0;
+          hls.currentLevel = -1;
+          logSession('fast-start', `ABR libéré [baseline] après ${FAST_START_STABLE_MS / 1000} s`);
+          return;
+        }
         // Garde buffer : pas de libération sans matelas confortable. Cible =
         // la cible de démarrage fast-start (1 segment, bornée à 4 s — même
         // formule que startupBufferTarget, inlined car cette fonction vit hors
@@ -668,7 +681,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
         }
         fastStartPhaseRef.current = 0;
         hls.currentLevel = -1;
-        logSession('fast-start', `ABR libéré après ${FAST_START_STABLE_MS / 1000} s de lecture stable`);
+        logSession('fast-start', `ABR libéré [${ffVariantRef.current}] après ${FAST_START_STABLE_MS / 1000} s de lecture stable`);
       }, FAST_START_STABLE_MS);
     };
     // Épuisement des retries et des URL : on demande une URL fraîche à la page
@@ -698,6 +711,17 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
       // Fast-start repart de zéro à chaque chargement (source suivante, retry…).
       fastStartPhaseRef.current = 0;
       fastStartRebuffered = false;
+      // Variante benchmark (phase 4, §4) : lue une fois par chargement depuis
+      // la clé LOCALE `mbolo:ff-variant` — absente = 'progressive' (prod
+      // inchangée), 'baseline' = ancien comportement pour comparaison.
+      try {
+        ffVariantRef.current = resolveFastStartVariant(
+          typeof window !== 'undefined' ? window.localStorage.getItem('mbolo:ff-variant') : null,
+        );
+      } catch {
+        ffVariantRef.current = 'progressive';
+      }
+      telemetryRef.current?.setFastStartVariant(ffVariantRef.current);
       // Si le navigateur refuse la lecture audible (politique autoplay), on
       // retente en muet pour ne jamais rester bloqué sur le spinner ; l'UI
       // propose ensuite de réactiver le son.
@@ -997,6 +1021,7 @@ export function Player({ urls, title, mesh, initialVolume, initialLevel, initial
           fastStartPhaseRef.current = 1;
           fastStartRebuffered = false;
           hls.currentLevel = discovered.reduce((lowest, l) => (l.height < lowest.height ? l : lowest), discovered[0]).index;
+          logSession('fast-start', `fenêtre ouverte [${ffVariantRef.current}] niveau ${hls.currentLevel}`);
         } else {
           hls.currentLevel = resolveHeightIndex(discovered, preferredHeight);
         }
